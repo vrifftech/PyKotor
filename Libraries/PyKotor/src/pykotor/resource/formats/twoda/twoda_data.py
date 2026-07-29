@@ -69,6 +69,7 @@ class TwoDA:
         -------
             A list of cells.
         """
+        header = next((existing for existing in self._headers if existing.lower() == header.lower()), header)
         if header not in self._headers:
             msg = f"The header '{header}' does not exist."
             raise KeyError(msg)
@@ -175,6 +176,8 @@ class TwoDA:
         -------
             A new TwoDARow instance.
         """
+        if row_index < 0:
+            raise IndexError(f"Row index {row_index} not found in the 2DA." + (f" Context: {context}" if context is not None else ""))
         try:
             label_row = self.get_label(row_index)
         except IndexError as e:
@@ -203,7 +206,8 @@ class TwoDA:
             - If a match is found, return the row
             - If no match is found after iterating all rows, return None.
         """
-        return next((row for row in self if row.label() == row_label), None)
+        row_label = row_label.lower()
+        return next((row for row in self if row.label().lower() == row_label), None)
 
     def row_index(
         self,
@@ -576,6 +580,7 @@ class TwoDARow:
         -------
             The cell value.
         """
+        header = next((existing for existing in self._data if existing.lower() == header.lower()), header)
         if header not in self._data:
             msg = f"The header '{header}' does not exist."
             if context is not None:
@@ -746,6 +751,7 @@ class TwoDARow:
         self._set_value(header, None if value is None else value.value)
 
     def _set_value(self, header: str, value: Enum | float | str | None):
+        header = next((existing for existing in self._data if existing.lower() == header.lower()), header)
         if header not in self._data:
             msg = f"The header '{header}' does not exist."
             raise KeyError(msg)

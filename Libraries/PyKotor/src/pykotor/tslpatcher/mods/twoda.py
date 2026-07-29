@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 from enum import IntEnum
 from typing import TYPE_CHECKING
 
+from pykotor.common.misc import CaseInsensitiveDict
 from pykotor.resource.formats.twoda import bytes_2da, read_2da
 from pykotor.tslpatcher.mods.template import PatcherModifications
 from utility.error_handling import universal_simplify_exception
@@ -71,18 +72,21 @@ class Target:
             value = self.value
         source_row: TwoDARow | None = None
         if self.target_type == TargetType.ROW_INDEX:
-            source_row = twoda.get_row(int(value))
+            row_index = int(value)
+            if 0 <= row_index < twoda.get_height():
+                source_row = twoda.get_row(row_index)
         elif self.target_type == TargetType.ROW_LABEL:
             source_row = twoda.find_row(str(value))
         elif self.target_type == TargetType.LABEL_COLUMN:
-            if "label" not in twoda.get_headers():
+            label_header = next((header for header in twoda.get_headers() if header.lower() == "label"), None)
+            if label_header is None:
                 msg = f"'label' could not be found in the twoda's headers: ({self.target_type.name}, {value})"
                 raise WarningError(msg)
-            if value not in twoda.get_column("label"):
+            if value not in twoda.get_column(label_header):
                 msg = f"The value '{value}' could not be found in the twoda's columns"
                 raise WarningError(msg)
             for row in twoda:
-                if row.get_string("label") == value:
+                if row.get_string(label_header) == value:
                     source_row = row
 
         return source_row
@@ -243,7 +247,7 @@ class ChangeRow2DA(Modify2DA):
     ):
         self.identifier: str = identifier
         self.target: Target = target
-        self.cells: dict[str, RowValue] = cells
+        self.cells: CaseInsensitiveDict[RowValue] = CaseInsensitiveDict(cells)
         self.store_2da: dict[int, RowValue] = {} if store_2da is None else store_2da
         self.store_tlk: dict[int, RowValue] = {} if store_tlk is None else store_tlk
 
@@ -293,7 +297,7 @@ class AddRow2DA(Modify2DA):
         self.identifier: str = identifier
         self.exclusive_column: str | None = exclusive_column
         self.row_label: RowValue | None = row_label
-        self.cells: dict[str, RowValue] = cells
+        self.cells: CaseInsensitiveDict[RowValue] = CaseInsensitiveDict(cells)
         self.store_2da: dict[int, RowValue] = {} if store_2da is None else store_2da
         self.store_tlk: dict[int, RowValue] = {} if store_tlk is None else store_tlk
 
@@ -384,7 +388,7 @@ class CopyRow2DA(Modify2DA):
         self.target: Target = target
         self.exclusive_column: str | None = exclusive_column or None
         self.row_label: RowValue | None = row_label
-        self.cells: dict[str, RowValue] = cells
+        self.cells: CaseInsensitiveDict[RowValue] = CaseInsensitiveDict(cells)
         self.store_2da: dict[int, RowValue] = {} if store_2da is None else store_2da
         self.store_tlk: dict[int, RowValue] = {} if store_tlk is None else store_tlk
 
@@ -397,6 +401,21 @@ class CopyRow2DA(Modify2DA):
             f"row_label={self.row_label!r}, cells={self.cells!r}, "
             f"store_2da={self.store_2da!r}, store_tlk={self.store_tlk!r})"
         )
+
+    def _unpack(
+        self,
+        cells: dict[str, RowValue],
+        memory: PatcherMemory,
+        twoda: TwoDA,
+        row: TwoDARow,
+    ) -> dict[str, str]:
+        unpacked = super()._unpack(cells, memory, twoda, row)
+        for column, row_value in cells.items():
+            if isinstance(row_value, RowValueConstant):
+                expression = row_value.string
+                if expression.lower().startswith("inc(") and expression.endswith(")") and expression[4:-1].isdigit():
+                    unpacked[column] = str(int(row.get_string(column)) + int(expression[4:-1]))
+        return unpacked
 
     def apply(self, twoda: TwoDA, memory: PatcherMemory):
         """Applies a CopyRow patch to a TwoDA.

@@ -1216,9 +1216,9 @@ class ConfigReader:
                 msg = f"[2DAList] parse error: '{key}' missing from [{identifier}] in ini."
                 raise ValueError(msg)
             lower_raw_value = raw_value.lower()
-            if lower_raw_value.startswith("strref") and len(raw_value) > "strref" and raw_value[6:].isdigit():
+            if lower_raw_value.startswith("strref") and len(raw_value) > len("strref") and raw_value[6:].isdigit():
                 value: str | int | RowValue2DAMemory | RowValueTLKMemory = RowValueTLKMemory(int(raw_value[6:]))
-            elif lower_raw_value.startswith("2damemory") and len(raw_value) > "2damemory" and raw_value[9:].isdigit():
+            elif lower_raw_value.startswith("2damemory") and len(raw_value) > len("2damemory") and raw_value[9:].isdigit():
                 value = RowValue2DAMemory(int(raw_value[9:]))
             else:
                 value = int(raw_value) if is_int else raw_value
@@ -1390,7 +1390,7 @@ class ConfigReader:
             else:
                 row_value = RowValueConstant(value)
 
-            if modifier_lowercase.startswith("i"):
+            if modifier_lowercase.startswith("i") and modifier[1:].isdigit():
                 index = int(modifier[1:])
                 index_insert[index] = row_value
             elif modifier_lowercase.startswith("l"):
