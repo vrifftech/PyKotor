@@ -5,6 +5,8 @@
       <sourceFolder url="file://$MODULE_DIR$/Libraries/PyKotor/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/Tools/HoloPatcher/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/Tools/HolocronToolset/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/Libraries/PyKotorFont/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/Libraries/PyKotorGL/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/Libraries/Utility/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/Tools/BatchPatcher/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/Tools/GUICreator/src" isTestSource="false" />

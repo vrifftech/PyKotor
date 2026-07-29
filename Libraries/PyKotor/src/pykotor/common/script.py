@@ -1,16 +1,3 @@
-"""NWScript definitions and script-related classes.
-
-References:
-----------
-    Derivations and Other Implementations:
-    -------------------------------------
-        https://github.com/th3w1zard1/KotOR.js/tree/master/src/nwscript/NWScriptDefK1.ts (K1 script definitions)
-        https://github.com/th3w1zard1/KotOR.js/tree/master/src/nwscript/NWScriptDefK2.ts (K2 script definitions)
-
-
-    Note: Script constants and parameters define function signatures for NWScript functions
-"""
-
 from __future__ import annotations
 
 from enum import Enum
@@ -38,10 +25,14 @@ class ScriptConstant:
             msg = "Script constant value argument does not match given datatype."
             raise ValueError(msg)
 
-    def __repr__(self):
+    def __repr__(
+        self,
+    ):
         return f'ScriptConstant("{self.datatype}", "{self.name}", "{self.value}")'
 
-    def __str__(self):
+    def __str__(
+        self,
+    ):
         return f"{self.datatype} {self.name} = {self.value};"
 
 
@@ -54,12 +45,16 @@ class ScriptParam:
     ):
         self.datatype: DataType = DataType(datatype)
         self.name: str = name
-        self.default: Any | None = default
+        self.default: str | None = default  # FIXME: type def
 
-    def __repr__(self):
+    def __repr__(
+        self,
+    ):
         return f"ScriptParam({self.datatype!r}, {self.name!r}, {self.default!r})"
 
-    def __str__(self):
+    def __str__(
+        self,
+    ):
         if self.default is not None:
             return f"{self.datatype} {self.name} = {self.default}"
         return f"{self.datatype} {self.name}"
@@ -80,10 +75,14 @@ class ScriptFunction:
         self.description: str = description
         self.raw: str = raw
 
-    def __repr__(self):
+    def __repr__(
+        self,
+    ):
         return f"ScriptFunction({self.returntype!r}, {self.name!r}, {self.params!r}, {self.description!r}, {self.raw!r})"
 
-    def __str__(self):
+    def __str__(
+        self,
+    ):
         param_str = ""
         for param in self.params:
             param_str += str(param)
@@ -113,7 +112,5 @@ class DataType(Enum):
         if self == DataType.VECTOR:
             return 12
         if self == DataType.STRUCT:
-            raise ValueError(
-                "Structs are variable size"
-            )  # TODO(th3w1zard1): something needs to be done here
+            raise ValueError  # TODO
         return 4

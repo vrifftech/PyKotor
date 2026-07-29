@@ -1,5 +1,3 @@
-"""UTI (item) generic: GFF-based item definitions and properties."""
-
 from __future__ import annotations
 
 from copy import deepcopy
@@ -7,60 +5,49 @@ from typing import TYPE_CHECKING
 
 from pykotor.common.language import LocalizedString
 from pykotor.common.misc import Game, ResRef
-from pykotor.resource.formats.gff.gff_auto import bytes_gff, read_gff, write_gff
-from pykotor.resource.formats.gff.gff_data import GFF, GFFContent, GFFList
+from pykotor.resource.formats.gff import GFF, GFFContent, GFFList, read_gff, write_gff
+from pykotor.resource.formats.gff.gff_auto import bytes_gff
 from pykotor.resource.type import ResourceType
 
 if TYPE_CHECKING:
     from pykotor.resource.formats.gff.gff_data import GFFStruct
     from pykotor.resource.type import SOURCE_TYPES, TARGET_TYPES
 
-# Base item IDs considered armor per 2DA files.
-ARMOR_BASE_ITEMS: frozenset[int] = frozenset(
-    {35, 36, 37, 38, 39, 40, 41, 42, 43, 53, 58, 63, 64, 65, 69, 71, 85, 89, 98, 100, 102, 103}
-)
+ARMOR_BASE_ITEMS = {
+    35,
+    36,
+    37,
+    38,
+    39,
+    40,
+    41,
+    42,
+    43,
+    53,
+    58,
+    63,
+    64,
+    65,
+    69,
+    71,
+    85,
+    89,
+    98,
+    100,
+    102,
+    103,
+}
+""" Base Item IDs that are considered armor as per the 2DA files. """
 
 
 class UTI:
-    """Stores item data.
-
-    UTI files are GFF-based format files that store item definitions including
-    properties, costs, charges, and upgrade information.
-
-    UTI templates are GFF root structs with base item id, tag, localized names/descriptions,
-    costs, charges, stack size, armor variation bytes, flag bits, and a ``PropertiesList`` of
-    enchantment rows. It has been observed that KotOR I and TSL share this schema; loader
-    symbols and string-table RVAs are migrated to ``wiki/reverse_engineering_findings.md``.
-
-    Note: ``GFFContent.UTI``.
-
-    Attributes:
-    ----------
-        resref: "TemplateResRef" field. The resource reference for this item template.
-        base_item: "BaseItem" field. Base item type identifier.
-        name: "LocalizedName" field. Localized name of the item.
-        description: "DescIdentified" field. Localized description when identified.
-        description2: "Description" field. Localized description.
-        tag: "Tag" field. Tag identifier for this item.
-        charges: "Charges" field. Number of charges remaining.
-        cost: "Cost" field. Base cost of the item.
-        stack_size: "StackSize" field. Maximum stack size.
-        plot: "Plot" field. Whether item is plot-critical.
-        add_cost: "AddCost" field. Additional cost modifier.
-        palette_id: "PaletteID" field. Palette identifier. Used in toolset only.
-        comment: "Comment" field. Developer comment.
-        upgrade_level: "UpgradeLevel" field. Upgrade level of the item.
-        properties: List of UTIProperty objects representing item properties.
-        body_variation: "BodyVariation" field. Body variation index. Armor items only.
-        model_variation: "ModelVariation" field. Model variation index. Armor items only.
-        texture_variation: "TextureVar" field. Texture variation index. Armor items only.
-        stolen: "Stolen" field. Whether item is stolen. Deprecated.
-        identified: "Identified" field. Whether item is identified. Deprecated.
-    """
+    """Stores item data."""
 
     BINARY_TYPE = ResourceType.UTI
 
-    def __init__(self):
+    def __init__(
+        self,
+    ):
         self.resref: ResRef = ResRef.from_blank()
         self.base_item: int = 0
         self.name: LocalizedString = LocalizedString.from_invalid()
@@ -88,29 +75,16 @@ class UTI:
         self.stolen: int = 0
         self.identified: int = 0
 
-    def is_armor(self) -> bool:
+    def is_armor(
+        self,
+    ) -> bool:
         return self.base_item in ARMOR_BASE_ITEMS
 
 
 class UTIProperty:
-    """Represents an item property (enchantment, upgrade, etc.).
-
-    Each ``PropertiesList`` row stores property type, subtype, cost table/value, parameters,
-    appearance chance, and optional upgrade type per the on-disk UTI schema.
-
-    Attributes:
-    ----------
-        cost_table: "CostTable" field. Cost table identifier.
-        cost_value: "CostValue" field. Cost value.
-        param1: "Param1" field. First parameter.
-        param1_value: "Param1Value" field. First parameter value.
-        property_name: "PropertyName" field. Property name identifier.
-        subtype: "Subtype" field. Property subtype identifier.
-        chance_appear: "ChanceAppear" field. Chance this property appears (0-100).
-        upgrade_type: "UpgradeType" field. Upgrade type identifier.
-    """
-
-    def __init__(self):
+    def __init__(
+        self,
+    ):
         self.cost_table: int = 0
         self.cost_value: int = 0
         self.param1: int = 0
@@ -121,29 +95,26 @@ class UTIProperty:
         self.upgrade_type: int | None = None
 
 
-def construct_uti_from_struct(struct: GFFStruct) -> UTI:
+def construct_uti_from_struct(
+    struct: GFFStruct,
+) -> UTI:
     new_gff = GFF(GFFContent.UTI)
     new_gff.root = deepcopy(struct)
     return construct_uti(new_gff)
 
 
-def construct_uti(gff: GFF) -> UTI:
-    """Constructs a UTI object from a GFF structure.
-
-    Missing fields use blank ResRefs, empty strings/localized text, and numeric zeros as in
-    observed retail reads (see ``acquire`` defaults below).
-    """
+def construct_uti(
+    gff: GFF,
+) -> UTI:
     uti = UTI()
 
     root = gff.root
-    # Identity: TemplateResRef "", BaseItem 0, LocalizedName/DescIdentified/Description empty, Tag "".
     uti.resref = root.acquire("TemplateResRef", ResRef.from_blank())
     uti.base_item = root.acquire("BaseItem", 0)
     uti.name = root.acquire("LocalizedName", LocalizedString.from_invalid())
     uti.description = root.acquire("DescIdentified", LocalizedString.from_invalid())
     uti.description2 = root.acquire("Description", LocalizedString.from_invalid())
     uti.tag = root.acquire("Tag", "")
-    # Cost/charges/stack: numeric defaults 0 when absent.
     uti.charges = root.acquire("Charges", 0)
     uti.cost = root.acquire("Cost", 0)
     uti.stack_size = root.acquire("StackSize", 0)
@@ -158,7 +129,6 @@ def construct_uti(gff: GFF) -> UTI:
     uti.stolen = root.acquire("Stolen", 0)
     uti.identified = root.acquire("Identified", 0)
 
-    # PropertiesList: property fields default as acquire() below; UpgradeType optional.
     for property_struct in root.acquire("PropertiesList", GFFList()):
         prop = UTIProperty()
         uti.properties.append(prop)

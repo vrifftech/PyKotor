@@ -1,64 +1,36 @@
-"""Binary NCS (NWScript compiled script) read/write and VM validation."""
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import kaitaistruct
-
-from bioware_kaitai_formats.ncs import Ncs
-from bioware_kaitai_formats.ncs_minimal import NcsMinimal
-
-from pykotor.common.stream import BinaryReader
-from pykotor.resource.formats.ncs.ncs_data import (
-    NCS,
-    NCSByteCode,
-    NCSInstruction,
-    NCSInstructionType,
-    NCSInstructionTypeValue,
-)
-from pykotor.resource.formats.ncs.vm_validation import validate_ncs_for_vm
+from pykotor.resource.formats.ncs.ncs_data import NCS, NCSByteCode, NCSInstruction, NCSInstructionType, NCSInstructionTypeValue
 from pykotor.resource.type import ResourceReader, ResourceWriter, autoclose
 
 if TYPE_CHECKING:
     from pykotor.resource.type import SOURCE_TYPES, TARGET_TYPES
 
-# NCS file format constants
-NCS_HEADER_MAGIC_BYTE = 0x42
-NCS_HEADER_SIZE = 13  # "NCS " (4) + "V1.0" (4) + magic_byte (1) + size (4)
-
 
 class NCSBinaryReader(ResourceReader):
-    """Reads NCS (NWScript Compiled Script) files.
-
-    NCS files contain compiled bytecode for NWScript, the scripting language used in KotOR.
-    Instructions include operations, constants, function calls, jumps, and control flow.
-
-    Observed retail behavior:
-    ----------
-        KotOR loads ``NCS `` resources with a ``V1.0`` tag, leading opcode byte ``0x42``, and
-        the stack-machine bytecode stream described in ``ncs_data``. Scripts may be read from
-        standalone files or embedded GFF fields before execution.
-
-    """
-
     def __init__(
         self,
         source: SOURCE_TYPES,
         offset: int = 0,
         size: int = 0,
-        *,
-        validate_for_vm: bool = False,
     ):
         super().__init__(source, offset, size)
         self._ncs: NCS | None = None
         self._instructions: dict[int, NCSInstruction] = {}
-        self._jumps: list[tuple[NCSInstruction, int]] = []
-        self._validate_for_vm: bool = validate_for_vm
+        self._jumps: dict[NCSInstruction, int] = {}
 
     @autoclose
-    def load(self, *, auto_close: bool = True) -> NCS:
+    def load(
+        self,
+        auto_close: bool = True,
+    ) -> NCS:
         """Loads an NCS file from the reader.
+
+        Args:
+        ----
+            auto_close: {Whether to automatically close the reader after loading}.
 
         Returns:
         -------
@@ -76,123 +48,30 @@ class NCSBinaryReader(ResourceReader):
             - Adds the instructions to the NCS object
             - Optionally closes the reader.
         """
-        data = self._reader.read_all()
-        parsed_ncs: Ncs | None = None
-        try:
-            parsed_ncs = Ncs.from_bytes(data)
-        except kaitaistruct.KaitaiStructError:
-            try:
-                NcsMinimal.from_bytes(data)
-            except kaitaistruct.KaitaiStructError:
-                pass
-
         self._ncs = NCS()
+
+        file_type = self._reader.read_string(4)
+        file_version = self._reader.read_string(4)
+
+        if file_type != "NCS ":
+            msg = "The file type that was loaded is invalid."
+            raise ValueError(msg)
+
+        if file_version != "V1.0":
+            msg = "The NCS version that was loaded is not supported."
+            raise ValueError(msg)
+
         self._instructions = {}  # offset -> instruction
-        self._jumps = []
 
-        actual_file_size = len(data)
-
-        if parsed_ncs is not None:
-            total_size = parsed_ncs.file_size
-            if total_size > actual_file_size:
-                msg = f"NCS size field ({total_size}) is larger than actual file size ({actual_file_size}). File may be corrupted or truncated."
-                raise ValueError(msg)
-            self._reader = BinaryReader.from_bytes(data, 0)
-            self._reader.seek(NCS_HEADER_SIZE)
-        else:
-            self._reader = BinaryReader.from_bytes(data, 0)
-
-            file_type = self._reader.read_string(4)
-            file_version = self._reader.read_string(4)
-
-            if file_type != "NCS ":
-                msg = "The file type that was loaded is invalid."
-                raise ValueError(msg)
-
-            if file_version != "V1.0":
-                msg = "The NCS version that was loaded is not supported."
-                raise ValueError(msg)
-
-            magic_byte = self._reader.read_uint8()  # Position 8
-            total_size = self._reader.read_uint32(big=True)  # Positions 9-12: Total file size
-
-            if magic_byte != NCS_HEADER_MAGIC_BYTE:
-                msg = f"Invalid NCS header magic byte: expected 0x{NCS_HEADER_MAGIC_BYTE:02X}, got 0x{magic_byte:02X}"
-                raise ValueError(msg)
-
-            if total_size > actual_file_size:
-                msg = f"NCS size field ({total_size}) is larger than actual file size ({actual_file_size}). File may be corrupted or truncated."
-                raise ValueError(msg)
-
-        # Check for empty or minimal NCS files
-        if total_size <= NCS_HEADER_SIZE:
-            # File has only a header, no instructions
-            # This is technically valid but unusual
-            self._ncs.instructions = []
-            return self._ncs
-
-        # Now at position 13, read instructions until we reach total_size
-        # total_size is the end position (includes the header)
-        code_end_position = total_size
-
-        # Safety: don't read beyond actual file size
-        safe_end_position = min(code_end_position, actual_file_size)
-
-        while self._reader.position() < safe_end_position and self._reader.remaining() > 0:
+        self._reader.seek(13)
+        while self._reader.remaining() > 0:
             offset = self._reader.position()
+            self._instructions[offset] = self._read_instruction()
 
-            try:
-                self._instructions[offset] = self._read_instruction()
-            except ValueError as e:
-                error_msg = str(e)
-
-                # Check if this is zero-padding that slipped through due to incorrect size field
-                if "Unknown NCS bytecode 0x00" in error_msg:
-                    # Peek ahead to confirm this is just padding
-                    self._reader.seek(offset)
-
-                    # Read remaining bytes up to the safe end position
-                    bytes_to_check = min(self._reader.remaining(), safe_end_position - offset)
-                    remaining_data = self._reader.read_bytes(bytes_to_check)
-
-                    if all(b == 0 for b in remaining_data):
-                        # This is zero-padding - the size field incorrectly includes padding
-                        import sys  # noqa: PLC0415
-
-                        print(
-                            f"Warning: NCS file has incorrect size field (includes zero-padding). "
-                            f"Size field: {total_size}, actual code ends at: {offset}, "
-                            f"found {len(remaining_data)} bytes of padding",
-                            file=sys.stderr,
-                        )
-                        break
-
-                    # Not all zeros - this is genuinely corrupted data
-                    # Show diagnostic information
-                    self._reader.seek(offset)
-                    diagnostic_bytes = self._reader.read_bytes(min(32, self._reader.remaining()))
-                    diagnostic_hex = " ".join(f"{b:02X}" for b in diagnostic_bytes)
-
-                    enhanced_msg = (
-                        f"{error_msg}\n"
-                        f"  File size field: {total_size}, current offset: {offset}\n"
-                        f"  Next 32 bytes (hex): {diagnostic_hex}\n"
-                        f"  This indicates the NCS file is genuinely corrupted or uses an unknown format variant."
-                    )
-                    raise ValueError(enhanced_msg) from e
-
-                # Re-raise other errors with additional context
-                enhanced_msg = f"Failed to parse NCS instruction at offset {offset}: {error_msg}"
-                raise ValueError(enhanced_msg) from e
-
-        for instruction, jumpToOffset in self._jumps:
+        for instruction, jumpToOffset in self._jumps.items():
             instruction.jump = self._instructions[jumpToOffset]
 
         self._ncs.instructions = list(self._instructions.values())
-
-        # Optional strict validation for VM compatibility (can reject valid real-world scripts).
-        if self._validate_for_vm:
-            validate_ncs_for_vm(self._ncs)
 
         return self._ncs
 
@@ -216,58 +95,12 @@ class NCSBinaryReader(ResourceReader):
             - Handles jump offsets
             - Returns the completed instruction
         """
-        instruction_offset = self._reader.position()
-        byte_code_value = self._reader.read_uint8()
+        byte_code = NCSByteCode(self._reader.read_uint8())
         qualifier = self._reader.read_uint8()
-
-        # Try to convert to NCSByteCode enum
-        try:
-            byte_code = NCSByteCode(byte_code_value)
-        except ValueError as e:
-            # Provide detailed diagnostic information for unknown bytecodes
-            # Read some context bytes around the error position
-            context_size = 16
-            context_start = max(0, instruction_offset - context_size)
-            current_pos = self._reader.position()
-
-            self._reader.seek(context_start)
-            context_bytes = self._reader.read_bytes(
-                min(context_size * 2, self._reader.size() - context_start)
-            )
-            context_hex = " ".join(f"{b:02X}" for b in context_bytes)
-
-            self._reader.seek(current_pos)  # Restore position
-
-            msg = (
-                f"Unknown NCS bytecode 0x{byte_code_value:02X} with qualifier 0x{qualifier:02X} at offset {instruction_offset}.\n"
-                f"  Context (hex): {context_hex}\n"
-                f"  This NCS file may be corrupted, from an unsupported NCS variant, or have an incorrect size field."
-            )
-            raise ValueError(msg) from e
-
         type_value = NCSInstructionTypeValue(byte_code, qualifier)
 
         instruction = NCSInstruction()
-        instruction.offset = instruction_offset
-
-        # Special handling for RESERVED opcode - it appears with various qualifiers
-        # Treat all RESERVED variants as simple 2-byte no-ops
-        if byte_code == NCSByteCode.RESERVED:
-            # Use RESERVED (0x00, 0x00) as the canonical type regardless of actual qualifier
-            instruction.ins_type = NCSInstructionType.RESERVED
-        else:
-            try:
-                instruction.ins_type = NCSInstructionType(type_value)
-            except ValueError as e:
-                # Unknown bytecode/qualifier combination - the bytecode exists but this specific
-                # combination with the qualifier is not recognized
-                msg = (
-                    f"Unknown NCS instruction type combination: "
-                    f"bytecode=0x{byte_code_value:02X} ({byte_code.name}), "
-                    f"qualifier=0x{qualifier:02X} at offset {instruction_offset}.\n"
-                    f"  The bytecode is recognized but this qualifier combination is not supported."
-                )
-                raise ValueError(msg) from e
+        instruction.ins_type = NCSInstructionType(type_value)
 
         if instruction.ins_type in {
             NCSInstructionType.CPDOWNSP,
@@ -275,9 +108,7 @@ class NCSBinaryReader(ResourceReader):
             NCSInstructionType.CPDOWNBP,
             NCSInstructionType.CPTOPBP,
         }:
-            instruction.args.extend(
-                [self._reader.read_int32(big=True), self._reader.read_uint16(big=True)]
-            )
+            instruction.args.extend([self._reader.read_int32(big=True), self._reader.read_uint16(big=True)])
 
         elif instruction.ins_type == NCSInstructionType.CONSTI:
             instruction.args.extend([self._reader.read_uint32(big=True)])
@@ -290,14 +121,10 @@ class NCSBinaryReader(ResourceReader):
             instruction.args.extend([self._reader.read_string(length)])
 
         elif instruction.ins_type == NCSInstructionType.CONSTO:
-            # Object constants are stored as signed 32-bit integers, not 16-bit
-            # See DeNCS Decoder.java case 4, subcase 6 (OBJECT type uses readSignedInt)
-            instruction.args.extend([self._reader.read_int32(big=True)])
+            instruction.args.extend([self._reader.read_uint16(big=True)])
 
         elif instruction.ins_type == NCSInstructionType.ACTION:
-            instruction.args.extend(
-                [self._reader.read_uint16(big=True), self._reader.read_uint8(big=True)]
-            )
+            instruction.args.extend([self._reader.read_uint16(big=True), self._reader.read_uint8(big=True)])
 
         elif instruction.ins_type == NCSInstructionType.MOVSP:
             instruction.args.extend([self._reader.read_int32(big=True)])
@@ -309,7 +136,7 @@ class NCSBinaryReader(ResourceReader):
             NCSInstructionType.JNZ,
         }:
             jumpOffset = self._reader.read_int32(big=True) + self._reader.position() - 6
-            self._jumps.append((instruction, jumpOffset))
+            self._jumps[instruction] = jumpOffset
 
         elif instruction.ins_type == NCSInstructionType.DESTRUCT:
             instruction.args.extend(
@@ -321,25 +148,21 @@ class NCSBinaryReader(ResourceReader):
             )
 
         elif instruction.ins_type in {
-            NCSInstructionType.DECxSP,
-            NCSInstructionType.INCxSP,
-            NCSInstructionType.DECxBP,
-            NCSInstructionType.INCxBP,
+            NCSInstructionType.DECISP,
+            NCSInstructionType.INCISP,
+            NCSInstructionType.DECIBP,
+            NCSInstructionType.INCIBP,
         }:
             instruction.args.extend([self._reader.read_uint32(big=True)])
 
         elif instruction.ins_type == NCSInstructionType.STORE_STATE:
-            instruction.args.extend(
-                [self._reader.read_uint32(big=True), self._reader.read_uint32(big=True)]
-            )
+            instruction.args.extend([self._reader.read_uint32(big=True), self._reader.read_uint32(big=True)])
 
         elif instruction.ins_type in {
             NCSInstructionType.EQUALTT,
             NCSInstructionType.NEQUALTT,
         }:
-            # Struct equality comparisons include a size field
-            # See DeNCS Decoder.java case 11/12 with qualifier 0x24 (36 = StructStruct)
-            instruction.args.extend([self._reader.read_uint16(big=True)])
+            instruction.args.extend([self._reader.read_uint16])
 
         elif instruction.ins_type in {  # noqa: SIM114
             NCSInstructionType.LOGANDII,
@@ -457,29 +280,27 @@ class NCSBinaryReader(ResourceReader):
             ...
 
         elif (
-            (
-                instruction.ins_type == NCSInstructionType.COMPI
-                or instruction.ins_type
-                in {  # noqa: SIM114
-                    # NCSInstructionType.STORE_STATEALL,
-                }
-            )
-            or instruction.ins_type == NCSInstructionType.RETN
-            or instruction.ins_type == NCSInstructionType.NOTI
+            instruction.ins_type == NCSInstructionType.COMPI
             or instruction.ins_type
             in {  # noqa: SIM114
-                NCSInstructionType.SAVEBP,
-                NCSInstructionType.RESTOREBP,
+                # NCSInstructionType.STORE_STATEALL,
             }
-            or instruction.ins_type == NCSInstructionType.NOP
         ):
             ...
 
+        elif instruction.ins_type == NCSInstructionType.RETN:  # noqa: SIM114
+            ...
+
+        elif instruction.ins_type == NCSInstructionType.NOTI:  # noqa: SIM114
+            ...
+
         elif instruction.ins_type in {  # noqa: SIM114
-            NCSInstructionType.RESERVED,
-            NCSInstructionType.RESERVED_01,
+            NCSInstructionType.SAVEBP,
+            NCSInstructionType.RESTOREBP,
         }:
-            # Reserved/unknown opcodes - treat as 2-byte no-ops with no arguments
+            ...
+
+        elif instruction.ins_type == NCSInstructionType.NOP:  # noqa: SIM114
             ...
 
         elif instruction.ins_type in {
@@ -509,11 +330,14 @@ class NCSBinaryWriter(ResourceWriter):
     ):
         super().__init__(target)
         self._ncs: NCS = ncs
-        self._offsets: dict[int, int] = {}
-        self._sizes: dict[int, int] = {}
+        self._offsets: dict[NCSInstruction, int] = {}
+        self._sizes: dict[NCSInstruction, int] = {}
 
     @autoclose
-    def write(self, *, auto_close: bool = True):
+    def write(
+        self,
+        auto_close: bool = True,
+    ):
         """Writes the NCS file.
 
         Args:
@@ -527,28 +351,22 @@ class NCSBinaryWriter(ResourceWriter):
             - Writes each instruction using pre-calculated offset and size
             - Closes writer if auto_close is True.
         """
-        offset = NCS_HEADER_SIZE
+        offset = 13
         for instruction in self._ncs.instructions:
-            inst_id = id(instruction)
-            instruction_size = self.determine_size(instruction)
-            self._sizes[inst_id] = instruction_size
-            self._offsets[inst_id] = offset
-            offset += instruction_size
+            self._sizes[instruction] = self.determine_size(instruction)
+            self._offsets[instruction] = offset
+            offset += self._sizes[instruction]
 
         self._writer.write_string("NCS ")
         self._writer.write_string("V1.0")
-        self._writer.write_uint8(NCS_HEADER_MAGIC_BYTE)
+        self._writer.write_uint8(0x42)
         self._writer.write_uint32(offset, big=True)
 
         for instruction in self._ncs.instructions:
             self._write_instruction(instruction)
 
-    def determine_size(
-        self, instruction: NCSInstruction
-    ) -> int:  # TODO(th3w1zard1): This function is unfinished and is missing defs.
-        """Determines the size of an NCS instruction in bytes.
-
-        Based on DeNCS Decoder.java readCommand method which shows complete instruction formats.
+    def determine_size(self, instruction: NCSInstruction) -> int:  # TODO
+        """Determines the size of an NCS instruction. This function is unfinished and is missing defs.
 
         Args:
         ----
@@ -558,80 +376,60 @@ class NCSBinaryWriter(ResourceWriter):
         -------
             int - The size of the instruction in bytes
         """
-        size = 2  # Base size for opcode and qualifier bytes
+        size = 2  # Base size for opcode and type
 
-        # Copy operations: 1 byte qualifier + 4 bytes offset + 2 bytes size = 7 bytes additional
-        # DeNCS case 1, 3, 38, 39
         if instruction.ins_type in {
             NCSInstructionType.CPDOWNSP,
             NCSInstructionType.CPTOPSP,
             NCSInstructionType.CPDOWNBP,
             NCSInstructionType.CPTOPBP,
+            NCSInstructionType.DESTRUCT,
         }:
-            size += 6  # 1 + 4 + 2 - 1 (qualifier already in base) = 6
+            size += 6
 
-        # STORE_STATE: 1 byte qualifier + 4 bytes + 4 bytes = 9 bytes additional
-        # DeNCS case 44
         elif instruction.ins_type == NCSInstructionType.STORE_STATE:
-            size += 8  # 1 + 4 + 4 - 1 = 8
+            size += 8
 
-        # Struct equality: 1 byte qualifier + 2 bytes size = 3 bytes additional
-        # DeNCS case 11, 12 with qualifier 0x24
         elif instruction.ins_type in {
             NCSInstructionType.NEQUALTT,
             NCSInstructionType.EQUALTT,
         }:
-            size += 2  # 1 + 2 - 1 = 2
+            size += 2
 
-        # Jump/Move operations: 1 byte qualifier + 4 bytes offset = 5 bytes additional
-        # DeNCS case 27, 29, 30, 31, 35, 36, 37, 40, 41
         elif instruction.ins_type in {
             NCSInstructionType.MOVSP,
             NCSInstructionType.JMP,
             NCSInstructionType.JSR,
             NCSInstructionType.JZ,
             NCSInstructionType.JNZ,
-            NCSInstructionType.DECxSP,
-            NCSInstructionType.INCxSP,
-            NCSInstructionType.DECxBP,
-            NCSInstructionType.INCxBP,
         }:
-            size += 4  # 1 + 4 - 1 = 4
+            size += 4  # 4 bytes for the value/offset, total 6 bytes
 
-        # Constants with 4-byte values
-        # DeNCS case 4 with subcases for int/float/object
+        elif instruction.ins_type in {
+            NCSInstructionType.DECISP,
+            NCSInstructionType.INCISP,
+            NCSInstructionType.DECIBP,
+            NCSInstructionType.INCIBP,
+        }:
+            size += 4
+
         elif instruction.ins_type in {
             NCSInstructionType.CONSTI,
             NCSInstructionType.CONSTF,
             NCSInstructionType.CONSTO,
         }:
-            size += 4  # 4 bytes for the constant value
+            size += 4  # 4 bytes for the constant value/object ID, total 6 bytes
 
-        # String constant: 2 bytes length + string data
-        # DeNCS case 4 subcase 5 (string)
         elif instruction.ins_type == NCSInstructionType.CONSTS:
-            size += 2 + len(instruction.args[0])  # 2 bytes length prefix + string
+            size += 2 + len(instruction.args[0])  # 2 bytes for string length, plus string characters
 
-        # ACTION: 2 bytes routine number + 1 byte argument count
-        # DeNCS case 5
         elif instruction.ins_type == NCSInstructionType.ACTION:
-            size += 3  # 2 + 1 = 3
-
-        # DESTRUCT: 1 byte qualifier + 2 bytes + 2 bytes + 2 bytes = 7 bytes additional
-        # DeNCS case 33
-        elif instruction.ins_type == NCSInstructionType.DESTRUCT:
-            size += 6  # 1 + 2 + 2 + 2 - 1 = 6
-
-        # All other instructions have just opcode + qualifier (2 bytes total)
-        # This includes: RSADD variants, logical/arithmetic ops, RETN, SAVEBP, RESTOREBP, etc.
-        # DeNCS case 2, 6-10, 13-26, 32, 34, 42, 43, 45
+            size += 3  # 1 byte for argument count, 2 bytes for the routine number, total 5
 
         return size
 
-    def _write_instruction(
-        self, instruction: NCSInstruction
-    ):  # TODO(th3w1zard1): This function is unfinished and is missing defs.
-        """Writes an instruction to the NCS binary stream.
+    def _write_instruction(self, instruction: NCSInstruction):  # TODO
+        """Writes an instruction to the NCS binary stream. This function is unfinished and is missing defs.
 
         Args:
         ----
@@ -646,46 +444,14 @@ class NCSBinaryWriter(ResourceWriter):
             - Raises error for unsupported instructions
         """
 
-        def to_signed_32bit(
-            n: int,
-        ) -> (
-            int
-        ):  # FIXME(th3w1zard1): Presumably this issue happens further up the call stack, fix later.
-            """Convert unsigned 32-bit integer representation to signed.
-
-            Handles edge cases where values may be stored as unsigned but need
-            to be interpreted/written as signed two's complement integers.
-            Python's int type can represent any value, but when reading from
-            binary data or external sources, values may need conversion.
-
-            Args:
-            ----
-                n: Integer value, possibly in unsigned representation
-
-            Returns:
-            -------
-                Signed 32-bit integer value
-            """
-            # Convert to signed if value is in upper half of unsigned 32-bit range
+        def to_signed_32bit(n):  # FIXME: Presumably this issue happens further up the call stack, fix later.
+            # Assuming n is provided as an unsigned 32-bit integer
+            # Convert it to a signed 32-bit integer
             if n >= 2**31:
                 n -= 2**32
             return n
 
-        def to_signed_16bit(
-            n: int,
-        ) -> int:  # FIXME(th3w1zard1): Only seen this issue happen with 32bit but better safe than sorry, remove this once above issue is fixed.
-            """Convert unsigned 16-bit integer representation to signed.
-
-            Similar to to_signed_32bit but for 16-bit values.
-
-            Args:
-            ----
-                n: Integer value, possibly in unsigned representation
-
-            Returns:
-            -------
-                Signed 16-bit integer value
-            """
+        def to_signed_16bit(n):  # FIXME: Only seen this issue happen with 32bit but better safe than sorry, remove this once above issue is fixed.
             if n >= 2**15:
                 n -= 2**16
             return n
@@ -695,35 +461,23 @@ class NCSBinaryWriter(ResourceWriter):
 
         # Handle instruction-specific arguments
         if instruction.ins_type in {
-            NCSInstructionType.DECxSP,
-            NCSInstructionType.INCxSP,
-            NCSInstructionType.DECxBP,
-            NCSInstructionType.INCxBP,
-        }:
-            self._writer.write_int32(to_signed_32bit(instruction.args[0]), big=True)
-
-        elif instruction.ins_type in {
-            NCSInstructionType.CPDOWNSP,
-            NCSInstructionType.CPTOPSP,
-            NCSInstructionType.CPDOWNBP,
-            NCSInstructionType.CPTOPBP,
+            NCSInstructionType.DECISP,
+            NCSInstructionType.INCISP,
+            NCSInstructionType.DECIBP,
+            NCSInstructionType.INCIBP,
         }:
             self._writer.write_int32(instruction.args[0], big=True)
-            # Size argument: typically 4 for most types, 12 for vectors (3 floats)
-            # The args[1] should contain the actual size value from compilation
-            size_value = instruction.args[1] if len(instruction.args) > 1 else 4
-            self._writer.write_uint16(size_value, big=True)
+
+        elif instruction.ins_type in {NCSInstructionType.CPDOWNSP, NCSInstructionType.CPTOPSP, NCSInstructionType.CPDOWNBP, NCSInstructionType.CPTOPBP}:
+            self._writer.write_int32(instruction.args[0], big=True)
+            self._writer.write_uint16(4, big=True)  # TODO: 12 for float support
 
         elif instruction.ins_type == NCSInstructionType.CONSTF:
             self._writer.write_single(instruction.args[0], big=True)
         elif instruction.ins_type == NCSInstructionType.CONSTO:
-            # Object constants are stored as signed 32-bit integers
-            # See DeNCS Decoder.java case 4, subcase 6
-            self._writer.write_int32(instruction.args[0], big=True)
+            self._writer.write_uint32(instruction.args[0], big=True)
         elif instruction.ins_type == NCSInstructionType.CONSTI:
-            # Integer constants stored as unsigned 32-bit per DeNCS Decoder.java line 137
-            # Convert to signed representation for struct packing
-            self._writer.write_int32(to_signed_32bit(instruction.args[0]), big=True)
+            self._writer.write_int32(instruction.args[0], big=True)
         elif instruction.ins_type == NCSInstructionType.CONSTS:
             # CONSTS with string length and string data
             self._writer.write_string(instruction.args[0], big=True, prefix_length=2)
@@ -877,9 +631,7 @@ class NCSBinaryWriter(ResourceWriter):
         }:
             jump = instruction.jump
             assert jump is not None, f"{instruction} has a NoneType jump."
-            instruction_id = id(instruction)
-            jump_id = id(jump)
-            relative = self._offsets[jump_id] - self._offsets[instruction_id]
+            relative = self._offsets[jump] - self._offsets[instruction]
             self._writer.write_int32(to_signed_32bit(relative), big=True)
 
         elif instruction.ins_type == NCSInstructionType.RETN:
@@ -901,13 +653,6 @@ class NCSBinaryWriter(ResourceWriter):
             self._writer.write_uint32(instruction.args[1], big=True)
 
         elif instruction.ins_type == NCSInstructionType.NOP:  # noqa: SIM114
-            ...
-
-        elif instruction.ins_type in {  # noqa: SIM114
-            NCSInstructionType.RESERVED,
-            NCSInstructionType.RESERVED_01,
-        }:
-            # Reserved/unknown opcodes - no arguments to write
             ...
 
         elif instruction.ins_type in {

@@ -1,121 +1,299 @@
-#!/usr/bin/env pwsh
-
-[CmdletBinding(PositionalBinding = $false)]
+[CmdletBinding(PositionalBinding=$false)]
 param(
   [switch]$noprompt,
   [string]$venv_name = ".venv",
   [string]$upx_dir
 )
-$ErrorActionPreference = "Stop"
+$this_noprompt = $noprompt
+$exclusive_whitelist = $true
 
-$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
-$repoRootPath = (Resolve-Path -LiteralPath "$($scriptDir)/..").Path
-$toolPath = (Resolve-Path -LiteralPath "$repoRootPath/Tools/HoloPatcher").Path
-$toolSrcDir = (Resolve-Path -LiteralPath "$toolPath/src").Path
+$scriptPath = Split-Path -Parent $MyInvocation.MyCommand.Definition
+$rootPath = (Resolve-Path -LiteralPath "$scriptPath/..").Path
+Write-Host "The path to the script directory is: $scriptPath"
+Write-Host "The path to the root directory is: $rootPath"
 
-function Get-LocalOS {
-  if ($IsWindows) { return "Windows" }
-  if ($IsMacOS) { return "Mac" }
-  if ($IsLinux) { return "Linux" }
-  return "Unknown"
+Write-Host "Initializing python virtual environment..."
+Write-Host "Initializing python virtual environment..."
+if ($this_noprompt) {
+    . $rootPath/install_python_venv.ps1 -noprompt -venv_name $venv_name
+} else {
+    . $rootPath/install_python_venv.ps1 -venv_name $venv_name
 }
-$iconExtension = if ((Get-LocalOS) -eq 'Mac') { 'icns' } else { 'ico' }
-$iconPath = "$toolSrcDir/holopatcher/resources/icons/patcher_icon_v2.$iconExtension"
 
-$argsList = @(
-  "--tool-path", $toolPath
-  "--entrypoint", "holopatcher/__main__.py"
-  "--name", "HoloPatcher"
-  "--distpath", "$repoRootPath/dist"
-  "--workpath", "$toolSrcDir/build"
-  "--icon", $iconPath
-  "--debug", "imports"
-  "--log-level", "INFO"
-  "--console"
-  "--onefile"
-  "--noconfirm"
-  "--clean"
-  "--exclude-module=PyQt5",
-  "--exclude-module=PyQt5-Qt5",
-  "--exclude-module=PyQt5-sip",
-  "--exclude-module=PyQt6",
-  "--exclude-module=PyQt6-Qt6",
-  "--exclude-module=PyQt6-sip",
-  "--exclude-module=PySide2",
-  "--exclude-module=PySide6",
-  "--exclude-module", "PyOpenGL"
-  "--exclude-module", "PyGLM"
-  "--upx-exclude", "_uuid.pyd"
-  "--upx-exclude", "api-ms-win-crt-environment-l1-1-0.dll"
-  "--upx-exclude", "api-ms-win-crt-string-l1-1-0.dll"
-  "--upx-exclude", "api-ms-win-crt-convert-l1-1-0.dll"
-  "--upx-exclude", "api-ms-win-crt-heap-l1-1-0.dll"
-  "--upx-exclude", "api-ms-win-crt-conio-l1-1-0.dll"
-  "--upx-exclude", "api-ms-win-crt-filesystem-l1-1-0.dll"
-  "--upx-exclude", "api-ms-win-crt-stdio-l1-1-0.dll"
-  "--upx-exclude", "api-ms-win-crt-process-l1-1-0.dll"
-  "--upx-exclude", "api-ms-win-crt-locale-l1-1-0.dll"
-  "--upx-exclude", "api-ms-win-crt-time-l1-1-0.dll"
-  "--upx-exclude", "api-ms-win-crt-math-l1-1-0.dll"
-  "--upx-exclude", "api-ms-win-crt-runtime-l1-1-0.dll"
-  "--upx-exclude", "api-ms-win-crt-utility-l1-1-0.dll"
-  "--upx-exclude", "python3.dll"
-  "--upx-exclude", "api-ms-win-crt-private-l1-1-0.dll"
-  "--upx-exclude", "api-ms-win-core-timezone-l1-1-0.dll"
-  "--upx-exclude", "api-ms-win-core-file-l1-1-0.dll"
-  "--upx-exclude", "api-ms-win-core-processthreads-l1-1-1.dll"
-  "--upx-exclude", "api-ms-win-core-processenvironment-l1-1-0.dll"
-  "--upx-exclude", "api-ms-win-core-debug-l1-1-0.dll"
-  "--upx-exclude", "api-ms-win-core-localization-l1-2-0.dll"
-  "--upx-exclude", "api-ms-win-core-processthreads-l1-1-0.dll"
-  "--upx-exclude", "api-ms-win-core-errorhandling-l1-1-0.dll"
-  "--upx-exclude", "api-ms-win-core-handle-l1-1-0.dll"
-  "--upx-exclude", "api-ms-win-core-util-l1-1-0.dll"
-  "--upx-exclude", "api-ms-win-core-profile-l1-1-0.dll"
-  "--upx-exclude", "api-ms-win-core-rtlsupport-l1-1-0.dll"
-  "--upx-exclude", "api-ms-win-core-namedpipe-l1-1-0.dll"
-  "--upx-exclude", "api-ms-win-core-libraryloader-l1-1-0.dll"
-  "--upx-exclude", "api-ms-win-core-file-l1-2-0.dll"
-  "--upx-exclude", "api-ms-win-core-synch-l1-2-0.dll"
-  "--upx-exclude", "api-ms-win-core-sysinfo-l1-1-0.dll"
-  "--upx-exclude", "api-ms-win-core-console-l1-1-0.dll"
-  "--upx-exclude", "api-ms-win-core-string-l1-1-0.dll"
-  "--upx-exclude", "api-ms-win-core-memory-l1-1-0.dll"
-  "--upx-exclude", "api-ms-win-core-synch-l1-1-0.dll"
-  "--upx-exclude", "api-ms-win-core-interlocked-l1-1-0.dll"
-  "--upx-exclude", "api-ms-win-core-datetime-l1-1-0.dll"
-  "--upx-exclude", "api-ms-win-core-file-l2-1-0.dll"
-  "--upx-exclude", "api-ms-win-core-heap-l1-1-0.dll"
-  "--venv-name", $venv_name
+# List all Python modules available in the environment
+$pythonCommand = "import pkgutil; [print(m.name) for m in pkgutil.iter_modules()]"
+$modulesArray = & $pythonExePath -c $pythonCommand | ForEach-Object { $_.Trim() }
+
+# Path to the site-packages directory
+$venvPath = Join-Path -Path $rootPath -ChildPath "$venv_name\Lib\site-packages"
+
+# Define size threshold
+$sizeThreshold = 1KB
+
+# Find directories and files in site-packages matching module names, check sizes
+$largeModules = @()
+foreach ($moduleName in $modulesArray) {
+    $modulePath = Join-Path -Path $venvPath -ChildPath $moduleName
+    if (Test-Path $modulePath) {
+        $dirSize = (Get-ChildItem -LiteralPath $modulePath -Recurse | Measure-Object -Property Length -Sum).Sum
+        if ($dirSize -ge $sizeThreshold) {
+            #Write-Output "Found large module $modulePath with size $dirSize (exceeding threshold $sizeThreshold)"
+            $largeModules += $moduleName
+        }
+    }
+}
+
+# Whitelisted modules to keep (the base packages listed here are incomplete, but the site-packages should be complete in this definition)
+$whitelistedModules = @(
+    'sys', 'os', "collections", "encodings", "codecs", "io",
+    "abc", "stat", "_collections_abc", "ntpath", "genericpath",
+    "__future__", "contextlib", "operator", "keyword", "heapq",
+    "reprlib", "functools", "types", "ctypes", "_ctypes", "inspect",
+    "dis", "opcode", "enum", "importlib", "warnings", "linecache",
+    "tokenize", "re", "sre_compile",
+    "requests", "urllib3", "charset-normalizer", 'pykotor', 'ply',
+    "charset_normalizer", "idna", "certifi", "Crypto"
 )
 
-if ($noprompt) { $argsList += "--noprompt" }
-if ($upx_dir) { $argsList += @("--upx-dir", $upx_dir) }
+# Exclude these large modules, don't fill excludes with an element if it's in the whitelist.
+$excludeModules = @($largeModules | Where-Object { $whitelistedModules -notcontains $_ })
+$excludedPaths = @(
+    (Resolve-Path -LiteralPath "$rootPath\Libraries\PyKotorGL\src"),
+    (Resolve-Path -LiteralPath "$rootPath\Libraries\PyKotorFont\src")
+)
 
-# If pythonExePath is set (venv already created by workflow), pass --skip-venv and --python-exe
-$pythonExeToUse = $null
-if ($env:pythonExePath) {
-  $pythonExeToUse = $env:pythonExePath
-}
-else {
-  # Try to construct from venv_name (workflow creates venv with specific naming)
-  $os = Get-LocalOS
-  if ($os -eq "Windows") {
-    $possiblePython = Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Definition) "..\$venv_name\Scripts\python.exe"
-  }
-  else {
-    $possiblePython = Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Definition) "..\$venv_name\bin\python"
-  }
-  if (Test-Path $possiblePython) {
-    $pythonExeToUse = $possiblePython
-  }
+# Split PYTHONPATH into an array, filter out excluded paths, then rejoin
+$filteredPythonPath = ($env:PYTHONPATH -split ';' | Where-Object {
+    $currentPath = $_
+    $isExcluded = $false
+    foreach ($excludedPath in $excludedPaths) {
+        if ($currentPath -like "*$excludedPath*") {
+            $isExcluded = $true
+            break
+        }
+    }
+    -not $isExcluded
+}) -join ';'
+
+# Update PYTHONPATH to the filtered version
+Write-Host "Old PYTHONPATH: $env:PYTHONPATH"
+$env:PYTHONPATH = $filteredPythonPath
+Write-Host "New PYTHONPATH: $env:PYTHONPATH"
+
+
+$src_path = (Resolve-Path -LiteralPath "$rootPath/Tools/HoloPatcher/src")
+$current_working_dir = (Get-Location).Path
+Set-Location -LiteralPath $src_path
+Write-Host "SRC_PATH: $src_path cwd: $current_working_dir"
+
+# Determine the final executable path
+$finalExecutablePath = $null
+if ((Get-OS) -eq "Windows") {
+    $finalExecutablePath = "$rootPath\dist\HoloPatcher.exe"
+} elseif ((Get-OS) -eq "Linux") {
+    $finalExecutablePath = "$rootPath/dist/HoloPatcher"
+} elseif ((Get-OS) -eq "Mac") {
+    $finalExecutablePath = "$rootPath/dist/HoloPatcher.app"
 }
 
-if ($pythonExeToUse) {
-  $argsList += "--skip-venv"
-  $argsList += @("--python-exe", $pythonExeToUse)
-  Write-Host "Using pre-created venv Python: $pythonExeToUse"
+# Delete the final executable if it exists
+if (Test-Path -LiteralPath $finalExecutablePath) {
+    Remove-Item -LiteralPath $finalExecutablePath -Force
 }
 
-& "$scriptDir/compile_tool.ps1" @argsList
-exit $LASTEXITCODE
+Write-Host "Compiling HoloPatcher..."
+$iconExtension = if ((Get-OS) -eq 'Mac') {'icns'} else {'ico'}
+$pyInstallerArgs = @{
+    'exclude-module' = @(
+        'numpy',
+        'PyQt5',
+        'PIL',
+        'Pillow',
+        'matplotlib',
+        'PyOpenGL',
+        'PyGLM',
+        'dl_translate',
+        'torch',
+        'deep_translator',
+        'deepl-cli',
+        'playwright',
+        'pyquery',
+        'arabic-reshaper',
+        'PyQt5-Qt5',
+        'PyQt5-sip',
+        'sip',
+        'PyQt5-tools'
+        'qt5-applications'
+        'watchdog',
+        'Markdown',
+        'setuptools',
+        'java',
+        'java.lang',
+        'wheel',
+        'ruff',
+        'pylint',
+        'pykotor.gl',
+        'pykotorgl',
+        'pykotor.font',
+        'pykotorfont'
+        'pykotor.secure_xml',
+        'mypy-extensions',
+        'mypy',
+        'isort',
+        'install_playwright',
+        'greenlet',
+        'cssselect',
+        'beautifulsoup4'
+    )
+    'upx-exclude' = @(
+        '_uuid.pyd',
+        'api-ms-win-crt-environment-l1-1-0.dll',
+        'api-ms-win-crt-string-l1-1-0.dll',
+        'api-ms-win-crt-convert-l1-1-0.dll',
+        'api-ms-win-crt-heap-l1-1-0.dll',
+        'api-ms-win-crt-conio-l1-1-0.dll',
+        'api-ms-win-crt-filesystem-l1-1-0.dll',
+        'api-ms-win-crt-stdio-l1-1-0.dll',
+        'api-ms-win-crt-process-l1-1-0.dll',
+        'api-ms-win-crt-locale-l1-1-0.dll',
+        'api-ms-win-crt-time-l1-1-0.dll',
+        'api-ms-win-crt-math-l1-1-0.dll',
+        'api-ms-win-crt-runtime-l1-1-0.dll',
+        'api-ms-win-crt-utility-l1-1-0.dll',
+        'python3.dll',
+        'api-ms-win-crt-private-l1-1-0.dll',
+        'api-ms-win-core-timezone-l1-1-0.dll',
+        'api-ms-win-core-file-l1-1-0.dll',
+        'api-ms-win-core-processthreads-l1-1-1.dll',
+        'api-ms-win-core-processenvironment-l1-1-0.dll',
+        'api-ms-win-core-debug-l1-1-0.dll',
+        'api-ms-win-core-localization-l1-2-0.dll',
+        'api-ms-win-core-processthreads-l1-1-0.dll',
+        'api-ms-win-core-errorhandling-l1-1-0.dll',
+        'api-ms-win-core-handle-l1-1-0.dll',
+        'api-ms-win-core-util-l1-1-0.dll',
+        'api-ms-win-core-profile-l1-1-0.dll',
+        'api-ms-win-core-rtlsupport-l1-1-0.dll',
+        'api-ms-win-core-namedpipe-l1-1-0.dll',
+        'api-ms-win-core-libraryloader-l1-1-0.dll',
+        'api-ms-win-core-file-l1-2-0.dll',
+        'api-ms-win-core-synch-l1-2-0.dll',
+        'api-ms-win-core-sysinfo-l1-1-0.dll',
+        'api-ms-win-core-console-l1-1-0.dll',
+        'api-ms-win-core-string-l1-1-0.dll',
+        'api-ms-win-core-memory-l1-1-0.dll',
+        'api-ms-win-core-synch-l1-1-0.dll',
+        'api-ms-win-core-interlocked-l1-1-0.dll',
+        'api-ms-win-core-datetime-l1-1-0.dll',
+        'api-ms-win-core-file-l2-1-0.dll',
+        'api-ms-win-core-heap-l1-1-0.dll'
+    )
+    #'debug' = 'imports'
+    'log-level' = 'INFO'
+    'clean' = $true
+    'windowed' = $true  # https://github.com/pyinstaller/pyinstaller/wiki/FAQ#mac-os-x  https://pyinstaller.org/en/stable/usage.html#cmdoption-w
+    'onefile' = $true
+    'noconfirm' = $true
+    'distpath' = ($rootPath + $pathSep + "dist")
+    'name' = 'HoloPatcher'
+    'upx-dir' = $upx_dir
+    'icon' = "resources$pathSep" + "icons$pathSep" + "patcher_icon_v2.$iconExtension"
+}
+
+$pyInstallerArgs = $pyInstallerArgs.GetEnumerator() | ForEach-Object {
+    $key = $_.Key
+    $value = $_.Value
+
+    if ($value -is [System.Array]) {
+        # Handle array values
+        $arr = @()
+        foreach ($elem in $value) {
+            if ($key -eq "exclude-module" -and $whitelistedModules.Contains($key)) {
+                Write-Host "Not excluding whitelisted module: $elem"
+                continue
+            }
+            $arr += "--$key=$elem"
+        }
+        if ($key -eq "exclude-module" -and $exclusive_whitelist -eq $true) {
+            Write-Host "Handling excluded whitelist: excluding $(($excludeModules | Measure-Object).Count) more found modules"
+            foreach ($elem in $excludeModules) {
+                $arr += "--$key=$elem"
+            }
+        }
+        $arr
+    } else {
+        # Handle key-value pair arguments
+        if ($value -eq $true) {
+            "--$key"
+        } elseif ($value -eq $false) {
+        } else {
+            "--$key=$value"
+        }
+    }
+}
+
+$tclTkPath = $null
+if ((Get-OS) -eq "Mac") {
+    try {
+        $tclTkPath = $(brew --prefix tcl-tk)
+        Write-Output "tcl/tk path: $tclTkPath"
+    } catch {
+        Write-Warning "Unable to determine Tcl/Tk path using Homebrew"
+    }
+}
+
+if ((Get-OS) -eq "Mac") {
+    $pythonCommand = @"
+import tkinter
+root = tkinter.Tk()
+print(root.tk.exprstring('$tcl_library'))
+print(root.tk.exprstring('$tk_library'))
+"@
+    $output = & $pythonExePath -c $pythonCommand
+    
+    # The output will contain both paths, one per line. Split them.
+    $lines = $output -split "`n"
+    $tcl_library = $lines[0]
+    $tk_library = $lines[1]
+    
+    # Output the variables to verify
+    Write-Host "Raw output: $output"
+    Write-Host "Tcl library path: $tcl_library"
+    Write-Host "Tk library path: $tk_library"
+    
+    Write-Host "TCL_LIBRARY current env: '$Env:TCL_LIBRARY'"
+    Write-Host "TK_LIBRARY current env: '$Env:TK_LIBRARY'"
+    
+    #$Env:TCL_LIBRARY = $tcl_library
+    #$Env:TK_LIBRARY = $tk_library
+}
+
+# Add PYTHONPATH paths as arguments
+$env:PYTHONPATH -split ';' | ForEach-Object {
+    $pyInstallerArgs += "--path=$_"
+}
+
+# Define each argument as an element in an array
+$argumentsArray = @(
+    "-m",
+    "PyInstaller"
+)
+# Unpack $pyInstallerArgs into $argumentsArray
+foreach ($arg in $pyInstallerArgs) {
+    $argumentsArray += $arg
+}
+
+# Append the final script path
+$argumentsArray += "holopatcher/__main__.py"
+
+# Use the call operator with the arguments array
+Write-Host "Executing command: $pythonExePath $argumentsArray"
+& $pythonExePath $argumentsArray
+
+# Check if the final executable exists
+if (-not (Test-Path -LiteralPath $finalExecutablePath)) {
+    Write-Error "HoloPatcher could not be compiled, scroll up to find out why"   
+} else {
+    Write-Host "HoloPatcher was compiled to '$finalExecutablePath'"
+}
+Set-Location -LiteralPath $current_working_dir

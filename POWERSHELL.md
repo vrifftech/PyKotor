@@ -1,132 +1,104 @@
-# PowerShell Setup for PyKotor
+# Setting Up PowerShell for PyKotor
 
-This guide helps Windows users configure PowerShell to run PyKotor scripts and addresses common execution policy issues.
+## Overview
 
-## Installation
+PowerShell is a task automation and configuration management framework from Microsoft, consisting of a command-line shell and the associated scripting language. For Windows users working with PyKotor, certain scripts and utilities may require PowerShell. This guide will help you set up PowerShell on your system and address common issues related to script execution policies.
+
+## Installing PowerShell
 
 ### Windows
 
-PowerShell comes pre-installed on modern Windows versions. To update to the latest version:
+PowerShell comes pre-installed on most modern versions of Windows. However, if you need to install or update PowerShell, follow these steps:
 
-1. Visit the [PowerShell GitHub releases](https://github.com/PowerShell/PowerShell/releases)
-2. Download the installer for your Windows version
-3. Run the installer and follow the prompts
+1. Visit the [official PowerShell GitHub page](https://github.com/PowerShell/PowerShell).
+2. Download the latest release suitable for your Windows version.
+3. Run the installer and follow the on-screen instructions.
 
-### Linux/macOS
+### Linux/Mac
 
-Install PowerShell using your package manager:
+1. Open a terminal window.
+2. Run the following command to install PowerShell:
 
-**Ubuntu/Debian:**
-```bash
-sudo apt-get install -y powershell
-```
+   # For Ubuntu-based distributions:
+   ```bash
+   sudo apt-get install -y powershell
+   ```
 
-**Fedora:**
-```bash
-sudo dnf install -y powershell
-```
+   # For Fedora
+   ```bash
+   sudo dnf install -y powershell
+   ```
 
-**macOS:**
-```bash
-brew install --cask powershell
-# or
-brew install pwsh
-```
+   # For macOS
+   ```bash
+   brew install --cask powershell
+   ```
+   
+   or
 
-**Alternative:** Use the automated installer:
+   ```bash
+   brew install pwsh
+   ```
+
+3. Once installed, you can launch PowerShell by typing `pwsh` in your terminal.
+
+#### Alternatives
+
+If you are struggling to get Powershell setup on your system, and you're using linux/mac, try running our automated installer instead:
 ```bash
 ./install_powershell.sh
 ```
 
-Launch PowerShell by typing `pwsh` in your terminal.
+## Running PowerShell Scripts
 
-## Execution Policy
+To run PowerShell scripts (`.ps1` files), you might need to change the execution policy. By default, PowerShell restricts the execution of scripts to prevent unauthorized scripts from running on your system.
 
-By default, PowerShell restricts script execution for security. To run PyKotor scripts:
+1. Open PowerShell as an administrator.
+2. Run the following command to allow script execution:
 
-### Set Policy Globally (Requires Administrator)
-
-1. Open PowerShell as administrator
-2. Run:
    ```powershell
    Set-ExecutionPolicy Unrestricted
    ```
-3. Confirm with `Y`
 
-### Bypass Policy for Single Script
+3. Choose `Y` when prompted to change the execution policy.
 
-If you lack admin privileges or prefer temporary bypass:
+This command allows our scripts to run on your system. If you do not have admin privileges, see the next section.
+
+## Common Issues
+
+### Script Not Digitally Signed
+
+If you encounter an error stating that a script is not digitally signed, you can bypass this error temporarily by running the script with the following command:
 
 ```powershell
-PowerShell.exe -ExecutionPolicy Bypass -File path\to\script.ps1
+PowerShell.exe -ExecutionPolicy Bypass -File path\to\your\script.ps1
 ```
 
-Replace `path\to\script.ps1` with your actual script path.
+Replace `path\to\your\script.ps1` with the actual path to the script you want to run.
 
-## PyKotor Development Scripts
+## Using PowerShell for PyKotor Development
 
-### Running Development Setup
+When working with the PyKotor source files directly from GitHub, you may need to run PowerShell scripts for setting up the development environment. For instance, `install_python_venv.ps1` is a PowerShell script that automates the creation of a Python virtual environment and sets up necessary environment variables for PyKotor development.
 
-After cloning the repository:
+### Running `install_python_venv.ps1`
 
-**Windows:**
-```powershell
-./install_python_venv.ps1
-```
+1. Clone the PyKotor repository and navigate to the project directory.
+2. Run the following command(s):
 
-**macOS/Linux:**
+#### Windows:
+
+   ```powershell
+   ./install_python_venv.ps1
+   ```
+#### Mac/Linux:
+
 ```bash
 pwsh
 ./install_python_venv.ps1
 ```
 
-This script:
-- Checks for Python 3.8+
-- Creates a virtual environment
-- Installs PyKotor dependencies
-- Configures environment variables
+This script checks for the appropriate Python version, installs it if necessary, and sets up a virtual environment for PyKotor development.
 
-### Building Executables
+## Conclusion
 
-The `compile/` folder contains PowerShell scripts for building standalone executables:
-
-**Setup dependencies:**
-```powershell
-./compile/deps_holopatcher.ps1
-./compile/deps_toolset.ps1
-```
-
-**Build executables:**
-```powershell
-./compile/compile_holopatcher.ps1
-./compile/compile_toolset.ps1
-```
-
-Output executables are placed in the `dist/` folder.
-
-## Troubleshooting
-
-### "Script is not digitally signed"
-
-Use the bypass method shown above, or set execution policy to `RemoteSigned`:
-
-```powershell
-Set-ExecutionPolicy RemoteSigned
-```
-
-### Permission Denied
-
-Run PowerShell as administrator or use the `-ExecutionPolicy Bypass` flag.
-
-### Script Not Found
-
-Ensure you're in the correct directory:
-```powershell
-cd path\to\PyKotor
-```
-
-## Additional Resources
-
-- [Official PowerShell Documentation](https://learn.microsoft.com/en-us/powershell/)
-- [PowerShell GitHub Repository](https://github.com/PowerShell/PowerShell)
-- [About Execution Policies](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_execution_policies)
+This guide provided an overview of how to install PowerShell on different operating systems, how to configure your system to run PowerShell scripts, and how to use PowerShell for setting up the PyKotor development environment. For more detailed information, refer to the [official PowerShell documentation](https://learn.microsoft.com/en-us/powershell/).

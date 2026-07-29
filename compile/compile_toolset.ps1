@@ -1,121 +1,191 @@
-#!/usr/bin/env pwsh
-
 [CmdletBinding(PositionalBinding=$false)]
 param(
-    [switch]$noprompt,
-    [string]$venv_name = ".venv",
-    [string]$force_python_version,
-    [string]$upx_dir
+  [switch]$noprompt,
+  [string]$venv_name = ".venv",
+  [string]$upx_dir
 )
+$this_noprompt = $noprompt
+
 $scriptPath = Split-Path -Parent $MyInvocation.MyCommand.Definition
-$repoRootPath = (Resolve-Path -LiteralPath "$scriptPath/..").Path
+$rootPath = (Resolve-Path -LiteralPath "$scriptPath/..").Path
+Write-Host "The path to the script directory is: $scriptPath"
+Write-Host "The path to the root directory is: $rootPath"
 
-function Get-LocalOS {
-    if ($IsWindows) { return "Windows" }
-    if ($IsMacOS) { return "Mac" }
-    if ($IsLinux) { return "Linux" }
-    return "Unknown"
-}
-
-$toolPath = (Resolve-Path -LiteralPath "$repoRootPath/Tools/HolocronToolset").Path
-$toolSrcDir = (Resolve-Path -LiteralPath "$toolPath/src").Path
-$iconExtension = if ((Get-LocalOS) -eq 'Mac') { 'icns' } else { 'ico' }
-$iconPath = "$toolSrcDir/resources/icons/sith.$iconExtension"
-$dataSeparator = if ((Get-LocalOS) -eq "Windows") { ";" } else { ":" }
-$argsList = @(
-    "--tool-path", $toolPath
-    "--entrypoint", "toolset/__main__.py"
-    "--name", "HolocronToolset"
-    "--distpath", "$repoRootPath/dist"
-    "--workpath", "$toolSrcDir/build"
-    "--icon", $iconPath
-    "--windowed"
-    "--onefile"
-    "--noconfirm"
-    "--clean"
-    "--hidden-import", "utility"
-    "--hidden-import", "utility.error_handling"
-    "--hidden-import", "utility.common"
-    "--hidden-import", "utility.system"
-    "--hidden-import", "utility.gui"
-    "--hidden-import", "utility.updater"
-    "--include-wiki-if-present"
-    "--add-data-if-exists", "$repoRootPath/vendor/kotorblender/io_scene_kotor${dataSeparator}kotorblender/io_scene_kotor"
-    "--venv-name", $venv_name
-)
-
-$qtApi = if ($env:QT_API) { $env:QT_API } else { "PyQt6" }
-$argsList += @("--qt-api", $qtApi, "--exclude-other-qt")
-
-$upxExcludes = @(
-    "_uuid.pyd",
-    "api-ms-win-crt-environment-l1-1-0.dll",
-    "api-ms-win-crt-string-l1-1-0.dll",
-    "api-ms-win-crt-convert-l1-1-0.dll",
-    "api-ms-win-crt-heap-l1-1-0.dll",
-    "api-ms-win-crt-conio-l1-1-0.dll",
-    "api-ms-win-crt-filesystem-l1-1-0.dll",
-    "api-ms-win-crt-stdio-l1-1-0.dll",
-    "api-ms-win-crt-process-l1-1-0.dll",
-    "api-ms-win-crt-locale-l1-1-0.dll",
-    "api-ms-win-crt-time-l1-1-0.dll",
-    "api-ms-win-crt-math-l1-1-0.dll",
-    "api-ms-win-crt-runtime-l1-1-0.dll",
-    "api-ms-win-crt-utility-l1-1-0.dll",
-    "python3.dll",
-    "api-ms-win-crt-private-l1-1-0.dll",
-    "api-ms-win-core-timezone-l1-1-0.dll",
-    "api-ms-win-core-file-l1-1-0.dll",
-    "api-ms-win-core-processthreads-l1-1-1.dll",
-    "api-ms-win-core-processenvironment-l1-1-0.dll",
-    "api-ms-win-core-debug-l1-1-0.dll",
-    "api-ms-win-core-localization-l1-2-0.dll",
-    "api-ms-win-core-processthreads-l1-1-0.dll",
-    "api-ms-win-core-errorhandling-l1-1-0.dll",
-    "api-ms-win-core-handle-l1-1-0.dll",
-    "api-ms-win-core-util-l1-1-0.dll",
-    "api-ms-win-core-profile-l1-1-0.dll",
-    "api-ms-win-core-rtlsupport-l1-1-0.dll",
-    "api-ms-win-core-namedpipe-l1-1-0.dll",
-    "api-ms-win-core-libraryloader-l1-1-0.dll",
-    "api-ms-win-core-file-l1-2-0.dll",
-    "api-ms-win-core-synch-l1-2-0.dll",
-    "api-ms-win-core-sysinfo-l1-1-0.dll",
-    "api-ms-win-core-console-l1-1-0.dll",
-    "api-ms-win-core-string-l1-1-0.dll",
-    "api-ms-win-core-memory-l1-1-0.dll",
-    "api-ms-win-core-synch-l1-1-0.dll",
-    "api-ms-win-core-interlocked-l1-1-0.dll",
-    "api-ms-win-core-datetime-l1-1-0.dll",
-    "api-ms-win-core-file-l2-1-0.dll",
-    "api-ms-win-core-heap-l1-1-0.dll"
-)
-foreach ($item in $upxExcludes) { $argsList += @("--upx-exclude", $item) }
-if ($upx_dir) { $argsList += @("--upx-dir", $upx_dir) }
-if ($noprompt) { $argsList += "--noprompt" }
-
-# If pythonExePath is set (venv already created by workflow), pass --skip-venv and --python-exe
-$pythonExeToUse = $null
-if ($env:pythonExePath) {
-    $pythonExeToUse = $env:pythonExePath
+Write-Host "Initializing python virtual environment..."
+if ($this_noprompt) {
+    . $rootPath/install_python_venv.ps1 -noprompt -venv_name $venv_name
 } else {
-    # Try to construct from venv_name (workflow creates venv with specific naming)
-    $os = Get-LocalOS
-    if ($os -eq "Windows") {
-        $possiblePython = Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Definition) "..\$venv_name\Scripts\python.exe"
+    . $rootPath/install_python_venv.ps1 -venv_name $venv_name
+}
+
+$current_working_dir = (Get-Location).Path
+Set-Location -LiteralPath (Resolve-Path -LiteralPath "$rootPath/Tools/HolocronToolset/src").Path
+
+# Determine the final executable path
+$finalExecutablePath = $null
+if ((Get-OS) -eq "Windows") {
+    $finalExecutablePath = "$rootPath\dist\HolocronToolset.exe"
+} elseif ((Get-OS) -eq "Linux") {
+    $finalExecutablePath = "$rootPath/dist/HolocronToolset"
+} elseif ((Get-OS) -eq "Mac") {
+    $finalExecutablePath = "$rootPath/dist/HolocronToolset.app"
+}
+
+# Delete the final executable if it exists
+if (Test-Path -LiteralPath $finalExecutablePath) {
+    Remove-Item -LiteralPath $finalExecutablePath -Force
+}
+
+Write-Host "Extra PYTHONPATH paths:\n'$env:PYTHONPATH'\n\n"
+$iconExtension = if ((Get-OS) -eq 'Mac') {'icns'} else {'ico'}
+$pyInstallerArgs = @{
+    'exclude-module' = @(
+        'dl_translate',
+        'torch'
+    )
+    'upx-exclude' = @(
+        '_uuid.pyd',
+        'api-ms-win-crt-environment-l1-1-0.dll',
+        'api-ms-win-crt-string-l1-1-0.dll',
+        'api-ms-win-crt-convert-l1-1-0.dll',
+        'api-ms-win-crt-heap-l1-1-0.dll',
+        'api-ms-win-crt-conio-l1-1-0.dll',
+        'api-ms-win-crt-filesystem-l1-1-0.dll',
+        'api-ms-win-crt-stdio-l1-1-0.dll',
+        'api-ms-win-crt-process-l1-1-0.dll',
+        'api-ms-win-crt-locale-l1-1-0.dll',
+        'api-ms-win-crt-time-l1-1-0.dll',
+        'api-ms-win-crt-math-l1-1-0.dll',
+        'api-ms-win-crt-runtime-l1-1-0.dll',
+        'api-ms-win-crt-utility-l1-1-0.dll',
+        'python3.dll',
+        'api-ms-win-crt-private-l1-1-0.dll',
+        'api-ms-win-core-timezone-l1-1-0.dll',
+        'api-ms-win-core-file-l1-1-0.dll',
+        'api-ms-win-core-processthreads-l1-1-1.dll',
+        'api-ms-win-core-processenvironment-l1-1-0.dll',
+        'api-ms-win-core-debug-l1-1-0.dll',
+        'api-ms-win-core-localization-l1-2-0.dll',
+        'api-ms-win-core-processthreads-l1-1-0.dll',
+        'api-ms-win-core-errorhandling-l1-1-0.dll',
+        'api-ms-win-core-handle-l1-1-0.dll',
+        'api-ms-win-core-util-l1-1-0.dll',
+        'api-ms-win-core-profile-l1-1-0.dll',
+        'api-ms-win-core-rtlsupport-l1-1-0.dll',
+        'api-ms-win-core-namedpipe-l1-1-0.dll',
+        'api-ms-win-core-libraryloader-l1-1-0.dll',
+        'api-ms-win-core-file-l1-2-0.dll',
+        'api-ms-win-core-synch-l1-2-0.dll',
+        'api-ms-win-core-sysinfo-l1-1-0.dll',
+        'api-ms-win-core-console-l1-1-0.dll',
+        'api-ms-win-core-string-l1-1-0.dll',
+        'api-ms-win-core-memory-l1-1-0.dll',
+        'api-ms-win-core-synch-l1-1-0.dll',
+        'api-ms-win-core-interlocked-l1-1-0.dll',
+        'api-ms-win-core-datetime-l1-1-0.dll',
+        'api-ms-win-core-file-l2-1-0.dll',
+        'api-ms-win-core-heap-l1-1-0.dll'
+    )
+    'clean' = $true
+    'noconsole' = $true  # https://github.com/pyinstaller/pyinstaller/wiki/FAQ#mac-os-x  https://pyinstaller.org/en/stable/usage.html#cmdoption-w
+    'onefile' = $true
+    'noconfirm' = $true
+    #'debug' = 'all'
+    'name' = "HolocronToolset"
+    'distpath'=($rootPath + $pathSep + "dist")
+    'upx-dir' = $upx_dir
+    'icon'="resources/icons/sith.$iconExtension"
+}
+if (-not $env:QT_API) {
+    $env:QT_API = "PyQt5"  # Default to PyQt5 if QT_API is not set
+}
+switch ($env:QT_API) {
+    { $_ -in "PyQt5", "PyQt6", "PySide2", "PySide6", "pyqt5", "pyqt6", "pyside2", "pyside6", "default" } {
+        # Define a dictionary for mapping lowercase to correct case
+        $apiMapping = @{
+            "pyqt5" = "PyQt5";
+            "pyqt6" = "PyQt6";
+            "pyside2" = "PySide2";
+            "pyside6" = "PySide6"
+        }
+
+        # Normalize $env:QT_API based on the dictionary
+        if ($apiMapping.ContainsKey($env:QT_API.ToLower())) {
+            $env:QT_API = $apiMapping[$env:QT_API.ToLower()]
+            Write-Host "converted QT_API to '$env:QT_API'"
+        } else {
+            Write-Error "Invalid QT_API: '$env:QT_API', hopefully pyinstaller figures it out..."
+        }
+
+        # Default modules to exclude
+        $modulesToExclude = @("PyQt5", "PyQt6", "PySide2", "PySide6") | Where-Object { $_ -ne $env:QT_API }
+
+        # Add modules to the exclude list
+        $tempArray = $pyInstallerArgs['exclude-module'] + $modulesToExclude
+        $tempArrayString = $tempArray -join ", "
+        Write-Host "Excluding: $tempArrayString"
+        $pyInstallerArgs['exclude-module'] = $tempArray
+    }
+}
+Write-Host "QT_API: $env:QT_API"
+
+$pyInstallerArgs = $pyInstallerArgs.GetEnumerator() | ForEach-Object {
+    $key = $_.Key
+    $value = $_.Value
+
+    if ($value -is [System.Array]) {
+        # Handle array values
+        $arr = @()
+        foreach ($elem in $value) {
+            $arr += "--$key=$elem"
+        }
+        $arr
     } else {
-        $possiblePython = Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Definition) "..\$venv_name\bin\python"
-    }
-    if (Test-Path $possiblePython) {
-        $pythonExeToUse = $possiblePython
+        # Handle key-value pair arguments
+        if ($value -eq $true) {
+            "--$key"
+        } elseif ($value -eq $false) {
+        } else {
+            "--$key=$value"
+        }
     }
 }
 
-if ($pythonExeToUse) {
-    $argsList += "--skip-venv"
-    $argsList += @("--python-exe", $pythonExeToUse)
-    Write-Host "Using pre-created venv Python: $pythonExeToUse"
+# Add PYTHONPATH paths as arguments
+$env:PYTHONPATH -split ';' | ForEach-Object {
+    $pyInstallerArgs += "--path=$_"
 }
 
-& "$scriptPath/compile_tool.ps1" @argsList
-exit $LASTEXITCODE
+# Define each argument as an element in an array
+$argumentsArray = @(
+    "-m",
+    "PyInstaller"
+)
+
+# Unpack $pyInstallerArgs into $argumentsArray
+foreach ($arg in $pyInstallerArgs) {
+    $argumentsArray += $arg
+}
+if ($env:GITHUB_ACTIONS -eq "true") {  # HACK for github runners using python 3.12
+    $pyInstallerArgs += '--paths C:\Miniconda\'
+}
+
+# Append the final script path
+$argumentsArray += "toolset/__main__.py"
+
+# Use the call operator with the arguments array
+Write-Host "Executing command: $pythonExePath $argumentsArray"
+& $pythonExePath $argumentsArray
+
+# Check if the final executable exists
+if (-not (Test-Path -LiteralPath $finalExecutablePath)) {
+    Write-Error "Holocron Toolset could not be compiled, scroll up to find out why"   
+} else {
+    Write-Host "Holocron Toolset was compiled to '$finalExecutablePath'"
+}
+Set-Location -LiteralPath $current_working_dir
+
+if (-not $this_noprompt) {
+    Write-Host "Press any key to exit..."
+    $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+}

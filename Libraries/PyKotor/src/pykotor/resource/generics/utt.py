@@ -1,67 +1,58 @@
-"""UTT (trigger) generic: GFF-based trigger definitions, scripts, and trap settings."""
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
 from pykotor.common.language import LocalizedString
 from pykotor.common.misc import Game, ResRef
-from pykotor.resource.formats.gff import GFF, GFFContent, bytes_gff, read_gff, write_gff
+from pykotor.resource.formats.gff import GFF, GFFContent, read_gff, write_gff
+from pykotor.resource.formats.gff.gff_auto import bytes_gff
 from pykotor.resource.type import ResourceType
 
 if TYPE_CHECKING:
-    from pykotor.resource.formats.gff import GFFStruct
     from pykotor.resource.type import SOURCE_TYPES, TARGET_TYPES
 
 
 class UTT:
     """Stores trigger data.
 
-    UTT files are GFF-based format files that store trigger definitions including
-    trap mechanics, script hooks, and activation settings.
-
-    Trigger templates are GFF files with tag, ``TemplateResRef``, faction/cursor/highlight, trap
-    flags and DCs, script hooks (heartbeat, enter/exit, user-defined, trap, disarm, click), and
-    toolset-only display fields. Geometry for placed instances lives in the GIT, not only the UTT
-    root. Observed retail KotOR I and TSL use the same overall schema. Loader symbols and RVAs are
-    migrated to ``wiki/reverse_engineering_findings.md``.
-
-    Note: ``GFFContent.UTT``.
-
     Attributes:
     ----------
-        resref: "TemplateResRef" field. The resource reference for this trigger template.
-        tag: "Tag" field. Tag identifier for this trigger.
-        auto_remove_key: "AutoRemoveKey" field. Whether key is removed after use.
-        faction_id: "Faction" field. Faction identifier.
-        cursor_id: "Cursor" field. Cursor type identifier.
-        highlight_height: "HighlightHeight" field. Height of highlight area.
-        key_name: "KeyName" field. Tag of the key item required.
-        type_id: "Type" field. Trigger type identifier.
-        is_trap: "TrapFlag" field. Whether trigger has a trap.
-        trap_type: "TrapType" field. Type of trap.
-        trap_once: "TrapOneShot" field. Whether trap fires only once.
-        trap_detectable: "TrapDetectable" field. Whether trap is detectable.
-        trap_detect_dc: "TrapDetectDC" field. Difficulty class to detect trap.
-        trap_disarmable: "TrapDisarmable" field. Whether trap is disarmable.
-        trap_disarm_dc: "DisarmDC" field. Difficulty class to disarm trap.
-        on_disarm: "OnDisarm" field. Script to run when trap is disarmed.
-        on_trap_triggered: "OnTrapTriggered" field. Script to run when trap triggers.
-        on_click: "OnClick" field. Script to run when trigger is clicked.
-        on_heartbeat: "ScriptHeartbeat" field. Script to run on heartbeat.
-        on_enter: "ScriptOnEnter" field. Script to run when area is entered.
-        on_exit: "ScriptOnExit" field. Script to run when area is exited.
-        on_user_defined: "ScriptUserDefine" field. Script to run on user-defined event.
-        comment: "Comment" field. Developer comment.
-        palette_id: "PaletteID" field. Palette identifier. Used in toolset only.
-        name: "LocalizedName" field. Localized name. Not used by the game engine.
-        loadscreen_id: "LoadScreenID" field. Load screen identifier. Not used by the game engine.
-        portrait_id: "PortraitId" field. Portrait identifier. Not used by the game engine.
+        tag: "Tag" field.
+        resref: "TemplateResRef" field.
+        auto_remove_key: "AutoRemoveKey" field.
+        faction_id: "Faction" field.
+        cursor_id: "Cursor" field.
+        highlight_height: "HighlightHeight" field.
+        key_name: "KeyName" field.
+        type_id: "Type" field.
+        trap_detectable: "TrapDetectable" field.
+        trap_detect_dc: "TrapDetectDC" field.
+        trap_disarmable: "TrapDisarmable" field.
+        trap_disarm_dc: "DisarmDC" field.
+        is_trap: "TrapFlag" field.
+        trap_once: "TrapOneShot" field.
+        trap_type: "TrapType" field.
+        on_disarm: "OnDisarm" field.
+        on_trap_triggered: "OnTrapTriggered" field.
+        on_click: "OnClick" field.
+        on_heartbeat: "ScriptHeartbeat" field.
+        on_enter: "ScriptOnEnter" field.
+        on_exit: "ScriptOnExit" field.
+        on_user_defined: "ScriptUserDefine" field.
+        comment: "Comment" field.
+
+        palette_id: "PaletteID" field. Used in toolset only.
+
+        name: "LocalizedName" field. Not used by the game engine.
+        loadscreen_id: "LoadScreenID" field. Not used by the game engine.
+        portrait_id: "PortraitId" field. Not used by the game engine.
     """
 
     BINARY_TYPE = ResourceType.UTT
 
-    def __init__(self):
+    def __init__(
+        self,
+    ):
         self.resref: ResRef = ResRef.from_blank()
         self.comment: str = ""
         self.tag: str = ""
@@ -91,39 +82,47 @@ class UTT:
         self.on_heartbeat: ResRef = ResRef.from_blank()
         self.on_enter: ResRef = ResRef.from_blank()
         self.on_exit: ResRef = ResRef.from_blank()
-        self.on_user_defined: ResRef = ResRef.from_blank()
+        self.on_user_defined = ResRef.from_blank()
 
         # Deprecated:
         self.portrait_id: int = 0
         self.loadscreen_id: int = 0
         self.palette_id: int = 0
-        self.name = LocalizedString.from_invalid()
+        self.name: LocalizedString = LocalizedString.from_invalid()
 
 
 def construct_utt(
     gff: GFF,
 ) -> UTT:
-    """Constructs a UTT object from a GFF structure.
+    """Constructs a UTT object from a GFF node.
 
-    Missing fields use empty strings/ResRefs, zero numerics, and false trap flags (observed retail).
+    Args:
+    ----
+        gff: GFF - The GFF node to parse
+
+    Returns:
+    -------
+        utt: UTT - The constructed UTT object
+
+    Processing Logic:
+    ----------------
+        - Initialize an empty UTT object
+        - Get the root node of the GFF
+        - Acquire and set various UTT properties by parsing attributes from the root node
+        - Return the completed UTT object.
     """
     utt = UTT()
 
-    root: GFFStruct = gff.root
+    root = gff.root
+
     utt.tag = root.acquire("Tag", "")
     utt.resref = root.acquire("TemplateResRef", ResRef.from_blank())
-    # Key/faction/cursor: AutoRemoveKey, Faction, Cursor, KeyName, HighlightHeight, Type.
     utt.auto_remove_key = bool(root.acquire("AutoRemoveKey", 0))
     utt.faction_id = root.acquire("Faction", 0)
-    # Cursor: BYTE default 0. Omit OK.
     utt.cursor_id = root.acquire("Cursor", 0)
-    # HighlightHeight: FLOAT default 0.0. Omit OK.
     utt.highlight_height = root.acquire("HighlightHeight", 0.0)
-    # KeyName: GFF string "". Omit OK.
     utt.key_name = root.acquire("KeyName", "")
-    # Type: INT32 default 0. Omit OK.
     utt.type_id = root.acquire("Type", 0)
-    # Trap: TrapDetectable, TrapDetectDC, TrapDisarmable, DisarmDC, TrapFlag, TrapOneShot, TrapType.
     utt.trap_detectable = bool(root.acquire("TrapDetectable", 0))
     utt.trap_detect_dc = root.acquire("TrapDetectDC", 0)
     utt.trap_disarmable = bool(root.acquire("TrapDisarmable", 0))
@@ -131,7 +130,6 @@ def construct_utt(
     utt.is_trap = bool(root.acquire("TrapFlag", 0))
     utt.trap_once = bool(root.acquire("TrapOneShot", 0))
     utt.trap_type = root.acquire("TrapType", 0)
-    # Scripts: OnDisarm, OnTrapTriggered, OnClick, ScriptHeartbeat, ScriptOnEnter, ScriptOnExit, ScriptUserDefine.
     utt.on_disarm = root.acquire("OnDisarm", ResRef.from_blank())
     utt.on_trap_triggered = root.acquire("OnTrapTriggered", ResRef.from_blank())
     utt.on_click = root.acquire("OnClick", ResRef.from_blank())
@@ -139,7 +137,6 @@ def construct_utt(
     utt.on_enter = root.acquire("ScriptOnEnter", ResRef.from_blank())
     utt.on_exit = root.acquire("ScriptOnExit", ResRef.from_blank())
     utt.on_user_defined = root.acquire("ScriptUserDefine", ResRef.from_blank())
-    # Comment/LocalizedName/LoadScreenID/PortraitId/PaletteID: toolset/display; defaults "", from_invalid(), 0.
     utt.comment = root.acquire("Comment", "")
     utt.name = root.acquire("LocalizedName", LocalizedString.from_invalid())
     utt.loadscreen_id = root.acquire("LoadScreenID", 0)
@@ -167,7 +164,10 @@ def dismantle_utt(
     -------
         GFF - The dismantled UTT as a GFF structure
 
-    Write the same field set as :func:`construct_utt` reads (observed retail round-trip).
+    Processes the UTT by:
+    - Creating a GFF root node
+    - Setting UTT fields as properties on the root node
+    - Returning the completed GFF.
     """
     gff = GFF(GFFContent.UTT)
 

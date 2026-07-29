@@ -1,4 +1,0 @@
-src/utility/gui/qt/adapters/filesystem/qfiledialog/__pycache__/qfiledialog.cpython-313.pyc
-
-# C extension build outputs (sources live alongside as *.c)
-src/pykotor/gl/native/*.so

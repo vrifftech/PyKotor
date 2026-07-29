@@ -1,16 +1,13 @@
-"""SSF auto: detect format and read/write sound set (binary/XML)."""
-
 from __future__ import annotations
 
-import json
+import os
+
 from typing import TYPE_CHECKING
 
 from pykotor.common.stream import BinaryReader
-from pykotor.resource.formats._base import BiowareEncoder
 from pykotor.resource.formats.ssf.io_ssf import SSFBinaryReader, SSFBinaryWriter
 from pykotor.resource.formats.ssf.io_ssf_xml import SSFXMLReader, SSFXMLWriter
-from pykotor.resource.type import RESOURCE_FORMAT, ResourceType, ToolsetFormat
-from pykotor.tools.encoding import decode_bytes_with_fallbacks
+from pykotor.resource.type import ResourceType
 
 if TYPE_CHECKING:
     from pykotor.resource.formats.ssf.ssf_data import SSF
@@ -41,21 +38,29 @@ def detect_ssf(
         The format of the SSF data.
     """
 
-    def check(first4: str) -> RESOURCE_FORMAT:
+    def check(first4: str) -> ResourceType:
         if first4 == "SSF ":
             return ResourceType.SSF
-        if "<" in first4:
-            return ToolsetFormat.SSF_XML
-        if "{" in first4:
-            return ToolsetFormat.SSF_JSON
+        if "<" in first4:  # sourcery skip: assign-if-exp, reintroduce-else
+            return ResourceType.SSF_XML
+        # if "{" in first4:
+        #    return ResourceType.SSF_JSON
         # if "," in first4:
         #    return ResourceType.SSF_CSV
         return ResourceType.INVALID
 
-    file_format: RESOURCE_FORMAT
+    file_format: ResourceType
     try:
-        with BinaryReader.from_auto(source, offset) as reader:
-            file_format = check(reader.read_string(4))
+        if isinstance(source, (os.PathLike, str)):
+            with BinaryReader.from_file(source, offset) as reader:
+                file_format = check(reader.read_string(4))
+        elif isinstance(source, (memoryview, bytes, bytearray)):
+            file_format = check(bytes(source[:4]).decode("ascii", "ignore"))
+        elif isinstance(source, BinaryReader):
+            file_format = check(source.read_string(4))
+            source.skip(-4)
+        else:
+            file_format = ResourceType.INVALID
     except (FileNotFoundError, PermissionError, IsADirectoryError):
         raise
     except OSError:
@@ -68,7 +73,6 @@ def read_ssf(
     source: SOURCE_TYPES,
     offset: int = 0,
     size: int | None = None,
-    file_format: RESOURCE_FORMAT | None = None,
 ) -> SSF:
     """Returns an SSF instance from the source.
 
@@ -79,7 +83,6 @@ def read_ssf(
         source: The source of the data.
         offset: The byte offset of the file inside the data.
         size: Number of bytes to allowed to read from the stream. If not specified, uses the whole stream.
-        file_format: The file format to use (ResourceType.SSF, ToolsetFormat.SSF_XML, ToolsetFormat.SSF_JSON). If not specified, it will be detected automatically.
 
     Raises:
     ------
@@ -92,34 +95,26 @@ def read_ssf(
     -------
         An SSF instance.
     """
-    if file_format is None:
-        file_format = detect_ssf(source, offset)
+    file_format: ResourceType = detect_ssf(source, offset)
 
-    if file_format == ResourceType.INVALID:
+    if file_format is ResourceType.INVALID:
         msg = "Failed to determine the format of the GFF file."
         raise ValueError(msg)
 
-    if file_format == ResourceType.SSF:
+    if file_format is ResourceType.SSF:
         return SSFBinaryReader(source, offset, size or 0).load()
-    if file_format == ToolsetFormat.SSF_XML:
+    if file_format is ResourceType.SSF_XML:
         return SSFXMLReader(source, offset, size or 0).load()
-    if file_format == ToolsetFormat.SSF_JSON:
-        from pykotor.resource.formats.ssf.ssf_data import SSF
-
-        with BinaryReader.from_auto(source, offset) as reader:
-            raw = reader.read_all()
-        decoded = decode_bytes_with_fallbacks(raw)
-        return SSF.from_json(json.loads(decoded))
-    msg = "Failed to determine the format of the SSF file."
+    msg = "Failed to determine the format of the GFF file."
     raise ValueError(msg)
 
 
 def write_ssf(
     ssf: SSF,
     target: TARGET_TYPES,
-    file_format: RESOURCE_FORMAT = ResourceType.SSF,
+    file_format: ResourceType = ResourceType.SSF,
 ):
-    """Writes the SSF data to the target location with the specified format.
+    """Writes the SSF data to the target location with the specified format (SSF or SSF_XML).
 
     Args:
     ----
@@ -133,26 +128,20 @@ def write_ssf(
         PermissionError: If the file could not be written to the specified destination.
         ValueError: If the specified format was unsupported.
     """
-    if file_format == ResourceType.SSF:
+    if file_format is ResourceType.SSF:
         SSFBinaryWriter(ssf, target).write()
-    elif file_format == ToolsetFormat.SSF_XML:
+    elif file_format is ResourceType.SSF_XML:
         SSFXMLWriter(ssf, target).write()
-    elif file_format == ToolsetFormat.SSF_JSON:
-        json_dump = json.dumps(ssf, cls=BiowareEncoder, indent=4)
-        from pykotor.common.stream import BinaryWriter
-
-        with BinaryWriter.to_auto(target) as writer:
-            writer.write_bytes(json_dump.encode())
     else:
-        msg = "Unsupported format specified; use SSF, SSF_XML or SSF_JSON."
+        msg = "Unsupported format specified; use SSF or SSF_XML."
         raise ValueError(msg)
 
 
 def bytes_ssf(
     ssf: SSF,
-    file_format: RESOURCE_FORMAT = ResourceType.SSF,
+    file_format: ResourceType = ResourceType.SSF,
 ) -> bytes:
-    """Returns the SSF data in the specified format as a bytes object.
+    """Returns the SSF data in the specified format (SSF or SSF_XML) as a bytes object.
 
     This is a convenience method that wraps the write_ssf() method.
 
@@ -171,4 +160,4 @@ def bytes_ssf(
     """
     data = bytearray()
     write_ssf(ssf, data, file_format)
-    return bytes(data)
+    return data

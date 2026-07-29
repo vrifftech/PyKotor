@@ -1,22 +1,16 @@
-"""XML read/write for TLK (talk table); uses defusedxml when available."""
-
 from __future__ import annotations
 
-# Try to import defusedxml, fallback to ET if not available
-from xml.etree import ElementTree as ET
+# Try to import defusedxml, fallback to ElementTree if not available
+from xml.etree import ElementTree
 
-try:
+try:  # sourcery skip: remove-redundant-exception, simplify-single-exception-tuple
     from defusedxml.ElementTree import fromstring as _fromstring
 
-    ET.fromstring = _fromstring
+    ElementTree.fromstring = _fromstring
 except (ImportError, ModuleNotFoundError):
-    print("warning: defusedxml is not available but recommended for security")
+    print("warning: defusedxml is not available but recommended due to security concerns.")
 
 from typing import TYPE_CHECKING
-
-import kaitaistruct
-
-from bioware_kaitai_formats.tlk_xml import TlkXml
 
 from pykotor.common.language import Language
 from pykotor.common.misc import ResRef
@@ -30,15 +24,6 @@ if TYPE_CHECKING:
 
 
 class TLKXMLReader(ResourceReader):
-    """Reads TLK files from XML format.
-
-    XML is a human-readable format for easier editing of talk tables.
-
-    Note: XML format is PyKotor-specific conversion format, not a standard game format.
-        The engine uses binary TLK format exclusively. XML conversion allows easier editing
-        and integration with external tools.
-    """
-
     def __init__(
         self,
         source: SOURCE_TYPES,
@@ -49,40 +34,21 @@ class TLKXMLReader(ResourceReader):
         self._tlk: TLK | None = None
 
     @autoclose
-    def load(self, *, auto_close: bool = True) -> TLK:  # noqa: FBT001, FBT002, ARG002
+    def load(
+        self,
+        auto_close: bool = True,
+    ) -> TLK:
         self._tlk = TLK()
 
-        raw = self._reader.read_all()
-        try:
-            TlkXml.from_bytes(raw)
-        except kaitaistruct.KaitaiStructError:
-            pass
-        data = decode_bytes_with_fallbacks(raw)
-        xml = ET.fromstring(data)  # noqa: S314
+        data = decode_bytes_with_fallbacks(self._reader.read_bytes(self._reader.size()))
+        xml = ElementTree.fromstring(data)  # noqa: S314
 
-        language = xml.get("language")
-        if language is None:
-            raise ValueError(
-                "The 'language' attribute is missing from the root element of the TLK XML. This attribute is required to specify the language of the TLK file."
-            )
-        self._tlk.language = Language(int(language))
+        self._tlk.language = Language(int(xml.get("language")))
         self._tlk.resize(len(xml))
         for string in xml:
-            id_str = string.get("id")
-            if id_str is None:
-                raise ValueError(
-                    "The 'id' attribute is missing for a string element in the TLK XML. Each <string>"
-                    f" element must have an 'id' attribute to specify its index in the TLK file. Problematic element: {ET.tostring(string, encoding='unicode')}",
-                )
-            index = int(id_str)
-
-            text = string.text if string.text is not None else ""
-            self._tlk.entries[index].text = text
-
-            sound = string.get("sound")
-            self._tlk.entries[index].voiceover = (
-                ResRef(sound) if sound is not None else ResRef.from_blank()
-            )
+            index = int(string.get("id"))
+            self._tlk.entries[index].text = string.text
+            self._tlk.entries[index].voiceover = ResRef(string.get("sound")) if string.get("sound") else ResRef.from_blank()
 
         return self._tlk
 
@@ -94,16 +60,19 @@ class TLKXMLWriter(ResourceWriter):
         target: TARGET_TYPES,
     ):
         super().__init__(target)
-        self._xml: ET.Element = ET.Element("xml")
+        self._xml: ElementTree.Element = ElementTree.Element("xml")
         self._tlk: TLK = tlk
 
     @autoclose
-    def write(self, *, auto_close: bool = True):  # noqa: FBT001, FBT002, ARG002  # pyright: ignore[reportUnusedParameters]
+    def write(
+        self,
+        auto_close: bool = True,
+    ):
         self._xml.tag = "tlk"
         self._xml.set("language", str(self._tlk.language.value))
 
         for stringref, entry in self._tlk:
-            element = ET.Element("string")
+            element = ElementTree.Element("string")
             element.text = entry.text
             element.set("id", str(stringref))
             if entry.voiceover:
@@ -111,4 +80,4 @@ class TLKXMLWriter(ResourceWriter):
             self._xml.append(element)
 
         indent(self._xml)
-        self._writer.write_bytes(ET.tostring(self._xml))
+        self._writer.write_bytes(ElementTree.tostring(self._xml))

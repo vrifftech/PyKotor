@@ -1,19 +1,18 @@
-"""TSLPatcher install: backup, InstallFile, and apply modifications to target files/capsules."""
-
 from __future__ import annotations
 
 import shutil
 
-from pathlib import PurePath
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from pykotor.common.stream import BinaryReader
 from pykotor.tslpatcher.mods.template import PatcherModifications
+from utility.error_handling import universal_simplify_exception
+from utility.system.path import PurePath
 
 if TYPE_CHECKING:
     import os
 
-    from typing_extensions import Literal  # pyright: ignore[reportMissingModuleSource]
+    from typing_extensions import Literal
 
     from pykotor.common.misc import Game
     from pykotor.resource.type import SOURCE_TYPES
@@ -65,14 +64,8 @@ def create_backup(
             uninstall_folder.mkdir(exist_ok=True)
 
             # Write the PowerShell/Bash uninstall scripts to the uninstall folder
-            subdir_temp: PurePath | None = (
-                PurePath(subdirectory_path) if subdirectory_path else None
-            )
-            game_folder: CaseAwarePath = (
-                destination_filepath.parents[len(subdir_temp.parts)]
-                if subdir_temp
-                else destination_filepath.parent
-            )
+            subdir_temp: PurePath | None = PurePath(subdirectory_path) if subdirectory_path else None
+            game_folder: CaseAwarePath = destination_filepath.parents[len(subdir_temp.parts)] if subdir_temp else destination_filepath.parent
             create_uninstall_scripts(backup_folderpath, uninstall_folder, game_folder)
             processed_files.add(uninstall_str_lower)
 
@@ -80,21 +73,17 @@ def create_backup(
             # Check if the backup path exists and generate a new one if necessary
             i = 2
             filestem: str = backup_filepath.stem
-            while backup_filepath.exists():
-                backup_filepath = (
-                    backup_filepath.parent / f"{filestem} ({i}){backup_filepath.suffix}"
-                )
+            while backup_filepath.safe_exists():
+                backup_filepath = backup_filepath.parent / f"{filestem} ({i}){backup_filepath.suffix}"
                 i += 1
 
             log.add_note(f"Backing up '{destination_file_str}'...")
             if subdirectory_backup_path:
                 subdirectory_backup_path.mkdir(exist_ok=True, parents=True)
-            try:
+            try:  # sourcery skip: remove-redundant-exception
                 shutil.copy(destination_filepath, backup_filepath)
             except (OSError, PermissionError) as e:
-                log.add_warning(
-                    f"Failed to create backup of '{destination_file_str}': {(e.__class__.__name__, str(e))}"
-                )
+                log.add_warning(f"Failed to create backup of '{destination_file_str}': {universal_simplify_exception(e)}")
         else:
             # Write the file path to remove these files.txt in backup directory
             removal_files_txt: CaseAwarePath = backup_folderpath.joinpath("remove these files.txt")
@@ -106,11 +95,7 @@ def create_backup(
         processed_files.add(destination_file_str_lower)
 
 
-def create_uninstall_scripts(
-    backup_dir: CaseAwarePath,
-    uninstall_folder: CaseAwarePath,
-    main_folder: CaseAwarePath,
-):
+def create_uninstall_scripts(backup_dir: CaseAwarePath, uninstall_folder: CaseAwarePath, main_folder: CaseAwarePath):
     with uninstall_folder.joinpath("uninstall.ps1").open("w", encoding="utf-8") as f:
         f.write(
             rf"""#!/usr/bin/env pwsh
@@ -219,7 +204,7 @@ foreach ($file in $filesInBackup) {{
     }}
 }}
 Pause
-""",  # noqa: E501
+""",
         )
     with uninstall_folder.joinpath("uninstall.sh").open("w", encoding="utf-8", newline="\n") as f:
         f.write(
@@ -312,7 +297,7 @@ done < <(find "$mostRecentBackupFolder" -type f ! -name 'remove these files.txt'
 
 read -rp "Press enter to continue..."
 
-    """,  # noqa: E501
+    """,
         )
 
 
@@ -321,17 +306,14 @@ class InstallFile(PatcherModifications):
         self,
         filename: str,
         *,
-        replace_existing: bool | None = None,
-        destination: str | None = None,
+        replace_existing: bool,
     ):
-        super().__init__(filename, replace=bool(replace_existing), destination=destination)
+        super().__init__(filename, replace_existing)
 
         self.action: str = "Copy "
         self.skip_if_not_replace: bool = True
 
-    def __hash__(
-        self,
-    ):  # HACK(th3w1zard1): organize this into PatcherModifications class later, this is only used for nwscript.nss currently.
+    def __hash__(self):  # HACK: organize this into PatcherModifications class later, this is only used for nwscript.nss currently.
         return hash((self.destination, self.saveas, self.replace_file))
 
     def patch_resource(
@@ -345,4 +327,4 @@ class InstallFile(PatcherModifications):
         with BinaryReader.from_auto(source) as reader:
             return reader.read_all()
 
-    def apply(self, mutable_data: Any, memory: PatcherMemory, logger: PatchLogger, game: Game): ...
+    def apply(self, source, *args, **kwargs): ...

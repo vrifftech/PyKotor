@@ -1,14 +1,11 @@
-"""Talk table (dialog.tlk): read-only StrRef lookup and string/sound results."""
-
 from __future__ import annotations
 
-from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 
 from pykotor.common.language import Language
 from pykotor.common.misc import ResRef
 from pykotor.common.stream import BinaryReader
-from pykotor.tools.path import CaseAwarePath
+from utility.system.path import Path
 
 if TYPE_CHECKING:
     import os
@@ -21,7 +18,7 @@ class StringResult(NamedTuple):
 
 class TLKData(NamedTuple):
     flags: int
-    voiceover: str
+    sound_resref: str
     volume_variance: int
     pitch_variance: int
     text_offset: int
@@ -29,24 +26,18 @@ class TLKData(NamedTuple):
     sound_length: float
 
 
-class TalkTable:  # TODO(th3w1zard1): dialogf.tlk  # noqa: FIX002, TD003
+class TalkTable:  # TODO: dialogf.tlk
     """Talktables are for read-only loading of stringrefs stored in a dialog.tlk file.
 
     Files are only opened when accessing a stored string, this means that strings are always up to date at
     the time of access as opposed to TLK objects which may be out of date with its source file.
-
-    References:
-    ----------
-        Observed retail KotOR I and KotOR II behavior.
-
-
     """
 
     def __init__(
         self,
         path: os.PathLike | str,
     ):
-        self._path: CaseAwarePath = CaseAwarePath(path)
+        self._path: Path = Path.pathify(path)
 
     def path(self) -> Path:
         return self._path
@@ -104,19 +95,18 @@ class TalkTable:  # TODO(th3w1zard1): dialogf.tlk  # noqa: FIX002, TD003
                 return ResRef.from_blank()
 
             tlkdata = self._extract_common_tlk_data(reader, stringref)
-            return ResRef(tlkdata.voiceover)
+            return ResRef(tlkdata.sound_resref)
 
     def _extract_common_tlk_data(
         self,
         reader: BinaryReader,
         stringref: int,
     ) -> TLKData:
-        # Entry offset calculation: header (20 bytes) + entry_size (40 bytes) * stringref
         reader.seek(20 + 40 * stringref)
 
         return TLKData(
             flags=reader.read_uint32(),
-            voiceover=reader.read_string(16),
+            sound_resref=reader.read_string(16),
             volume_variance=reader.read_uint32(),
             pitch_variance=reader.read_uint32(),
             text_offset=reader.read_uint32(),
@@ -159,13 +149,15 @@ class TalkTable:  # TODO(th3w1zard1): dialogf.tlk  # noqa: FIX002, TD003
 
                 reader.seek(texts_offset + tlkdata.text_offset)
                 string = reader.read_string(tlkdata.text_length, encoding=encoding)
-                sound = ResRef(tlkdata.voiceover)
+                sound = ResRef(tlkdata.sound_resref)
 
                 batch[stringref] = StringResult(string, sound)
 
             return batch
 
-    def size(self) -> int:
+    def size(
+        self,
+    ) -> int:
         """Returns the number of entries in the talk table.
 
         Returns:
@@ -176,7 +168,9 @@ class TalkTable:  # TODO(th3w1zard1): dialogf.tlk  # noqa: FIX002, TD003
             reader.seek(12)
             return reader.read_uint32()  # entries_count
 
-    def language(self) -> Language:
+    def language(
+        self,
+    ) -> Language:
         """Returns the matching Language of the TLK file.
 
         Returns:

@@ -1,102 +1,36 @@
-"""This module handles classes relating to editing VIS files.
-
-VIS (Visibility) files define which rooms are visible from other rooms in a module.
-This is used for occlusion culling optimization - the game engine only renders rooms
-that are marked as visible from the player's current room. VIS files are ASCII text
-files with a simple format: parent room names followed by indented child room names.
-
-Observed retail behavior:
-----------
-        KotOR I and TSL load ASCII ``*.vis`` files next to module rooms so the renderer can skip
-        mutually occluded cells.
-
-        ASCII Format:
-        ------------
-        Parent Room Line:
-        room_name number_of_child_rooms
-
-        Example: "room001 3"
-
-    Child Room Lines (indented with 2 spaces):
-          child_room_name
-          child_room_name
-        Example:
-          room002
-          room003
-          room004
-
-    Format Rules:
-        - Parent rooms start at column 0
-        - Child rooms are indented with exactly 2 spaces
-        - Room names are case-insensitive (stored lowercase)
-        - Empty lines are ignored
-        - Whitespace is trimmed from room names
-"""
+"""This module handles classes relating to editing VIS files."""
 
 from __future__ import annotations
 
 from copy import copy, deepcopy
 from typing import TYPE_CHECKING, Any
 
-from pykotor.resource.formats._base import BiowareResource
 from pykotor.resource.type import ResourceType
 
 if TYPE_CHECKING:
     from collections.abc import Generator
 
 
-class VIS(BiowareResource):
-    """Represents a VIS (Visibility) file defining room visibility relationships.
-
-    VIS files optimize rendering by specifying which rooms are visible from each
-    parent room. When the player is in a room, only rooms marked as visible in
-    the VIS file are rendered. This prevents rendering rooms that are occluded
-    by walls or geometry, improving performance.
-
-    Attributes:
-    ----------
-        _rooms: Set of all room names defined in this VIS file
-            Room names are stored lowercase for case-insensitive comparison
-            Each room name corresponds to a room model/area in the module
-            Used to validate room existence before setting visibility
-
-        _visibility: Dictionary mapping observer rooms to sets of visible rooms
-            Key: Observer room name (room player is currently in)
-            Value: Set of room names visible from the observer room
-            If room A is in _visibility[room B], then room A is visible from room B
-            Used by game engine for occlusion culling optimization
-    """
+class VIS:
+    """Represents a VIS file."""
 
     BINARY_TYPE = ResourceType.VIS
-    COMPARABLE_SET_FIELDS = ("_rooms",)
-    COMPARABLE_FIELDS = ("_visibility",)
 
-    def __init__(self):
-        # Set of all room names (stored lowercase for case-insensitive comparison)
+    def __init__(
+        self,
+    ):
         self._rooms: set[str] = set()
-
-        # Dictionary: observer room -> set of visible rooms
-        # Used for occlusion culling (only render visible rooms)
         self._visibility: dict[str, set[str]] = {}
 
-    def __eq__(self, other):
-        if not isinstance(other, VIS):
-            return NotImplemented  # type: ignore[no-any-return]
-        return self._rooms == other._rooms and self._visibility == other._visibility
-
-    def __hash__(self):
-        return hash(
-            (
-                tuple(sorted(self._rooms)),
-                tuple(sorted((k, tuple(sorted(v))) for k, v in self._visibility.items())),
-            ),
-        )
-
-    def __iter__(self) -> Generator[tuple[str, set[str]], Any, None]:
+    def __iter__(
+        self,
+    ) -> Generator[tuple[str, set[str]], Any, None]:
         for observer, observed in self._visibility.items():
             yield observer, deepcopy(observed)
 
-    def all_rooms(self) -> set[str]:
+    def all_rooms(
+        self,
+    ) -> set[str]:
         """Returns a copy of the set of rooms.
 
         Args:
@@ -255,7 +189,9 @@ class VIS(BiowareResource):
 
         return show in self._visibility[when_inside]
 
-    def set_all_visible(self):
+    def set_all_visible(
+        self,
+    ):
         """Sets all rooms visible from each other.
 
         Processing Logic:

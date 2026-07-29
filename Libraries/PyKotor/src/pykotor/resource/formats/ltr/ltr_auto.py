@@ -1,5 +1,3 @@
-"""LTR (letter/name generator) format detection and read/write dispatch."""
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -57,7 +55,7 @@ def write_ltr(
     ------
         ValueError: If an unsupported file format was given.
     """
-    if file_format == ResourceType.LTR:
+    if file_format is ResourceType.LTR:
         LTRBinaryWriter(ltr, target).write()
     else:
         msg = "Unsupported format specified; use LTR."

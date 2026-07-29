@@ -1,22 +1,16 @@
-"""XML read/write for LIP (lip sync) keyframes; uses defusedxml when available."""
-
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+# Try to import defusedxml, fallback to ElementTree if not available
+from xml.etree import ElementTree
 
-# Try to import defusedxml, fallback to ET if not available
-from xml.etree import ElementTree as ET
+try:  # sourcery skip: remove-redundant-exception, simplify-single-exception-tuple
+    from defusedxml.ElementTree import fromstring as _fromstring
 
-import kaitaistruct
-
-try:
-    from defusedxml.ElementTree import fromstring
+    ElementTree.fromstring = _fromstring
 except (ImportError, ModuleNotFoundError):
-    from xml.etree import ElementTree as ET
+    print("warning: defusedxml is not available but recommended due to security concerns.")
 
-    fromstring = ET.fromstring
-
-from bioware_kaitai_formats.lip_xml import LipXml
+from typing import TYPE_CHECKING
 
 from pykotor.resource.formats.lip.lip_data import LIP, LIPShape
 from pykotor.resource.type import ResourceReader, ResourceWriter, autoclose
@@ -27,17 +21,6 @@ if TYPE_CHECKING:
 
 
 class LIPXMLReader(ResourceReader):
-    """Reads LIP files from XML format.
-
-    XML is a human-readable format for easier editing of lip-sync animation data.
-
-    References:
-    ----------
-        Binary layout reference: ``lip_data``.
-
-        Note: XML format structure may vary between tools
-    """
-
     def __init__(
         self,
         source: SOURCE_TYPES,
@@ -48,38 +31,25 @@ class LIPXMLReader(ResourceReader):
         self._lip: LIP | None = None
 
     @autoclose
-    def load(self, *, auto_close: bool = True) -> LIP:  # noqa: FBT001, FBT002, ARG002
+    def load(
+        self,
+        auto_close: bool = True,
+    ) -> LIP:
         self._lip = LIP()
 
-        raw = self._reader.read_all()
-        try:
-            LipXml.from_bytes(raw)
-        except kaitaistruct.KaitaiStructError:
-            pass
-        data: str = raw.decode()
-        xml_root: ET.Element = fromstring(data)  # noqa: S314
+        data = self._reader.read_bytes(self._reader.size()).decode()
+        xml_root: ElementTree.Element = ElementTree.fromstring(data)  # noqa: S314
 
         if xml_root.tag != "lip":
             msg = "The XML file that was loaded was not a valid LIP."
             raise ValueError(msg)
 
-        duration: str | None = xml_root.get("duration")
-        if duration is None:
-            msg = "Missing duration of the LIP."
-            raise ValueError(msg)
-        self._lip.length = float(duration)
+        self._lip.length = float(xml_root.get("duration"))
 
         for subelement in xml_root:
-            time: str | None = subelement.get("time")
-            if time is None:
-                msg = "Missing time for a keyframe."
-                raise ValueError(msg)
-
-            shape: str | None = subelement.get("shape")
-            if shape is None:
-                msg = "Missing shape for a keyframe."
-                raise ValueError(msg)
-            self._lip.add(float(time), LIPShape(int(shape)))
+            time = float(subelement.get("time"))
+            shape = LIPShape(int(subelement.get("shape")))
+            self._lip.add(time, shape)
 
         return self._lip
 
@@ -92,14 +62,17 @@ class LIPXMLWriter(ResourceWriter):
     ):
         super().__init__(target)
         self._lip: LIP = lip
-        self._xml_root: ET.Element = ET.Element("lip")
+        self._xml_root: ElementTree.Element = ElementTree.Element("lip")
 
     @autoclose
-    def write(self, *, auto_close: bool = True):  # noqa: FBT001, FBT002, ARG002  # pyright: ignore[reportUnusedParameters]
+    def write(
+        self,
+        auto_close: bool = True,
+    ):
         self._xml_root.set("duration", str(self._lip.length))
 
         for keyframe in self._lip:
-            ET.SubElement(
+            ElementTree.SubElement(
                 self._xml_root,
                 "keyframe",
                 time=str(keyframe.time),
@@ -107,4 +80,4 @@ class LIPXMLWriter(ResourceWriter):
             )
 
         indent(self._xml_root)
-        self._writer.write_bytes(ET.tostring(self._xml_root))
+        self._writer.write_bytes(ElementTree.tostring(self._xml_root))

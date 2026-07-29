@@ -1,5 +1,3 @@
-"""UTW (waypoint) generic: GFF-based waypoint definitions and map notes."""
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -17,45 +15,26 @@ if TYPE_CHECKING:
 class UTW:
     """Stores waypoint data.
 
-    UTW files are GFF-based format files that store waypoint definitions including
-    map notes, appearance, and location data.
+    resref: "TemplateResRef" field.
+    tag: "Tag" field.
+    name: "LocalizedName" field.
+    has_map_note: "HasMapNote" field.
+    map_note: "MapNote" field.
+    map_note_enabled: "MapNoteEnabled" field.
 
-    Waypoint templates are GFF files with tag, ``TemplateResRef``, localized name, map-note flags
-    and text, appearance/palette/comment for the toolset, and optional deprecated linkage/description
-    fields. World position and orientation for placed waypoints come from the GIT instance, not
-    only the UTW root. Observed retail KotOR I and TSL match this pattern. Loader symbols and RVAs
-    are in ``wiki/reverse_engineering_findings.md``.
+    palette_id: "PaletteID" field. Used in toolset use only.
+    comment: "Comment" field. Used in toolset only.
+    appearance_id: "Appearance" field. Used in toolset use only.
 
-    Note: ``GFFContent.UTW``.
-
-    Attributes:
-    ----------
-        resref: "TemplateResRef" field. The resource reference for this waypoint template.
-
-        tag: "Tag" field. Tag identifier for this waypoint.
-
-        name: "LocalizedName" field. Localized name of the waypoint.
-
-        has_map_note: "HasMapNote" field. Whether waypoint has a map note.
-
-        map_note: "MapNote" field. Localized map note text.
-
-        map_note_enabled: "MapNoteEnabled" field. Whether map note is enabled.
-
-        appearance_id: "Appearance" field. Appearance type identifier. Used in toolset only.
-
-        palette_id: "PaletteID" field. Palette identifier. Used in toolset only.
-
-        comment: "Comment" field. Developer comment. Used in toolset only.
-
-        linked_to: "LinkedTo" field. Linked waypoint tag. Not used by the game engine.
-
-        description: "Description" field. Localized description. Not used by the game engine.
+    linked_to: "LinkedTo" field. Not used by the game engine.
+    description: "Description" field. Not used by the game engine.
     """
 
     BINARY_TYPE = ResourceType.UTW
 
-    def __init__(self):
+    def __init__(
+        self,
+    ):
         self.resref: ResRef = ResRef.from_blank()
         self.comment: str = ""
         self.tag: str = ""
@@ -77,11 +56,6 @@ class UTW:
 def construct_utw(
     gff: GFF,
 ) -> UTW:
-    """Constructs a UTW object from a GFF structure.
-
-    Missing fields use blank tag/ResRef, empty localized strings, and false map-note flags (observed
-    retail). Instance transforms live on the GIT entry.
-    """
     utw = UTW()
 
     root: GFFStruct = gff.root
@@ -91,7 +65,6 @@ def construct_utw(
     utw.tag = root.acquire("Tag", "")
     utw.name = root.acquire("LocalizedName", LocalizedString.from_invalid())
     utw.description = root.acquire("Description", LocalizedString.from_invalid())
-    # Map note: HasMapNote, MapNote, MapNoteEnabled.
     utw.has_map_note = bool(root.acquire("HasMapNote", 0))
     utw.map_note = root.acquire("MapNote", LocalizedString.from_invalid())
     utw.map_note_enabled = bool(root.acquire("MapNoteEnabled", 0))
@@ -103,29 +76,23 @@ def construct_utw(
 
 def dismantle_utw(
     utw: UTW,
-    game: Game = Game.K2,  # noqa: ARG001
+    game: Game = Game.K2,
     *,
-    use_deprecated: bool = True,  # noqa: ARG001
+    use_deprecated: bool = True,
 ) -> GFF:
-    """Dismantles a UTW object into a GFF structure (round-trip with :func:`construct_utw`)."""
     gff = GFF(GFFContent.UTW)
 
     root: GFFStruct = gff.root
     root.set_uint8("Appearance", utw.appearance_id)
-    # LinkedTo: GFF string; toolset-only. Default "". Omit OK for engine.
     root.set_string("LinkedTo", utw.linked_to)
-    # TemplateResRef: CResRef; template ref. Default blank. Omit OK.
     root.set_resref("TemplateResRef", utw.resref)
     root.set_string("Tag", utw.tag)
     root.set_locstring("LocalizedName", utw.name)
-    # Description: GFF LocalizedString; toolset-only. Default empty. Omit OK.
     root.set_locstring("Description", utw.description)
     root.set_uint8("HasMapNote", utw.has_map_note)
     root.set_locstring("MapNote", utw.map_note)
     root.set_uint8("MapNoteEnabled", utw.map_note_enabled)
-    # PaletteID: BYTE; toolset-only. Default 0. Omit OK.
     root.set_uint8("PaletteID", utw.palette_id)
-    # Comment: GFF string; toolset-only. Default "". Omit OK.
     root.set_string("Comment", utw.comment)
 
     return gff

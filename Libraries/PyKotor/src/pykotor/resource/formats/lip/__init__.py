@@ -1,7 +1,4 @@
-"""LIP package: lip sync data, keyframes, and binary/XML I/O."""
-
 from __future__ import annotations
-
 from pykotor.resource.formats.lip.lip_data import (
     LIP,
     LIPShape,
@@ -21,17 +18,3 @@ from pykotor.resource.formats.lip.lip_auto import (
     detect_lip,
     bytes_lip,
 )
-
-__all__ = [
-    "LIP",
-    "LIPBinaryReader",
-    "LIPBinaryWriter",
-    "LIPKeyFrame",
-    "LIPShape",
-    "LIPXMLReader",
-    "LIPXMLWriter",
-    "bytes_lip",
-    "detect_lip",
-    "read_lip",
-    "write_lip",
-]

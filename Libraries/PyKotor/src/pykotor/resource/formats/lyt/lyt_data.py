@@ -1,41 +1,4 @@
-"""This module handles classes relating to editing LYT files.
-
-LYT (Layout) files define the spatial structure of game areas/modules. They specify
-the positions of room models, door hook points, swoop track elements, and obstacles.
-LYT files are ASCII text files that describe how area geometry is assembled from
-individual room models (MDL files) and where interactive elements like doors are placed.
-
-Observed retail behavior:
-------------------------
-    - KotOR I and TSL parse ASCII ``.lyt`` layouts that begin with ``beginlayout`` and end with
-    ``donelayout``, listing ``roomcount``, ``doorhookcount``, ``trackcount``, and
-    ``obstaclecount`` sections with model names and transforms.
-
-Format Rules:
-------------
-    - Lines starting with '#' are comments
-    - Room/track/obstacle entries: model name + 3D position (x, y, z)
-    - Door hook entries: room name + door name + position + quaternion (7 values)
-    - Room names are case-insensitive (stored lowercase)
-    - Model names are ResRefs (max 16 chars, no spaces)
-
-ASCII Format:
-------------
-    beginlayout
-    roomcount <number>
-    <model_name> <x> <y> <z>
-    ...
-    trackcount <number>
-    <model_name> <x> <y> <z>
-    ...
-    obstaclecount <number>
-    <model_name> <x> <y> <z>
-    ...
-    doorhookcount <number>
-    <room_name> <door_name> <x> <y> <z> <qx> <qy> <qz> <qw>
-    ...
-    donelayout
-"""
+"""This module handles classes relating to editing LYT files."""
 
 from __future__ import annotations
 
@@ -43,389 +6,173 @@ from typing import TYPE_CHECKING, Any, Generator
 
 from pykotor.common.misc import ResRef
 from pykotor.extract.file import ResourceIdentifier
-from pykotor.resource.formats._base import BiowareResource, ComparableMixin
 from pykotor.resource.type import ResourceType
 
 if TYPE_CHECKING:
-    from utility.common.geometry import Vector3, Vector4
+    from pykotor.common.geometry import Vector3, Vector4
 
 
-class LYT(BiowareResource):
-    """Represents a LYT (Layout) file defining area spatial structure.
+class LYT:
+    """Represents a LYT file."""
 
-    LYT files specify how area geometry is assembled from room models and where
-    interactive elements (doors, tracks, obstacles) are positioned. The game engine
-    uses LYT files to load and position room models (MDL files) and determine
-    door placement points for area transitions.
+    BINARY_TYPE = ResourceType.LTR
 
-    References:
-    ----------
-        Observed in retail KotOR I and TSL.
-
-    Attributes:
-    ----------
-        rooms: List of room definitions (area model positions)
-            Each room specifies a model name (ResRef) and 3D position
-            Room models are MDL files that make up the area geometry
-            Used by game engine to load and position area room models
-
-        tracks: List of swoop track booster positions
-            Used in swoop racing mini-games (KotOR II)
-            Each track entry specifies model name and position
-            Currently not fully implemented in all vendor sources
-
-        obstacles: List of swoop track obstacle positions
-            Used in swoop racing mini-games (KotOR II)
-            Each obstacle entry specifies model name and position
-            Currently not fully implemented in all vendor sources
-
-        doorhooks: List of door hook points (door placement positions)
-            Each door hook specifies room name, door name, position, and orientation
-            Door hooks define where doors can be placed in rooms
-            Orientation stored as quaternion (qx, qy, qz, qw) for door rotation
-    """
-
-    BINARY_TYPE = ResourceType.LYT
-    COMPARABLE_SEQUENCE_FIELDS = ("rooms", "tracks", "obstacles", "doorhooks")
-
-    def __init__(self):
-        # List of room definitions (model name + 3D position)
+    def __init__(
+        self,
+    ):
         self.rooms: list[LYTRoom] = []
-
-        # List of swoop track booster positions
         self.tracks: list[LYTTrack] = []
-
-        # List of swoop track obstacle positions
         self.obstacles: list[LYTObstacle] = []
-
-        # List of door hook points (door placement positions)
         self.doorhooks: list[LYTDoorHook] = []
 
-    def __eq__(self, other: object) -> bool:
-        if not isinstance(other, LYT):
-            return NotImplemented  # type: ignore[no-any-return]
-        return (
-            self.rooms == other.rooms
-            and self.tracks == other.tracks
-            and self.obstacles == other.obstacles
-            and self.doorhooks == other.doorhooks
-        )
-
-    def __hash__(self) -> int:
-        return hash(
-            (
-                tuple(self.rooms),
-                tuple(self.tracks),
-                tuple(self.obstacles),
-                tuple(self.doorhooks),
-            ),
-        )
-
     def iter_resource_identifiers(self) -> Generator[ResourceIdentifier, Any, None]:
-        """Generate resources that utilise this LYT. Skips rooms with invalid model refs (e.g. '****' placeholders in stunt modules)."""
+        """Generates resources that utilize this LYT.
+
+        Does not guarantee the ResourceType exists, only the resname/resref.
+        """
         for room in self.rooms:
-            if not ResRef.is_valid(room.model):
-                print(
-                    f"LYT.iter_resource_identifiers(): Invalid room model: '{room.model}' (not a valid ResRef)"
-                )
-                continue
             yield ResourceIdentifier(room.model, ResourceType.MDL)
             yield ResourceIdentifier(room.model, ResourceType.MDX)
             yield ResourceIdentifier(room.model, ResourceType.WOK)
 
     def all_room_models(self) -> Generator[str, Any, None]:
-        """Return all models used by this LYT."""
-        for room_index, room in enumerate(self.rooms):
-            parsed_model: str = room.model.strip()
+        """Returns all models used by this LYT."""
+        for room in self.rooms:
+            parsed_model = room.model.strip()
             assert parsed_model == room.model, "room model names cannot contain spaces."
-            assert ResRef.is_valid(parsed_model), (
-                f"invalid room model: '{room.model}' at room {room_index}, must conform to resref restrictions."
-            )
+            assert ResRef.is_valid(parsed_model), f"invalid room model: '{room.model}' at room {self.rooms.index(room)}, must conform to resref restrictions."
             yield parsed_model.lower()
 
-    def find_room_by_model(self, model: str) -> LYTRoom | None:
-        """Find a room in the LYT by its model name."""
-        return next((room for room in self.rooms if room.model.lower() == model.lower()), None)
 
-    def find_nearest_room(self, position: Vector3) -> LYTRoom | None:
-        """Find the nearest room to a given position."""
-        if not self.rooms:
-            return None
-        return min(self.rooms, key=lambda room: (room.position - position).magnitude())
-
-    def _dfs_rooms(self, room: LYTRoom, visited: set[LYTRoom]) -> None:
-        """Depth-first search to find connected rooms."""
-        visited.add(room)
-        for connected_room in room.connections:
-            if connected_room not in visited:
-                self._dfs_rooms(connected_room, visited)
-
-    def update_connections(self, room1: LYTRoom, room2: LYTRoom, new_room: LYTRoom) -> None:
-        """Update connections after merging rooms."""
-        for room in self.rooms:
-            if room1 in room.connections:
-                room.connections.remove(room1)
-                room.connections.add(new_room)
-            if room2 in room.connections:
-                room.connections.remove(room2)
-                room.connections.add(new_room)
-
-    def serialize(self) -> dict[str, Any]:
-        """Serialize a complete LYT to JSON-compatible dict.
-
-        Returns:
-        -------
-            Dictionary representation
-        """
-        return {
-            "rooms": [r.serialize() for r in self.rooms],
-            "doorhooks": [d.serialize() for d in self.doorhooks],
-            "tracks": [t.serialize() for t in self.tracks],
-            "obstacles": [o.serialize() for o in self.obstacles],
-        }
-
-
-class LYTRoom(ComparableMixin):
-    """Represents a single room (area model) in a LYT layout.
-
-    Rooms are the basic building blocks of area geometry. Each room references
-    an MDL model file that contains the 3D geometry for a portion of the area.
-    Rooms are positioned in 3D space and can be connected to other rooms for
-    area transitions and pathfinding.
-
-    References:
-    ----------
-        Observed in retail KotOR I and TSL.
+class LYTRoom:
+    """An area model.
 
     Attributes:
     ----------
-        model: ResRef name of the room model (MDL file)
-            Stored as lowercase for case-insensitive comparison
-            Must be valid ResRef (max 16 chars, no spaces)
-            Corresponds to MDL/MDX/WOK files (e.g., "room001")
-
-        position: 3D position of the room in world space (x, y, z)
-            Defines where the room model is placed in the area
-            Used by game engine to position room geometry
-
-        connections: Set of other rooms this room connects to
-            PyKotor-specific field for tracking room connectivity
-            Used for pathfinding and area transition logic
-            Not present in binary/ASCII format (derived from door hooks)
+        model: The filename of the area model.
+        position: The position of the area model.
     """
 
-    COMPARABLE_FIELDS = ("model", "position")
-
-    def __init__(self, model: str, position: Vector3):
-        # ResRef name of room model (MDL file)
+    def __init__(
+        self,
+        model: str,
+        position: Vector3,
+    ):
         self.model: str = model
-
-        # 3D position in world space (x, y, z)
         self.position: Vector3 = position
 
-        # PyKotor-specific: Set of connected rooms (for pathfinding)
-        self.connections: set[LYTRoom] = set()
-
-    def __add__(self, other: LYTRoom) -> LYTRoom:
-        """Merge this room with another room using the + operator."""
-        new_position = (self.position + other.position) * 0.5
-        new_room = LYTRoom(f"{self.model}_{other.model}", new_position)
-        new_room.connections = self.connections.union(other.connections)
-        return new_room
-
-    def __eq__(self, other: object) -> bool:
+    def __eq__(
+        self,
+        other: LYTRoom,
+    ):
         if self is other:
             return True
         if not isinstance(other, LYTRoom):
-            return NotImplemented  # type: ignore[no-any-return]
+            return NotImplemented
         return self.model.lower() == other.model.lower() and self.position == other.position
 
-    def __hash__(self) -> int:
-        return hash((self.model.lower(), self.position))
-
-    def add_connection(self, room: LYTRoom) -> None:
-        """Add a connection to another room."""
-        if room not in self.connections:
-            self.connections.add(room)
-
-    def remove_connection(self, room: LYTRoom) -> None:
-        """Remove a connection to another room."""
-        if room in self.connections:
-            self.connections.discard(room)
-
-    def serialize(self) -> dict[str, Any]:
-        """Serialize an LYTRoom to JSON-compatible dict."""
-        return {
-            "model": self.model,
-            "position": self.position.serialize(),
-        }
+    def __hash__(
+        self,
+    ):
+        return hash(self.model)
 
 
-class LYTTrack(ComparableMixin):
-    """Represents a swoop track booster element in a LYT layout.
+class LYTTrack:
+    """A swoop track booster.
 
-    Tracks are used in swoop racing mini-games (primarily KotOR II). Each track
-    entry defines a booster element that can be placed along a racing track.
-
-    References:
-    ----------
-        Observed in retail KotOR I and TSL.
+    Unknown if this actually does anything in-game or is just to assist developers.
 
     Attributes:
     ----------
-        model: ResRef name of the track model (MDL file)
-            Model file for the track booster element
-            Must be valid ResRef (max 16 chars)
-
-        position: 3D position of the track element (x, y, z)
-            Defines where the track booster is placed
-            Used in swoop racing mini-games
+        model: The corresponding model filename.
+        position: The position.
     """
 
-    COMPARABLE_FIELDS = ("model", "position")
-
-    def __init__(self, model: str, position: Vector3):
-        # ResRef name of track model
+    def __init__(
+        self,
+        model: str,
+        position: Vector3,
+    ):
         self.model: str = model
-
-        # 3D position in world space
         self.position: Vector3 = position
 
-    def __eq__(self, other: object) -> bool:
+    def __eq__(
+        self,
+        other: LYTTrack,
+    ):
         if self is other:
             return True
         if not isinstance(other, LYTTrack):
-            return NotImplemented  # type: ignore[no-any-return]
+            return NotImplemented
         return self.model.lower() == other.model.lower() and self.position == other.position
 
-    def __hash__(self) -> int:
-        return hash((self.model.lower(), self.position))
 
-    def serialize(self) -> dict[str, Any]:
-        """Serialize an LYTTrack to JSON-compatible dict."""
-        return {
-            "model": self.model,
-            "position": self.position.serialize(),
-        }
+class LYTObstacle:
+    """A swoop track obstacle.
 
-
-class LYTObstacle(ComparableMixin):
-    """Represents a swoop track obstacle element in a LYT layout.
-
-    Obstacles are used in swoop racing mini-games (primarily KotOR II). Each
-    obstacle entry defines a hazard element that can be placed along a racing track.
-
-    References:
-    ----------
-        Observed in retail KotOR I and TSL.
+    Unknown if this actually does anything in-game or is just to assist developers.
 
     Attributes:
     ----------
-        model: ResRef name of the obstacle model (MDL file)
-            Model file for the track obstacle element
-            Must be valid ResRef (max 16 chars)
-
-        position: 3D position of the obstacle element (x, y, z)
-            Defines where the track obstacle is placed
-            Used in swoop racing mini-games
+        model: The corresponding model filename.
+        position: The position.
     """
 
-    COMPARABLE_FIELDS = ("model", "position")
-
-    def __init__(self, model: str, position: Vector3):
-        # ResRef name of obstacle model
+    def __init__(
+        self,
+        model: str,
+        position: Vector3,
+    ):
         self.model: str = model
-
-        # 3D position in world space
         self.position: Vector3 = position
 
-    def __eq__(self, other: object) -> bool:
+    def __eq__(
+        self,
+        other: LYTObstacle,
+    ):
         if self is other:
             return True
         if not isinstance(other, LYTObstacle):
-            return NotImplemented  # type: ignore[no-any-return]
+            return NotImplemented
         return self.model.lower() == other.model.lower() and self.position == other.position
 
-    def __hash__(self) -> int:
-        return hash((self.model.lower(), self.position))
 
-    def serialize(self) -> dict[str, Any]:
-        """Serialize an LYTObstacle to JSON-compatible dict."""
-        return {
-            "model": self.model,
-            "position": self.position.serialize(),
-        }
+class LYTDoorHook:
+    """A door hook.
 
-
-class LYTDoorHook(ComparableMixin):
-    """Represents a door hook point in a LYT layout.
-
-    Door hooks define positions where doors can be placed in rooms. Each door hook
-    specifies the room it belongs to, a door name, position, and orientation. Doors
-    are placed at these hook points to create area transitions and room connections.
-
-    References:
-    ----------
-        Observed in retail KotOR I and TSL.
-        ASCII Format (10 tokens):
-        -----------------------
-        <room_name> <door_name> <x> <y> <z> <qx> <qy> <qz> <qw> [unk1] [unk2] [unk3] [unk4] [unk5]
-        Note: different parsers accept 7–10 trailing tokens; extras are often treated as unknown floats.
+    This just exists for modelers to assist module designers.
 
     Attributes:
     ----------
-        room: Name of the room this door hook belongs to
-            Room name is case-insensitive (stored lowercase)
-            Must match a room name in the rooms list
-
-        door: Name/identifier for this door hook
-            Used to identify specific door hooks within a room
-            Case-insensitive (stored lowercase)
-
-        position: 3D position of the door hook (x, y, z)
-            Defines where the door is placed in world space
-
-        orientation: Rotation quaternion for door orientation (qx, qy, qz, qw)
-            Defines door rotation/orientation in world space
-            Quaternion format: (x, y, z, w) components
-            Note: some pipelines retain extra floats after the quaternion; meaning varies by tool.
+        room: The corresponding room in the layout.
+        door: The door name.
+        position: The door position.
+        orientation: The door orientation.
     """
 
-    COMPARABLE_FIELDS = ("room", "door", "position", "orientation")
-
-    def __init__(self, room: str, door: str, position: Vector3, orientation: Vector4):
-        # Room name this door hook belongs to (case-insensitive)
-        self.room: str = room
-
-        # Door hook name/identifier (case-insensitive)
-        self.door: str = door
-
-        # 3D position in world space
+    def __init__(
+        self,
+        room: str,
+        door: str,
+        position: Vector3,
+        orientation: Vector4,
+    ):
+        self.room: str = room  # TODO: find out if this is case-insensitive and implement via __eq__.
+        self.door: str = door  # TODO: find out if this is case-insensitive and implement via __eq__.
         self.position: Vector3 = position
-
-        # Rotation quaternion (qx, qy, qz, qw)
         self.orientation: Vector4 = orientation
 
-    def __eq__(self, other: object) -> bool:
+    def __eq__(
+        self,
+        other: LYTDoorHook,
+    ):
         if self is other:
             return True
         if not isinstance(other, LYTDoorHook):
-            return NotImplemented  # type: ignore[no-any-return]
+            return NotImplemented
         return (
             self.room == other.room
             and self.door == other.door
             and self.position == other.position
             and self.orientation == other.orientation
         )
-
-    def __hash__(self) -> int:
-        return hash((self.room, self.door, self.position, self.orientation))
-
-    def serialize(self) -> dict[str, Any]:
-        """Serialize an LYTDoorHook to JSON-compatible dict."""
-        return {
-            "room": self.room,
-            "door": self.door,
-            "position": self.position.serialize(),
-            "orientation": self.orientation.serialize(),
-        }

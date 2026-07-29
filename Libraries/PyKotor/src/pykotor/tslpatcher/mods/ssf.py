@@ -1,13 +1,3 @@
-"""SSF modification algorithms for TSLPatcher/HoloPatcher.
-
-This module implements SSF modification logic for applying patches from changes.ini files.
-Handles sound set entry modifications and memory token resolution.
-
-References:
-----------
-
-"""
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -17,6 +7,8 @@ from pykotor.resource.formats.ssf.io_ssf import SSFBinaryReader
 from pykotor.tslpatcher.mods.template import PatcherModifications
 
 if TYPE_CHECKING:
+    from typing_extensions import Literal
+
     from pykotor.common.misc import Game
     from pykotor.resource.formats.ssf import SSF, SSFSound
     from pykotor.resource.type import SOURCE_TYPES
@@ -37,31 +29,31 @@ class ModificationsSSF(PatcherModifications):
     def __init__(
         self,
         filename: str,
-        replace: bool,  # noqa: FBT001
+        replace_file: bool,  # noqa: FBT001
         modifiers: list[ModifySSF] | None = None,
     ):
         super().__init__(filename)
-        self.replace_file: bool = replace
+        self.replace_file: bool = replace_file
         self.no_replacefile_check = True
         self.modifiers: list[ModifySSF] = [] if modifiers is None else modifiers
 
     def patch_resource(
         self,
-        source: SOURCE_TYPES,
+        source_ssf: SOURCE_TYPES,
         memory: PatcherMemory,
         logger: PatchLogger,
         game: Game,
-    ) -> bytes:
-        ssf: SSF = SSFBinaryReader(source).load()
+    ) -> bytes | Literal[True]:
+        ssf: SSF = SSFBinaryReader(source_ssf).load()
         self.apply(ssf, memory, logger, game)
         return bytes_ssf(ssf)
 
     def apply(
         self,
-        mutable_data: SSF,
+        ssf: SSF,
         memory: PatcherMemory,
         logger: PatchLogger,
         game: Game,
     ):
         for modifier in self.modifiers:
-            modifier.apply(mutable_data, memory)
+            modifier.apply(ssf, memory)

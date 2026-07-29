@@ -1,5 +1,3 @@
-"""JRL (journal) generic: GFF-based quest and save-game journal data."""
-
 from __future__ import annotations
 
 from enum import IntEnum
@@ -16,20 +14,13 @@ if TYPE_CHECKING:
 
 
 class JRL:
-    """Stores journal (quest) data.
-
-    JRL files are GFF-based. Module JRL uses Categories/EntryList (quest/entry definitions).
-    Save-game journal uses JNL_SortOrder and JNL_Entries (JNL_PlotID, JNL_State, JNL_Date, JNL_Time).
-
-    Save-game journal uses ``JNL_*`` lists/fields; module quests use ``Categories`` /
-    ``EntryList``. Defaults for missing fields match observed retail for the save format;
-    module layout is primarily toolset-driven. Symbol/address detail is migrated to
-    ``wiki/reverse_engineering_findings.md``.
-    """
+    """Stores journal (quest) data."""
 
     BINARY_TYPE = ResourceType.JRL
 
-    def __init__(self):
+    def __init__(
+        self,
+    ):
         self.quests: list[JRLQuest] = []
 
 
@@ -49,21 +40,14 @@ class JRLQuest:
 
     def __init__(
         self,
-        name: LocalizedString | None = None,
-        planet_id: int | None = None,
-        plot_index: int | None = None,
-        priority: JRLQuestPriority | None = None,
-        tag: str | None = None,
-        entries: list[JRLEntry] | None = None,
-        comment: str | None = None,
     ):
-        self.comment: str = "" if comment is None else comment
-        self.name: LocalizedString = LocalizedString.from_invalid() if name is None else name
-        self.planet_id: int = 0 if planet_id is None else planet_id
+        self.comment: str = ""
+        self.name: LocalizedString = LocalizedString.from_invalid()
+        self.planet_id: int = 0
         self.plot_index: int = 0  # plot.2da
-        self.priority: JRLQuestPriority = JRLQuestPriority.LOWEST if priority is None else priority
-        self.tag: str = "" if tag is None else tag
-        self.entries: list[JRLEntry] = [] if entries is None else entries
+        self.priority: JRLQuestPriority = JRLQuestPriority.LOWEST
+        self.tag: str = ""
+        self.entries: list[JRLEntry] = []
 
 
 class JRLEntry:
@@ -79,15 +63,11 @@ class JRLEntry:
 
     def __init__(
         self,
-        end: bool | None = None,
-        entry_id: int | None = None,
-        text: LocalizedString | None = None,
-        xp_percentage: float | None = None,
     ):
-        self.end: bool = False if end is None else end
-        self.entry_id: int = 0 if entry_id is None else entry_id
-        self.text: LocalizedString = LocalizedString.from_invalid() if text is None else text
-        self.xp_percentage: float = 0.0 if xp_percentage is None else xp_percentage
+        self.end: bool = False
+        self.entry_id: int = 0
+        self.text: LocalizedString = LocalizedString.from_invalid()
+        self.xp_percentage: float = 0.0
 
 
 class JRLQuestPriority(IntEnum):
@@ -99,16 +79,8 @@ class JRLQuestPriority(IntEnum):
 
 
 def construct_jrl(gff: GFF) -> JRL:
-    """Construct JRL from GFF (module format: Categories/EntryList).
-
-    Defaults when field missing: Categories optional (empty list); per-category Comment "",
-    Name empty, PlanetID/PlotIndex/Priority 0, Tag ""; per-entry End 0, ID 0, Text empty,
-    XP_Percentage 0.0. For save-format ``JNL_*`` fields, observed defaults include empty plot id
-    and zero state/date/time when absent.
-    """
     jrl = JRL()
 
-    # Categories (module format): empty list if missing; per-quest defaults as acquire() below.
     for category_struct in gff.root.acquire("Categories", GFFList()):
         quest = JRLQuest()
         jrl.quests.append(quest)
@@ -119,7 +91,6 @@ def construct_jrl(gff: GFF) -> JRL:
         quest.priority = JRLQuestPriority(category_struct.acquire("Priority", 0))
         quest.tag = category_struct.acquire("Tag", "")
 
-        # EntryList: defaults 0 / empty / 0.0 when fields absent.
         for entry_struct in category_struct.acquire("EntryList", GFFList()):
             entry = JRLEntry()
             quest.entries.append(entry)
@@ -139,7 +110,6 @@ def dismantle_jrl(  # TODO: store original list indices and sort.
 ) -> GFF:
     gff = GFF(GFFContent.JRL)
 
-    # Same field defaults as construct_jrl / observed retail reads.
     category_list: GFFList = gff.root.set_list("Categories", GFFList())
     for i, quest in enumerate(jrl.quests):
         category_struct = category_list.add(i)

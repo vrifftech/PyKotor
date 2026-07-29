@@ -1,5 +1,3 @@
-"""SSF package: sound set (strref to wave) and binary/XML I/O."""
-
 from __future__ import annotations
 from pykotor.resource.formats.ssf.ssf_data import SSF, SSFSound
 from pykotor.resource.formats.ssf.io_ssf import (
@@ -15,17 +13,3 @@ from pykotor.resource.formats.ssf.ssf_auto import (
     read_ssf,
     write_ssf,
 )
-
-__all__ = [
-    "SSF",
-    "SSFBinaryReader",
-    "SSFBinaryWriter",
-    "SSFJSONReader",
-    "SSFJSONWriter",
-    "SSFSound",
-    "SSFXMLReader",
-    "SSFXMLWriter",
-    "bytes_ssf",
-    "read_ssf",
-    "write_ssf",
-]

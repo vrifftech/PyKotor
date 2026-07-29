@@ -3,10 +3,7 @@
 from __future__ import annotations
 
 from enum import IntEnum
-from typing import TYPE_CHECKING, Any, Generator, cast, overload
-
-if TYPE_CHECKING:
-    from typing_extensions import Self
+from typing import Any, Generator
 
 
 # BCP 47 language code
@@ -14,13 +11,10 @@ class Language(IntEnum):
     """Language IDs recognized by both the games.
 
     Found in the TalkTable header, and CExoLocStrings (LocalizedStrings) within GFFs.
-
-    Note: Official releases support English, French, German, Italian, Spanish, Polish
-            Custom language support added for localization beyond official releases
-
     """
 
     # UNSET = 0x7FFFFFFF  # noqa: ERA001
+    UNKNOWN = 0x7FFFFFFE
 
     # The following languages have official releases
     # cp-1252
@@ -30,172 +24,106 @@ class Language(IntEnum):
     ITALIAN = 3
     SPANISH = 4
     POLISH = 5  # cp-1250, only released for K1.
-
-    # Western European languages (cp1252 / ISO-8859-1)
-    DUTCH = 6
-    PORTUGUESE = 7
-    DANISH = 8
-    NORWEGIAN = 9
-    SWEDISH = 10
-    FINNISH = 11
-    ICELANDIC = 12
-    IRISH = 13
-    SCOTTISH_GAELIC = 14
-    WELSH = 15
-    BRETON = 16
-    CORNISH = 17
-    MANX = 18
-    CATALAN = 19
-    BASQUE = 20
-    GALICIAN = 21
-    AFRIKAANS = 22
-    SWAHILI = 23
-    INDONESIAN = 24
-    LUXEMBOURGISH = 25
-    FAROESE = 26
-    FRISIAN = 27
-    OCCITAN = 28
-    LATIN = 29
-    ESPERANTO = 30
-    MALTESE = 31
-
-    # Central/Eastern European languages (cp1250 / ISO-8859-2)
-    CZECH = 32
-    SLOVAK = 33
-    HUNGARIAN = 34
-    ROMANIAN = 35
-    CROATIAN = 36
-    SERBIAN_LATIN = 37
-    SLOVENE = 38
-    BOSNIAN = 39
-    MONTENEGRIN = 40
-
-    # Cyrillic languages (cp1251 / ISO-8859-5 / KOI8-R)
-    RUSSIAN = 41
-    UKRAINIAN = 42
-    BELARUSIAN = 43
-    BULGARIAN = 44
-    MACEDONIAN = 45
-    SERBIAN_CYRILLIC = 46
-
-    # Greek (cp1253 / ISO-8859-7)
-    GREEK = 47
-
-    # Turkish (cp1254 / ISO-8859-9)
-    TURKISH = 48
-    AZERI_LATIN = 49
+    # The following custom languages have been added for additional localization support within PyKotor.
+    # cp-1252
+    AFRIKAANS = 6
+    BASQUE = 7
+    BRETON = 9
+    CATALAN = 10
+    CHAMORRO = 11
+    CHICHEWA = 12
+    CORSICAN = 13
+    DANISH = 14
+    DUTCH = 15
+    FAROESE = 16
+    FILIPINO = 18
+    FINNISH = 19
+    FLEMISH = 20
+    FRISIAN = 21
+    GALICIAN = 22
+    GANDA = 23
+    HAITIAN_CREOLE = 24
+    HAUSA_LATIN = 25
+    HAWAIIAN = 26
+    ICELANDIC = 27
+    IDO = 28
+    INDONESIAN = 29
+    IGBO = 30
+    IRISH = 31
+    INTERLINGUA = 32
+    JAVANESE_LATIN = 33
+    LATIN = 34
+    LUXEMBOURGISH = 35
+    MALTESE = 36
+    NORWEGIAN = 37
+    OCCITAN = 38
+    PORTUGUESE = 39
+    SCOTS = 40
+    SCOTTISH_GAELIC = 41
+    SHONA = 42
+    SOTO = 43
+    SUNDANESE_LATIN = 44
+    SWAHILI = 45
+    SWEDISH = 46
+    TAGALOG = 47
+    TAHITIAN = 48
+    TONGAN = 49
     UZBEK_LATIN = 50
-
-    # Hebrew (cp1255 / ISO-8859-8)
-    HEBREW = 51
-
-    # Arabic (cp1256 / ISO-8859-6)
-    ARABIC = 52
-    PERSIAN = 53
-    URDU = 54
-
-    # Baltic languages (cp1257 / ISO-8859-13)
-    ESTONIAN = 55
-    LATVIAN = 56
-    LITHUANIAN = 57
-
-    # Vietnamese (cp1258)
-    VIETNAMESE = 58
-
-    # Thai (cp874 / ISO-8859-11 / TIS-620)
-    THAI = 59
-
-    # Celtic languages (ISO-8859-14)
-    IRISH_GAELIC = 60  # Additional Celtic variant
-
-    # Nordic languages (ISO-8859-10)
-    GREENLANDIC = 61
-    SAMI = 62
-
-    # Additional languages with SBCS support
-    ALBANIAN = 63
-    ASTURIAN = 64
-    GUARANI = 65
-    IGBO = 66
-    NAURUAN = 67
-    YORUBA = 68
-    TSWANA = 69
-
-    # Armenian (ArmSCII-8)
-    ARMENIAN = 70
-
-    # Georgian (GEOSTD8)
-    GEORGIAN = 71
-
-    # Tamil (TSCII)
-    TAMIL = 72
-
-    # Additional Latin-script languages
-    TAGALOG = 73
-    FILIPINO = 74
-    HAWAIIAN = 75
-    MAORI = 76
-    TAHITIAN = 77
-    TONGAN = 78
-    SAMOAN = 79
-    FIJIAN = 80
-    CHAMORRO = 81
-    HAITIAN_CREOLE = 82
-    HAUSA_LATIN = 83
-    JAVANESE_LATIN = 84
-    SUNDANESE_LATIN = 85
-    CHICHEWA = 86
-    SHONA = 87
-    SOTO = 88
-    XHOSA = 89
-    ZULU = 90
-    WALLOON = 91
-    CORSICAN = 92
-    SCOTS = 93
-    INTERLINGUA = 94
-    IDO = 95
-    RHAETO_ROMANIC = 96
-    ROMANSH = 97
-    LADIN = 98
-    FRIULIAN = 99
-
-    # Additional Pacific languages (cp1252 / ISO-8859-1)
-    NIUEAN = 100
-    TOKELAUAN = 101
-    TUVALUAN = 102
-    ROTOKAS = 103
-
-    # Additional Central/Eastern European languages (cp1250 / ISO-8859-2)
-    TURKMEN = 104
-
-    # Additional Baltic languages (cp1257 / ISO-8859-13)
-    LATGALIAN = 105
-
-    # Additional Austronesian languages (cp1252 / ISO-8859-1)
-    CEBUANO = 106
-    ILOCANO = 107
-    WARAY = 108
-    HILIGAYNON = 109
-    BICOL = 110
-    KAPAMPANGAN = 111
-    PANGASINAN = 112
-    MALAGASY = 113
-
-    # Additional African languages (cp1252 / ISO-8859-1)
-    TWI = 114
-    WOLOF = 115
-    KINYARWANDA = 116
-    LUGANDA = 117
-    KIKUYU = 118
-    SESOTHO = 119  # Southern Sotho
-    VENDA = 120
-    TSONGA = 121
-    BEMBA = 122
-    LINGALA = 123
-    KONGO = 124
-    FULFULDE = 125
-    BAMBARA = 126
-    MALINKE = 127
+    WALLOON = 51
+    XHOSA = 52
+    YORUBA = 53
+    WELSH = 54
+    ZULU = 55
+    # cp-1251
+    BULGARIAN = 58
+    BELARISIAN = 59
+    MACEDONIAN = 60
+    RUSSIAN = 61
+    SERBIAN_CYRILLIC = 62
+    TAJIK = 63
+    TATAR_CYRILLIC = 64
+    UKRAINIAN = 66
+    UZBEK = 67
+    # cp-1250
+    ALBANIAN = 68
+    BOSNIAN_LATIN = 69
+    CZECH = 70
+    SLOVAK = 71
+    SLOVENE = 72
+    CROATIAN = 73
+    HUNGARIAN = 75
+    ROMANIAN = 76  # before 1993 reform
+    # cp-1253
+    GREEK = 77
+    # ISO-8859-3
+    ESPERANTO = 78  # loss of information if encoded to cp-1253
+    # cp-1254
+    AZERBAIJANI_LATIN = 79
+    TURKISH = 81
+    TURKMEN_LATIN = 82
+    # cp-1255
+    HEBREW = 83
+    # cp-1256
+    ARABIC = 84
+    # cp-1257
+    ESTONIAN = 85
+    LATVIAN = 86
+    LITHUANIAN = 87
+    # cp-1258
+    VIETNAMESE = 88
+    # cp-874
+    THAI = 89
+    # The following languages aren't fully encodeable to 8-bit without loss of information:
+    # cp-1252
+    AYMARA = 90
+    KINYARWANDA = 91
+    KURDISH_LATIN = 92
+    MALAGASY = 93
+    MALAY_LATIN = 94
+    MAORI = 95
+    MOLDOVAN_LATIN = 96
+    SAMOAN = 97
+    SOMALI = 98
 
     # The following languages are supported in the GFF/TLK file formats, but are probably not encodable to 8-bit without significant loss of information
     # therefore are probably incompatible with KOTOR.
@@ -204,12 +132,10 @@ class Language(IntEnum):
     CHINESE_SIMPLIFIED = 130
     JAPANESE = 131
 
-    UNSET = 0x7FFFFFFF
-
-    @classmethod
-    def _missing_(cls, value: Any) -> Language:
+    @staticmethod
+    def _missing_(value: Any) -> IntEnum:
         if not isinstance(value, int):
-            return NotImplemented  # type: ignore[no-any-return]
+            return NotImplemented
 
         if value != 0x7FFFFFFF:  # 0x7FFFFFFF is unset/disabled/unused
             print(f"Language integer not known: {value}")
@@ -217,10 +143,12 @@ class Language(IntEnum):
 
     def is_8bit_encoding(self) -> bool:
         return self not in {
+            Language.UNKNOWN,
             Language.KOREAN,
             Language.JAPANESE,
             Language.CHINESE_SIMPLIFIED,
             Language.CHINESE_TRADITIONAL,
+            Language.THAI,
         }
 
     def get_encoding(self) -> str | None:
@@ -241,190 +169,126 @@ class Language(IntEnum):
             - Check if language is in list of Central European languages and return "cp1250" encoding
             - Check individual languages and return their specific encodings.
         """
-        # Western European languages (cp1252 / ISO-8859-1)
+        if self in {
+            Language.ALBANIAN,
+            Language.BOSNIAN_LATIN,
+            Language.CROATIAN,
+            Language.CZECH,
+            Language.HUNGARIAN,
+            Language.MOLDOVAN_LATIN,
+            Language.POLISH,
+            Language.ROMANIAN,  # before 1993 reform
+            Language.SLOVAK,
+            Language.SLOVENE,
+        }:
+            return "cp1250"
+        if self in {
+            Language.BULGARIAN,
+            Language.BELARISIAN,
+            Language.MACEDONIAN,
+            Language.RUSSIAN,
+            Language.SERBIAN_CYRILLIC,
+            Language.TAJIK,
+            Language.TATAR_CYRILLIC,
+            Language.UKRAINIAN,
+            Language.UZBEK,
+        }:
+            return "cp1251"
         if self in {
             Language.ENGLISH,
             Language.FRENCH,
             Language.GERMAN,
             Language.ITALIAN,
             Language.SPANISH,
-            Language.DUTCH,
-            Language.PORTUGUESE,
-            Language.DANISH,
-            Language.NORWEGIAN,
-            Language.SWEDISH,
-            Language.FINNISH,
-            Language.ICELANDIC,
-            Language.IRISH,
-            Language.SCOTTISH_GAELIC,
-            Language.WELSH,
-            Language.BRETON,
-            Language.CORNISH,
-            Language.MANX,
-            Language.CATALAN,
-            Language.BASQUE,
-            Language.GALICIAN,
             Language.AFRIKAANS,
-            Language.SWAHILI,
-            Language.INDONESIAN,
-            Language.LUXEMBOURGISH,
-            Language.FAROESE,
-            Language.FRISIAN,
-            Language.OCCITAN,
-            Language.LATIN,
-            Language.ESPERANTO,
-            Language.MALTESE,
-            Language.GREENLANDIC,
-            Language.ALBANIAN,
-            Language.ASTURIAN,
-            Language.GUARANI,
-            Language.IGBO,
-            Language.NAURUAN,
-            Language.YORUBA,
-            Language.TSWANA,
-            Language.TAGALOG,
-            Language.FILIPINO,
-            Language.HAWAIIAN,
-            Language.MAORI,
-            Language.TAHITIAN,
-            Language.TONGAN,
-            Language.SAMOAN,
-            Language.FIJIAN,
+            Language.BASQUE,
+            Language.BRETON,
+            Language.CATALAN,
             Language.CHAMORRO,
+            Language.CHICHEWA,
+            Language.CORSICAN,
+            Language.DANISH,
+            Language.DUTCH,
+            Language.FAROESE,
+            Language.FILIPINO,
+            Language.FINNISH,
+            Language.FLEMISH,
+            Language.FRISIAN,
+            Language.GALICIAN,
+            Language.GANDA,
             Language.HAITIAN_CREOLE,
             Language.HAUSA_LATIN,
+            Language.HAWAIIAN,
+            Language.ICELANDIC,
+            Language.IDO,
+            Language.INDONESIAN,
+            Language.IGBO,
+            Language.IRISH,
+            Language.INTERLINGUA,
             Language.JAVANESE_LATIN,
-            Language.SUNDANESE_LATIN,
-            Language.CHICHEWA,
+            Language.LATIN,
+            Language.LUXEMBOURGISH,
+            Language.MALTESE,
+            Language.MAORI,
+            Language.NORWEGIAN,
+            Language.OCCITAN,
+            Language.PORTUGUESE,
+            Language.SCOTS,
+            Language.SCOTTISH_GAELIC,
             Language.SHONA,
             Language.SOTO,
-            Language.XHOSA,
-            Language.ZULU,
+            Language.SUNDANESE_LATIN,
+            Language.SWAHILI,
+            Language.SWEDISH,
+            Language.TAGALOG,
+            Language.TAHITIAN,
+            Language.TONGAN,
+            Language.UZBEK_LATIN,
             Language.WALLOON,
-            Language.CORSICAN,
-            Language.SCOTS,
-            Language.INTERLINGUA,
-            Language.IDO,
-            Language.RHAETO_ROMANIC,
-            Language.ROMANSH,
-            Language.LADIN,
-            Language.FRIULIAN,
-            Language.NIUEAN,
-            Language.TOKELAUAN,
-            Language.TUVALUAN,
-            Language.ROTOKAS,
-            Language.CEBUANO,
-            Language.ILOCANO,
-            Language.WARAY,
-            Language.HILIGAYNON,
-            Language.BICOL,
-            Language.KAPAMPANGAN,
-            Language.PANGASINAN,
-            Language.MALAGASY,
-            Language.TWI,
-            Language.WOLOF,
-            Language.KINYARWANDA,
-            Language.LUGANDA,
-            Language.KIKUYU,
-            Language.SESOTHO,
-            Language.VENDA,
-            Language.TSONGA,
-            Language.BEMBA,
-            Language.LINGALA,
-            Language.KONGO,
-            Language.FULFULDE,
-            Language.BAMBARA,
-            Language.MALINKE,
+            Language.XHOSA,
+            Language.YORUBA,
+            Language.WELSH,
+            Language.ZULU,
         }:
             return "cp1252"
-
-        # Central/Eastern European languages (cp1250 / ISO-8859-2)
-        if self in {
-            Language.POLISH,
-            Language.CZECH,
-            Language.SLOVAK,
-            Language.HUNGARIAN,
-            Language.ROMANIAN,
-            Language.CROATIAN,
-            Language.SERBIAN_LATIN,
-            Language.SLOVENE,
-            Language.BOSNIAN,
-            Language.MONTENEGRIN,
-            Language.TURKMEN,
-        }:
-            return "cp1250"
-
-        # Cyrillic languages (cp1251 / ISO-8859-5)
-        if self in {
-            Language.RUSSIAN,
-            Language.UKRAINIAN,
-            Language.BELARUSIAN,
-            Language.BULGARIAN,
-            Language.MACEDONIAN,
-            Language.SERBIAN_CYRILLIC,
-        }:
-            return "cp1251"
-
-        # Greek (cp1253 / ISO-8859-7)
         if self == Language.GREEK:
             return "cp1253"
-
-        # Turkish (cp1254 / ISO-8859-9)
         if self in {
+            Language.AZERBAIJANI_LATIN,
             Language.TURKISH,
-            Language.AZERI_LATIN,
-            Language.UZBEK_LATIN,
+            Language.TURKMEN_LATIN,
         }:
             return "cp1254"
-
-        # Hebrew (cp1255 / ISO-8859-8)
         if self == Language.HEBREW:
             return "cp1255"
-
-        # Arabic (cp1256 / ISO-8859-6)
-        if self in {
-            Language.ARABIC,
-            Language.PERSIAN,
-            Language.URDU,
-        }:
+        if self == Language.ARABIC:
             return "cp1256"
-
-        # Baltic languages (cp1257 / ISO-8859-13)
         if self in {
             Language.ESTONIAN,
             Language.LATVIAN,
             Language.LITHUANIAN,
-            Language.LATGALIAN,
         }:
             return "cp1257"
-
-        # Vietnamese (cp1258)
         if self == Language.VIETNAMESE:
             return "cp1258"
-
-        # Thai (cp874 / ISO-8859-11 / TIS-620)
         if self == Language.THAI:
             return "cp874"
-
-        # Celtic languages (ISO-8859-14) - can use cp1252 as fallback
-        if self == Language.IRISH_GAELIC:
-            return "cp1252"  # ISO-8859-14 not widely supported, cp1252 is close
-
-        # Nordic languages (ISO-8859-10) - can use cp1252 as fallback
-        if self == Language.SAMI:
-            return "cp1252"  # ISO-8859-10 not widely supported, cp1252 is close
-
-        # Armenian (ArmSCII-8)
-        if self == Language.ARMENIAN:
-            return "armscii-8"
-
-        # Georgian (GEOSTD8)
-        if self == Language.GEORGIAN:
-            return "geostd8"
-
-        # Tamil (TSCII)
-        if self == Language.TAMIL:
-            return "tscii"
+        if self in {
+            Language.MALAY_LATIN,
+            Language.SAMOAN,
+            Language.SOMALI,
+        }:
+            return "ISO-8859-1"
+        if self in {
+            Language.AYMARA,
+            Language.ESPERANTO,
+            Language.MALAGASY,
+        }:
+            return "ISO-8859-3"
+        if self == Language.KURDISH_LATIN:
+            return "ISO-8859-9"
+        if self == Language.KINYARWANDA:
+            return "ISO-8859-10"
 
         # The following languages/encodings may not be 8-bit and need additional information in order to be supported.
         if self == Language.KOREAN:
@@ -435,169 +299,110 @@ class Language(IntEnum):
             return "cp936"
         if self == Language.JAPANESE:
             return "cp932"
-        if self == Language.UNSET:
+        if self == Language.UNKNOWN:
             return None
         msg = f"No encoding defined for language: {self.name}"
         raise ValueError(msg)
 
     def get_bcp47_code(self):
         lang_map = {
-            # Official releases
             Language.ENGLISH: "en",
             Language.FRENCH: "fr",
             Language.GERMAN: "de",
             Language.ITALIAN: "it",
             Language.SPANISH: "es",
             Language.POLISH: "pl",
-            # Western European
-            Language.DUTCH: "nl",
-            Language.PORTUGUESE: "pt",
-            Language.DANISH: "da",
-            Language.NORWEGIAN: "no",
-            Language.SWEDISH: "sv",
-            Language.FINNISH: "fi",
-            Language.ICELANDIC: "is",
-            Language.IRISH: "ga",
-            Language.SCOTTISH_GAELIC: "gd",
-            Language.WELSH: "cy",
-            Language.BRETON: "br",
-            Language.CORNISH: "kw",
-            Language.MANX: "gv",
-            Language.CATALAN: "ca",
-            Language.BASQUE: "eu",
-            Language.GALICIAN: "gl",
             Language.AFRIKAANS: "af",
-            Language.SWAHILI: "sw",
-            Language.INDONESIAN: "id",
-            Language.LUXEMBOURGISH: "lb",
+            Language.BASQUE: "eu",
+            Language.BRETON: "br",
+            Language.CATALAN: "ca",
+            Language.CHAMORRO: "ch",
+            Language.CHICHEWA: "ny",
+            Language.CORSICAN: "co",
+            Language.DANISH: "da",
+            Language.DUTCH: "nl",
             Language.FAROESE: "fo",
+            Language.FILIPINO: "filipino",
+            Language.FINNISH: "fi",
+            Language.FLEMISH: "nl-BE",
             Language.FRISIAN: "fy",
-            Language.OCCITAN: "oc",
+            Language.GALICIAN: "gl",
+            Language.GANDA: "lg",
+            Language.HAITIAN_CREOLE: "ht",
+            Language.HAUSA_LATIN: "ha",
+            Language.HAWAIIAN: "haw",
+            Language.ICELANDIC: "is",
+            Language.IDO: "io",
+            Language.INDONESIAN: "id",
+            Language.IGBO: "ig",
+            Language.IRISH: "ga",
+            Language.INTERLINGUA: "ia",
+            Language.JAVANESE_LATIN: "jv",  # jv-Latn
             Language.LATIN: "la",
-            Language.ESPERANTO: "eo",
+            Language.LUXEMBOURGISH: "lb",
             Language.MALTESE: "mt",
-            # Central/Eastern European
+            Language.NORWEGIAN: "no",
+            Language.OCCITAN: "oc",
+            Language.PORTUGUESE: "pt",
+            Language.SCOTS: "sco",
+            Language.SCOTTISH_GAELIC: "gd",
+            Language.SHONA: "sn",
+            Language.SOTO: "st",
+            Language.SUNDANESE_LATIN: "su",  # su-Latn
+            Language.SWAHILI: "sw",
+            Language.SWEDISH: "sv",
+            Language.TAGALOG: "tl",
+            Language.TAHITIAN: "ty",
+            Language.TONGAN: "to",
+            Language.UZBEK_LATIN: "uz",  # uz-Latn
+            Language.WALLOON: "wa",
+            Language.XHOSA: "xh",
+            Language.YORUBA: "yo",
+            Language.WELSH: "cy",
+            Language.ZULU: "zu",
+            Language.BULGARIAN: "bg",
+            Language.BELARISIAN: "be",
+            Language.MACEDONIAN: "mk",
+            Language.RUSSIAN: "ru",
+            Language.SERBIAN_CYRILLIC: "sr",  # sr-Cyrl
+            Language.TAJIK: "tg",
+            Language.TATAR_CYRILLIC: "tt",  # tt-Cyrl
+            Language.UKRAINIAN: "uk",
+            Language.UZBEK: "uz",  # uz-Cyrl
+            Language.ALBANIAN: "sq",
+            Language.BOSNIAN_LATIN: "bs",
             Language.CZECH: "cs",
             Language.SLOVAK: "sk",
+            Language.SLOVENE: "sl",
+            Language.CROATIAN: "hr",
             Language.HUNGARIAN: "hu",
             Language.ROMANIAN: "ro",
-            Language.CROATIAN: "hr",
-            Language.SERBIAN_LATIN: "sr-Latn",
-            Language.SLOVENE: "sl",
-            Language.BOSNIAN: "bs",
-            Language.MONTENEGRIN: "cnr",
-            # Cyrillic
-            Language.RUSSIAN: "ru",
-            Language.UKRAINIAN: "uk",
-            Language.BELARUSIAN: "be",
-            Language.BULGARIAN: "bg",
-            Language.MACEDONIAN: "mk",
-            Language.SERBIAN_CYRILLIC: "sr-Cyrl",
-            # Greek
             Language.GREEK: "el",
-            # Turkish
+            Language.ESPERANTO: "eo",
+            Language.AZERBAIJANI_LATIN: "az",  # az-Latn
             Language.TURKISH: "tr",
-            Language.AZERI_LATIN: "az",
-            Language.UZBEK_LATIN: "uz-Latn",
-            # Hebrew
+            Language.TURKMEN_LATIN: "tk",  # tk-Latn
             Language.HEBREW: "he",
-            # Arabic
             Language.ARABIC: "ar",
-            Language.PERSIAN: "fa",
-            Language.URDU: "ur",
-            # Baltic
             Language.ESTONIAN: "et",
             Language.LATVIAN: "lv",
             Language.LITHUANIAN: "lt",
-            # Vietnamese
             Language.VIETNAMESE: "vi",
-            # Thai
             Language.THAI: "th",
-            # Celtic
-            Language.IRISH_GAELIC: "ga",
-            # Nordic
-            Language.GREENLANDIC: "kl",
-            Language.SAMI: "se",
-            # Additional
-            Language.ALBANIAN: "sq",
-            Language.ASTURIAN: "ast",
-            Language.GUARANI: "gn",
-            Language.IGBO: "ig",
-            Language.NAURUAN: "na",
-            Language.YORUBA: "yo",
-            Language.TSWANA: "tn",
-            # Armenian
-            Language.ARMENIAN: "hy",
-            # Georgian
-            Language.GEORGIAN: "ka",
-            # Tamil
-            Language.TAMIL: "ta",
-            # Additional Latin-script languages
-            Language.TAGALOG: "tl",
-            Language.FILIPINO: "fil",
-            Language.HAWAIIAN: "haw",
-            Language.MAORI: "mi",
-            Language.TAHITIAN: "ty",
-            Language.TONGAN: "to",
-            Language.SAMOAN: "sm",
-            Language.FIJIAN: "fj",
-            Language.CHAMORRO: "ch",
-            Language.HAITIAN_CREOLE: "ht",
-            Language.HAUSA_LATIN: "ha",
-            Language.JAVANESE_LATIN: "jv",
-            Language.SUNDANESE_LATIN: "su",
-            Language.CHICHEWA: "ny",
-            Language.SHONA: "sn",
-            Language.SOTO: "st",
-            Language.XHOSA: "xh",
-            Language.ZULU: "zu",
-            Language.WALLOON: "wa",
-            Language.CORSICAN: "co",
-            Language.SCOTS: "sco",
-            Language.INTERLINGUA: "ia",
-            Language.IDO: "io",
-            Language.RHAETO_ROMANIC: "rm",
-            Language.ROMANSH: "rm",
-            Language.LADIN: "lld",
-            Language.FRIULIAN: "fur",
-            # Additional Pacific languages
-            Language.NIUEAN: "niu",
-            Language.TOKELAUAN: "tkl",
-            Language.TUVALUAN: "tvl",
-            Language.ROTOKAS: "roo",
-            # Additional Central/Eastern European
-            Language.TURKMEN: "tk",
-            # Additional Baltic
-            Language.LATGALIAN: "ltg",
-            # Additional Austronesian languages
-            Language.CEBUANO: "ceb",
-            Language.ILOCANO: "ilo",
-            Language.WARAY: "war",
-            Language.HILIGAYNON: "hil",
-            Language.BICOL: "bcl",
-            Language.KAPAMPANGAN: "pam",
-            Language.PANGASINAN: "pag",
-            Language.MALAGASY: "mg",
-            # Additional African languages
-            Language.TWI: "tw",
-            Language.WOLOF: "wo",
+            Language.AYMARA: "ay",
             Language.KINYARWANDA: "rw",
-            Language.LUGANDA: "lg",
-            Language.KIKUYU: "ki",
-            Language.SESOTHO: "st",
-            Language.VENDA: "ve",
-            Language.TSONGA: "ts",
-            Language.BEMBA: "bem",
-            Language.LINGALA: "ln",
-            Language.KONGO: "kg",
-            Language.FULFULDE: "ff",
-            Language.BAMBARA: "bm",
-            Language.MALINKE: "mlq",
-            # Non-SBCS languages
+            Language.KURDISH_LATIN: "ku",  # ku-Latn
+            Language.MALAGASY: "mg",
+            Language.MALAY_LATIN: "ms",  # ms-Latn
+            Language.MAORI: "mi",
+            Language.MOLDOVAN_LATIN: "mo",  # mo-Latn
+            Language.SAMOAN: "sm",
+            Language.SOMALI: "so",
             Language.KOREAN: "ko",
             Language.CHINESE_TRADITIONAL: "zh-TW",  # zh-Hant
             Language.CHINESE_SIMPLIFIED: "zh-CN",  # zh-Hans
             Language.JAPANESE: "ja",
+            # Add any additional languages if necessary
         }
         return lang_map.get(self)
 
@@ -611,7 +416,6 @@ class Gender(IntEnum):
 
 class IntKeyDict(dict):
     """This purely exists because something is setting the data with string key numbers incorrectly. This is a HACK:."""
-
     def __setitem__(self, key, value):
         if not isinstance(key, int):
             try:
@@ -632,15 +436,9 @@ class LocalizedString:
         stringref: An index into the 'dialog.tlk' file. If this value is -1 the game will use the stored substrings.
     """
 
-    def __init__(
-        self,
-        stringref: int,
-        substrings: dict[int, str] | None = None,
-    ):
+    def __init__(self, stringref: int, substrings: dict[int, str] | None = None):
         self.stringref: int = stringref
-        self._substrings_internal: IntKeyDict = (
-            IntKeyDict() if substrings is None else IntKeyDict(substrings)
-        )
+        self._substrings_internal: IntKeyDict = IntKeyDict() if substrings is None else IntKeyDict(substrings)
 
     @property
     def _substrings(self) -> dict[int, str]:
@@ -678,6 +476,7 @@ class LocalizedString:
         """
         if self.stringref >= 0:
             return str(self.stringref)
+        # TODO: There's no reason we should default to english here, perhaps remove the __str__ overload and ensure relevant references call .get() with language information.
         if self.exists(Language.ENGLISH, Gender.MALE):
             return str(self.get(Language.ENGLISH, Gender.MALE))
         # language either unset or not english.
@@ -689,26 +488,29 @@ class LocalizedString:
         if self is other:
             return True
         if not isinstance(other, LocalizedString):
-            return NotImplemented  # type: ignore[no-any-return]
+            return NotImplemented
         if other.stringref != self.stringref:
             return False
         return other._substrings == self._substrings
 
-    def to_dict(self) -> dict[str, Any]:
-        return {"stringref": self.stringref, "substrings": self._substrings}
+    def to_dict(self) -> dict:
+        return {
+            "stringref": self.stringref,
+            "substrings": self._substrings
+        }
 
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Self:
-        localized_string = cls(stringref=data.get("stringref", -1))
-        localized_string._substrings = cast("dict[int, str]", data.get("substrings", {}))
+    @staticmethod
+    def from_dict(data: dict) -> LocalizedString:
+        localized_string = LocalizedString(data["stringref"])
+        localized_string._substrings = data.get("substrings", {})
         return localized_string
 
     @classmethod
-    def from_invalid(cls) -> Self:
+    def from_invalid(cls):
         return cls(-1)
 
     @classmethod
-    def from_english(cls, text: str) -> Self:
+    def from_english(cls, text: str):
         """Returns a new localizedstring object with a english substring.
 
         Args:
@@ -719,43 +521,24 @@ class LocalizedString:
         -------
             a new localizedstring object.
         """
-        locstring: Self = cls(-1)
+        locstring = cls(-1)
         locstring.set_data(Language.ENGLISH, Gender.MALE, text)
         return locstring
 
-    @overload
     @staticmethod
-    def substring_id(language: Language, gender: Gender) -> int: ...
-    @overload
-    @staticmethod
-    def substring_id(language: int, gender: int) -> int: ...
-    @staticmethod
-    def substring_id(language: Language | int, gender: Gender | int) -> int:
+    def substring_id(language: Language, gender: Gender) -> int:
         """Returns the ID for the language gender pair.
-
-        Supports both enum and integer arguments for backward compatibility.
 
         Args:
         ----
-            language: The language (Language enum or int).
-            gender: The gender (Gender enum or int).
+            language: The language.
+            gender: The gender.
 
         Returns:
         -------
             The substring ID.
         """
-        # Handle integer arguments by converting to enums
-        if isinstance(language, int):
-            language_enum = Language(language)
-        else:
-            language_enum = language
-
-        if isinstance(gender, int):
-            gender_enum = Gender(gender)
-        else:
-            gender_enum = gender
-
-        return (language_enum * 2) + gender_enum
+        return (language * 2) + gender
 
     @staticmethod
     def substring_pair(substring_id: int | str) -> tuple[Language, Gender]:
@@ -781,174 +564,78 @@ class LocalizedString:
         gender = Gender(substring_id % 2)
         return language, gender
 
-    @overload
-    def set_data(self, language: Language, gender: Gender, string: str) -> None: ...
-    @overload
-    def set_data(self, language: int, gender: int, string: str) -> None: ...
     def set_data(
         self,
-        language: Language | int,
-        gender: Gender | int,
+        language: Language,
+        gender: Gender,
         string: str,
-    ) -> None:
+    ):
         """Sets the text of the substring with the corresponding language/gender pair.
-
-        Supports both enum and integer arguments for backward compatibility.
-        Can be called as:
-        - set_data(Language.ENGLISH, Gender.MALE, "text") - enum arguments
-        - set_data(0, 0, "text") - integer arguments
 
         Note: The substring is created if it does not exist.
 
         Args:
         ----
-            language: The language (Language enum or int).
-            gender: The gender (Gender enum or int).
+            language: The language.
+            gender: The gender.
             string: The new text for the new substring.
         """
-        # Handle integer arguments by converting to enums
-        if isinstance(language, int):
-            language_enum = Language(language)
-        else:
-            language_enum = language
-
-        if isinstance(gender, int):
-            gender_enum = Gender(gender)
-        else:
-            gender_enum = gender
-
-        substring_id: int = LocalizedString.substring_id(language_enum, gender_enum)
+        substring_id: int = LocalizedString.substring_id(language, gender)
         self._substrings[substring_id] = string
 
-    def set_string(self, substring_id: int | str, string: str) -> None:
-        """Backward-compatible alias that uses numeric substring ids (language*2 + gender)."""
-        language, gender = LocalizedString.substring_pair(int(substring_id))
-        self.set_data(language, gender, string)
-
-    @overload
-    def get(
-        self, language: Language, gender: Gender, *, use_fallback: bool = False
-    ) -> str | None: ...
-    @overload
-    def get(self, language: int, gender: int, *, use_fallback: bool = False) -> str | None: ...
-    @overload
-    def get(self, language: int, *, use_fallback: bool = False) -> str | None: ...
     def get(
         self,
-        language: Language | int,
-        gender: Gender | int | None = None,
+        language: Language,
+        gender: Gender,
         *,
         use_fallback: bool = False,
     ) -> str | None:
         """Gets the substring text with the corresponding language/gender pair.
 
-        Supports both enum and integer arguments for backward compatibility.
-        Can be called as:
-        - get(Language.ENGLISH, Gender.MALE) - enum arguments
-        - get(0, 0) - integer arguments
-        - get(0) - single integer (gender defaults to 0/MALE)
-
         Args:
         ----
-            language: The language (Language enum or int).
-            gender: The gender (Gender enum or int).
-                If None and language is int, defaults to Gender.MALE (0) for backward compatibility with get(0).
+            language: The language.
+            gender: The gender.
 
         Returns:
         -------
             The text of the substring if a matching pair is found, otherwise returns None.
         """
-        # Handle integer arguments by converting to enums
-        if isinstance(language, int):
-            language_enum = Language(language)
-        else:
-            language_enum = language
+        substring_id: int = LocalizedString.substring_id(language, gender)
+        return self._substrings.get(substring_id, next(iter(self._substrings.values()), None) if use_fallback else None)
 
-        if gender is None:
-            # Default to MALE if gender not provided (for backward compatibility with get(0))
-            gender_enum = Gender.MALE
-        elif isinstance(gender, int):
-            gender_enum = Gender(gender)
-        else:
-            gender_enum = gender
-
-        substring_id: int = LocalizedString.substring_id(language_enum, gender_enum)
-        return self._substrings.get(
-            substring_id, next(iter(self._substrings.values()), None) if use_fallback else None
-        )
-
-    @overload
-    def remove(self, language: Language, gender: Gender) -> None: ...
-    @overload
-    def remove(self, language: int, gender: int) -> None: ...
     def remove(
         self,
-        language: Language | int,
-        gender: Gender | int,
-    ) -> None:
+        language: Language,
+        gender: Gender,
+    ):
         """Removes the existing substring with the respective language/gender pair if it exists.
-
-        Supports both enum and integer arguments for backward compatibility.
-        Can be called as:
-        - remove(Language.ENGLISH, Gender.MALE) - enum arguments
-        - remove(0, 0) - integer arguments
 
         Note: No error is thrown if it does not find a corresponding pair.
 
         Args:
         ----
-            language: The language (Language enum or int).
-            gender: The gender (Gender enum or int).
+            language: The language.
+            gender: The gender.
         """
-        # Handle integer arguments by converting to enums
-        if isinstance(language, int):
-            language_enum = Language(language)
-        else:
-            language_enum = language
-
-        if isinstance(gender, int):
-            gender_enum = Gender(gender)
-        else:
-            gender_enum = gender
-
-        substring_id: int = LocalizedString.substring_id(language_enum, gender_enum)
+        substring_id: int = LocalizedString.substring_id(language, gender)
         self._substrings.pop(substring_id)
 
-    @overload
-    def exists(self, language: Language, gender: Gender) -> bool: ...
-    @overload
-    def exists(self, language: int, gender: int) -> bool: ...
     def exists(
         self,
-        language: Language | int,
-        gender: Gender | int,
+        language: Language,
+        gender: Gender,
     ) -> bool:
         """Returns whether or not a substring exists with the respective language/gender pair.
 
-        Supports both enum and integer arguments for backward compatibility.
-        Can be called as:
-        - exists(Language.ENGLISH, Gender.MALE) - enum arguments
-        - exists(0, 0) - integer arguments
-
         Args:
         ----
-            language: The language (Language enum or int).
-            gender: The gender (Gender enum or int).
+            language: The language.
+            gender: The gender.
 
         Returns:
         -------
             True if the corresponding substring exists.
         """
-        # Handle integer arguments by converting to enums
-        if isinstance(language, int):
-            language_enum = Language(language)
-        else:
-            language_enum = language
-
-        if isinstance(gender, int):
-            gender_enum = Gender(gender)
-        else:
-            gender_enum = gender
-
-        substring_id: int = LocalizedString.substring_id(language_enum, gender_enum)
+        substring_id: int = LocalizedString.substring_id(language, gender)
         return substring_id in self._substrings

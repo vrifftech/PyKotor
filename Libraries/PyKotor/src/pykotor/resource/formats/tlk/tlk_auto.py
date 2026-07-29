@@ -1,18 +1,14 @@
-"""TLK (talk table) format detection and auto read/write dispatch (binary, JSON, XML)."""
-
 from __future__ import annotations
 
-import json
 import os
 
 from typing import TYPE_CHECKING
 
 from pykotor.common.stream import BinaryReader
-from pykotor.resource.formats._base import BiowareEncoder
 from pykotor.resource.formats.tlk.io_tlk import TLKBinaryReader, TLKBinaryWriter
+from pykotor.resource.formats.tlk.io_tlk_json import TLKJSONReader, TLKJSONWriter
 from pykotor.resource.formats.tlk.io_tlk_xml import TLKXMLReader, TLKXMLWriter
-from pykotor.resource.type import RESOURCE_FORMAT, ResourceType, ToolsetFormat
-from pykotor.tools.encoding import decode_bytes_with_fallbacks
+from pykotor.resource.type import ResourceType
 
 if TYPE_CHECKING:
     from pykotor.common.language import Language
@@ -48,24 +44,26 @@ def detect_tlk(
 
     def check(
         first4,
-    ) -> RESOURCE_FORMAT:
+    ):
         if first4 == "TLK ":
             return ResourceType.TLK
         if "{" in first4:
-            return ToolsetFormat.TLK_JSON
-        if "<" in first4:
-            return ToolsetFormat.TLK_XML
+            return ResourceType.TLK_JSON
+        if "<" in first4:  # sourcery skip: assign-if-exp, reintroduce-else
+            return ResourceType.TLK_XML
         return ResourceType.INVALID
 
-    if isinstance(source, str) and not os.path.exists(source):
-        stripped = source.lstrip()
-        if stripped.startswith(("TLK ", "{", "<")):
-            return check(stripped[:4].ljust(4))
-
-    file_format: RESOURCE_FORMAT
     try:
-        with BinaryReader.from_auto(source, offset) as reader:
-            file_format = check(reader.read_string(4))
+        if isinstance(source, (os.PathLike, str)):
+            with BinaryReader.from_file(source, offset) as reader:
+                file_format = check(reader.read_string(4))
+        elif isinstance(source, (memoryview, bytes, bytearray)):
+            file_format = check(bytes(source[:4]).decode("ascii", "ignore"))
+        elif isinstance(source, BinaryReader):
+            file_format = check(source.read_string(4))
+            source.skip(-4)
+        else:
+            file_format = ResourceType.INVALID
     except (FileNotFoundError, PermissionError, IsADirectoryError):
         raise
     except OSError:
@@ -79,7 +77,6 @@ def read_tlk(
     offset: int = 0,
     size: int | None = None,
     language: Language | None = None,
-    file_format: RESOURCE_FORMAT | None = None,
 ) -> TLK:
     """Returns an TLK instance from the source.
 
@@ -90,8 +87,6 @@ def read_tlk(
         source: The source of the data.
         offset: The byte offset of the file inside the data.
         size: Number of bytes to allowed to read from the stream. If not specified, uses the whole stream.
-        language: The language of the TLK data.
-        file_format: The file format to use (ResourceType.TLK, ToolsetFormat.TLK_XML, ToolsetFormat.TLK_JSON). If not specified, it will be detected automatically.
 
     Raises:
     ------
@@ -104,32 +99,18 @@ def read_tlk(
     -------
         An TLK instance.
     """
-    if file_format is None:
-        file_format = detect_tlk(source, offset)
+    file_format: ResourceType = detect_tlk(source, offset)
 
-    if file_format == ResourceType.INVALID:
+    if file_format is ResourceType.INVALID:
         msg = "Failed to determine the format of the TLK file."
         raise ValueError(msg)
 
-    normalized_source = source
-    if (
-        isinstance(source, str)
-        and file_format in (ToolsetFormat.TLK_XML, ToolsetFormat.TLK_JSON)
-        and not os.path.exists(source)
-    ):  # noqa: PTH110
-        normalized_source = source.encode("utf-8")
-
-    if file_format == ResourceType.TLK:
-        return TLKBinaryReader(normalized_source, offset, size or 0, language).load()
-    if file_format == ToolsetFormat.TLK_XML:
-        return TLKXMLReader(normalized_source, offset, size or 0).load()
-    if file_format == ToolsetFormat.TLK_JSON:
-        from pykotor.resource.formats.tlk.tlk_data import TLK
-
-        with BinaryReader.from_auto(normalized_source, offset) as reader:
-            raw = reader.read_all()
-        decoded = decode_bytes_with_fallbacks(raw)
-        return TLK.from_json(json.loads(decoded))
+    if file_format is ResourceType.TLK:
+        return TLKBinaryReader(source, offset, size or 0, language).load()
+    if file_format is ResourceType.TLK_XML:
+        return TLKXMLReader(source, offset, size or 0).load()
+    if file_format is ResourceType.TLK_JSON:
+        return TLKJSONReader(source, offset, size or 0).load()
     msg = "Unsupported TLK format specified."
     raise ValueError(msg)
 
@@ -137,7 +118,7 @@ def read_tlk(
 def write_tlk(
     tlk: TLK,
     target: TARGET_TYPES,
-    file_format: RESOURCE_FORMAT = ResourceType.TLK,
+    file_format: ResourceType = ResourceType.TLK,
 ):
     """Writes the TLK data to the target location with the specified format (TLK, TLK_XML or TLK_JSON).
 
@@ -153,16 +134,12 @@ def write_tlk(
         PermissionError: If the file could not be written to the specified destination.
         ValueError: If the specified format was unsupported.
     """
-    if file_format == ResourceType.TLK:
+    if file_format is ResourceType.TLK:
         TLKBinaryWriter(tlk, target).write()
-    elif file_format == ToolsetFormat.TLK_XML:
+    elif file_format is ResourceType.TLK_XML:
         TLKXMLWriter(tlk, target).write()
-    elif file_format == ToolsetFormat.TLK_JSON:
-        json_dump = json.dumps(tlk, cls=BiowareEncoder, indent=4)
-        from pykotor.common.stream import BinaryWriter
-
-        with BinaryWriter.to_auto(target) as writer:
-            writer.write_bytes(json_dump.encode())
+    elif file_format is ResourceType.TLK_JSON:
+        TLKJSONWriter(tlk, target).write()
     else:
         msg = "Unsupported format specified; use TLK or TLK_XML."
         raise ValueError(msg)
@@ -170,7 +147,7 @@ def write_tlk(
 
 def bytes_tlk(
     tlk: TLK,
-    file_format: RESOURCE_FORMAT = ResourceType.TLK,
+    file_format: ResourceType = ResourceType.TLK,
 ) -> bytes:
     """Returns the TLK data in the specified format (TLK or TLK_XML or TLK_JSON) as a bytes object.
 
@@ -191,4 +168,4 @@ def bytes_tlk(
     """
     data = bytearray()
     write_tlk(tlk, data, file_format)
-    return bytes(data)
+    return data

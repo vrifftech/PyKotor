@@ -1,16 +1,9 @@
-"""VIS (visibility) ASCII read/write: room-to-room visibility for occlusion culling."""
-
 from __future__ import annotations
 
 import os
 
 from typing import TYPE_CHECKING
 
-import kaitaistruct
-
-from bioware_kaitai_formats.vis import Vis
-
-from pykotor.common.stream import BinaryReader
 from pykotor.resource.formats.vis.vis_data import VIS
 from pykotor.resource.type import ResourceReader, ResourceWriter, autoclose
 
@@ -19,34 +12,15 @@ if TYPE_CHECKING:
 
 
 class VISAsciiReader(ResourceReader):
-    """Reads VIS (Visibility) files.
-
-    VIS files define which rooms are visible from other rooms, used for occlusion culling
-    and level-of-detail management in KotOR modules.
-
-    Observed retail behavior:
-    ----------
-        KotOR loads ASCII ``.vis`` files alongside rooms; each parent line lists how many
-        children follow, and indented lines name mutually visible rooms for occlusion culling.
-
-        Note: VIS files are ASCII text: parent room names followed by indented child room names.
-
-    """
-
     def __init__(self, source: SOURCE_TYPES, offset: int = 0, size: int = 0):
         super().__init__(source, offset, size)
         self._vis: VIS | None = None
         self._lines: list[str] = []
 
     @autoclose
-    def load(self, *, auto_close: bool = True) -> VIS:  # noqa: FBT001, FBT002, ARG002
+    def load(self, auto_close: bool = True) -> VIS:
         self._vis = VIS()
-        data = self._reader.read_all()
-        try:
-            raw = Vis.from_bytes(data).raw_content
-        except (kaitaistruct.KaitaiStructError, UnicodeDecodeError):
-            raw = BinaryReader.from_bytes(data, 0).read_string(len(data))
-        self._lines = raw.splitlines()
+        self._lines = self._reader.read_string(self._reader.size()).splitlines()
 
         pairs = []
 
@@ -54,32 +28,10 @@ class VISAsciiReader(ResourceReader):
         for line in iterator:
             tokens: list[str] = line.split()
 
-            # Skip empty lines
-            if not tokens:
-                continue
-
-            # Use a named constant for the magic value 2
-            VERSION_HEADER_TOKEN_INDEX = (
-                1  # Index in VIS ASCII lines where a version string may appear
-            )
-            # Check if this is a version header line (e.g., "room V3.28")
-            if len(tokens) >= VERSION_HEADER_TOKEN_INDEX + 1 and tokens[
-                VERSION_HEADER_TOKEN_INDEX
-            ].startswith("V"):
-                # This is a version header, skip it
-                # Format appears to be: roomname Version
-                continue
-
             when_inside: str = tokens[0]
             self._vis.add_room(when_inside)
 
-            # Try to parse the count, provide better error if it fails
-            try:
-                count = int(tokens[1])
-            except (ValueError, IndexError) as e:
-                msg = f"Invalid VIS format: expected room count, got '{tokens[1] if len(tokens) > 1 else '(missing)'}' for room '{when_inside}'"
-                raise ValueError(msg) from e
-
+            count = int(tokens[1])
             for _ in range(count):
                 show = next(iterator).split()[0]
                 pairs.append((when_inside, show))
@@ -100,7 +52,7 @@ class VISAsciiWriter(ResourceWriter):
         self._vis: VIS = vis
 
     @autoclose
-    def write(self, *, auto_close: bool = True):  # noqa: FBT001, FBT002, ARG002  # pyright: ignore[reportUnusedParameters]
+    def write(self, auto_close: bool = True):
         for observer, observed in self._vis:
             self._writer.write_string(f"{observer} {len(observed)}{os.linesep}")
             for room in observed:

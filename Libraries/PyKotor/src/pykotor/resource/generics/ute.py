@@ -1,5 +1,3 @@
-"""UTE (encounter) generic: GFF-based encounter definitions and spawn lists."""
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -15,19 +13,40 @@ if TYPE_CHECKING:
 
 
 class UTE:
-    """Stores encounter data from the on-disk UTE GFF template.
+    """Stores encounter data.
 
-    Spawn limits, faction, reset/respawn flags, script hooks, and ``CreatureList`` rows (template
-    ResRef, CR, spawn flags; TSL may add ``GuaranteedCount``). The former per-attribute Kotor.NET
-    URL matrix is archived in ``wiki/reverse_engineering_findings_generics_ute_class_docstrings_pre_scrub.md``.
-    See ``wiki/reverse_engineering_findings.md`` (*resource/generics/ute.py*) and ``wiki/GFF-UTE.md``.
+    Attributes:
+    ----------
+        tag: "Tag" field.
+        resref: "TemplateResRef" field.
+        active: "Active" field.
+        difficulty_id: "DifficultyIndex" field.
+        faction_id: "Faction" field.
+        max_creatures: "MaxCreatures" field.
+        player_only: "PlayerOnly" field.
+        rec_creatures: "RecCreatures" field.
+        reset: "Reset" field.
+        reset_time: "ResetTime" field.
+        respawns: "Respawns" field.
+        single_shot: "SpawnOption" field.
+        on_entered: "OnEntered" field.
+        on_exit: "OnExit" field.
+        on_exhausted: "OnExhausted" field.
+        on_heartbeat: "OnHeartbeat" field.
+        on_user_defined: "OnUserDefined" field.
+        comment: "Comment" field.
 
-    Note: ``GFFContent.UTE``.
+        palette_id: "PaletteID" field. Used in toolset only.
+
+        name: "LocalizedName" field. Not used by the game engine.
+        unused_difficulty: "Difficulty" field. Not used by the game engine.
     """
 
     BINARY_TYPE = ResourceType.UTE
 
-    def __init__(self):
+    def __init__(
+        self,
+    ):
         self.resref: ResRef = ResRef.from_blank()
         self.tag: str = ""
         self.comment: str = ""
@@ -60,12 +79,20 @@ class UTE:
 
 
 class UTECreature:
-    """One row in ``CreatureList`` (template ResRef, CR, ``SingleSpawn``, optional ``GuaranteedCount``).
+    """Stores data for a creature that can be spawned by an encounter.
 
-    Former attribute-level Kotor.NET references are in the same wiki archive as ``UTE``.
+    Attributes:
+    ----------
+        appearance_id: "Appearance" field.
+        challenge_rating: "CR" field.
+        resref: "ResRef" field.
+        single_spawn: "SingleSpawn" field.
+        guaranteed_count: "GuaranteedCount" field. KotOR 2 only.
     """
 
-    def __init__(self):
+    def __init__(
+        self,
+    ):
         self.appearance_id: int = 0
         self.challenge_rating: float = 0.0
         self.resref: ResRef = ResRef.from_blank()
@@ -73,27 +100,24 @@ class UTECreature:
         self.guaranteed_count: int = 0
 
 
-def utd_version(gff: GFF) -> Game:
-    """Infer game version from UTE GFF. GuaranteedCount is TSL-only (K2)."""
-    creature_list = gff.root.acquire("CreatureList", GFFList())
-    for creature_struct in creature_list:
-        if creature_struct.exists("GuaranteedCount"):
-            return Game.K2
+def utd_version(
+    gff: GFF,
+) -> Game:
+    for label in "GuaranteedCount":
+        for creature_struct in gff.root.acquire("CreatureList", GFFList()):
+            if creature_struct.exists(label):
+                return Game.K2
     return Game.K1
 
 
-def construct_ute(gff: GFF) -> UTE:
-    """Constructs a UTE object from a GFF structure.
-
-    Missing fields use empty tags/ResRefs, zero numerics, false flags, and empty creature list
-    as in observed retail reads.
-    """
+def construct_ute(
+    gff: GFF,
+) -> UTE:
     ute = UTE()
 
     root = gff.root
     ute.tag = root.acquire("Tag", "")
     ute.resref = root.acquire("TemplateResRef", ResRef.from_blank())
-    # Spawn/reset numerics: default 0 when absent.
     ute.active = bool(root.acquire("Active", 0))
     ute.difficulty_id = root.acquire("DifficultyIndex", 0)
     ute.unused_difficulty = root.acquire("Difficulty", 0)
@@ -115,16 +139,14 @@ def construct_ute(gff: GFF) -> UTE:
     ute.palette_id = root.acquire("PaletteID", 0)
 
     creature_list = root.get_list("CreatureList")
-    if creature_list is not None:
-        for creature_struct in creature_list:
-            creature = UTECreature()
-            ute.creatures.append(creature)
-            # KotOR I does not apply Appearance or GuaranteedCount when resolving spawns; Appearance is toolset-oriented.
-            creature.appearance_id = creature_struct.acquire("Appearance", 0)
-            creature.challenge_rating = creature_struct.acquire("CR", 0.0)
-            creature.single_spawn = bool(creature_struct.acquire("SingleSpawn", 0))
-            creature.resref = creature_struct.acquire("ResRef", ResRef.from_blank())
-            creature.guaranteed_count = creature_struct.acquire("GuaranteedCount", 0)
+    for creature_struct in creature_list:
+        creature = UTECreature()
+        ute.creatures.append(creature)
+        creature.appearance_id = creature_struct.acquire("Appearance", 0)
+        creature.challenge_rating = creature_struct.acquire("CR", 0.0)
+        creature.single_spawn = bool(creature_struct.acquire("SingleSpawn", 0))
+        creature.resref = creature_struct.acquire("ResRef", ResRef.from_blank())
+        creature.guaranteed_count = creature_struct.acquire("GuaranteedCount", 0)
 
     return ute
 
@@ -138,6 +160,7 @@ def dismantle_ute(
     gff = GFF(GFFContent.UTE)
 
     root = gff.root
+
     root.set_string("Tag", ute.tag)
     root.set_resref("TemplateResRef", ute.resref)
     root.set_uint8("Active", ute.active)

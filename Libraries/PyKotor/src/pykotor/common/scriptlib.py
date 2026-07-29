@@ -1,5 +1,3 @@
-"""NWScript standard library source: k_inc_* and other included NSS content for KotOR/TSL."""
-
 from __future__ import annotations
 
 KOTOR_LIBRARY = {

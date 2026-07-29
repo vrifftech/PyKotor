@@ -5,19 +5,18 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  OS_RUNNERS_JSON: '["windows-latest", "ubuntu-20.04", "macos-12"]'
-  PYTHON_VERSIONS_JSON: '["3.8", "3.9", "3.10", "3.11", "3.12", "3.13"]'
-  ARCHITECTURES_JSON: '["x86", "x64", "arm64"]'
+  OS_RUNNERS_JSON: '["windows-2019", "ubuntu-20.04", "macos-12"]'
+  PYTHON_VERSIONS_JSON: '["3.7", "3.8", "3.9", "3.10", "3.11", "3.12"]'
+  ARCHITECTURES_JSON: '["x86", "x64"]'
   INTERPRETERS_JSON: '["python"]'
-
+  
 on:
 #  push:
-#  pull_request:
-#    types: [opened, reopened]
-  workflow_dispatch:  # Kept enabled so it can still be manually triggered if needed
-#  schedule:
-#    - cron: '0 5 * * 1'  # Runs every Monday at 05:00 UTC
-# WORKFLOW DISABLED - Uncomment the above triggers to re-enable
+  pull_request:
+    types: [opened, reopened]
+  workflow_dispatch:
+  schedule:
+    - cron: '0 5 * * 1'  # Runs every Monday at 05:00 UTC
 
 permissions:
   contents: write
@@ -77,18 +76,13 @@ jobs:
         python-version: ${{ fromJson(needs.setup.outputs.python-version) }}
         architecture: ${{ fromJson(needs.setup.outputs.architecture) }}
         python_pypy: ${{ fromJson(needs.setup.outputs.python-pypy) }}
-        qt_version: ['pyqt5', 'pyqt6', 'pyside6']
+        #qt_version: ['pyqt5', 'pyqt6', 'pyside2', 'pyside6']
         exclude:
           # unix x86 is definitely not supported.
           - os: ubuntu-20.04
             architecture: x86
           - os: macos-12
             architecture: x86
-          # arm64 only on macOS (native); Windows/Ubuntu runners are x64
-          - os: windows-latest
-            architecture: arm64
-          - os: ubuntu-20.04
-            architecture: arm64
           # Latest pypy is 3.10
           - python_pypy: 'pypy'
             python-version: '3.11'
@@ -106,32 +100,10 @@ jobs:
         }
       shell: pwsh
 
-    - uses: actions/checkout@v6
-    - name: Discover tool for dependency setup
-      id: discover-tool
-      shell: bash
-      run: |
-        python - << 'PYTHON_SCRIPT'
-        import json
-        import os
-        import subprocess
-
-        tools = json.loads(subprocess.check_output([
-          "python",
-          ".github/scripts/discover_tools.py",
-          "--format",
-          "json",
-        ], text=True))
-        if not tools:
-          raise SystemExit("No tools discovered")
-
-        tool = tools[0]
-        with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
-          fh.write(f"tool_path={tool['path']}\n")
-        PYTHON_SCRIPT
+    - uses: actions/checkout@v4
     - name: Set up ${{ matrix.python_pypy }} ${{ matrix.python-version }}
       if: ${{ matrix.python_pypy == 'pypy' }}
-      uses: actions/setup-python@v6
+      uses: actions/setup-python@v5
       with:
         python-version: ${{ env.PYTHON_VERSION }}
         architecture: ${{ matrix.architecture }}
@@ -141,47 +113,27 @@ jobs:
       env:
         MATRIX_ARCH: ${{ matrix.architecture }}
       run: |
-        $venvName = ".venv_${{ matrix.os }}_${{ matrix.python_pypy }}_${{ matrix.python-version }}_${{ matrix.architecture }}"
-
-        # Policy: use shared wrappers only (compile/deps_tool.ps1); do not dot-source the venv helper directly.
-        $depsArgs = @(
-          '--tool-path', '${{ steps.discover-tool.outputs.tool_path }}',
-          '--venv-name', $venvName,
-          '--noprompt',
-          '--force-python-version', '${{ matrix.python-version }}',
-          '--pip-install-pyinstaller', ''
-        )
+        . ./install_python_venv.ps1 -noprompt -venv_name .venv_${{ matrix.os }}_${{ matrix.python_pypy }}_${{ matrix.python-version }}_${{ matrix.architecture }} -force_python_version ${{ matrix.python-version }}
+        & $pythonExePath -m pip install --upgrade pip
         if ("${{ matrix.python-version }}" -eq "3.7") {
-          $depsArgs += @('--pip-requirements', 'requirements-dev-py37.txt')
+          pip install -r requirements-dev-py37.txt --prefer-binary
         }
         else {
-          $depsArgs += @('--pip-requirements', 'requirements-dev.txt')
-        }
-
-        & ./compile/deps_tool.ps1 @depsArgs
-
-        $pythonExePath = if ($IsWindows) { ".\\$venvName\\Scripts\\python.exe" } else { "./$venvName/bin/python" }
-        if (-not (Test-Path -LiteralPath $pythonExePath)) {
-          throw "Expected venv python not found at '$pythonExePath'"
+          pip install -r requirements-dev.txt --prefer-binary
         }
       shell: pwsh
 
     - name: Run all unittests/pytests
       if: ${{ success() || failure() }}
       run: |
-        $venvName = ".venv_${{ matrix.os }}_${{ matrix.python_pypy }}_${{ matrix.python-version }}_${{ matrix.architecture }}"
-        $pythonExePath = if ($IsWindows) { ".\\$venvName\\Scripts\\python.exe" } else { "./$venvName/bin/python" }
-        if (-not (Test-Path -LiteralPath $pythonExePath)) {
-          throw "Expected venv python not found at '$pythonExePath'"
-        }
-
+        . ./install_python_venv.ps1 -noprompt -venv_name .venv_${{ matrix.os }}_${{ matrix.python_pypy }}_${{ matrix.python-version }}_${{ matrix.architecture }}
         & $pythonExePath -m pytest tests -v -ra -o log_cli=true --capture=no --junitxml=pytest_report.xml --html=pytest_report.html --self-contained-html --tb=no --continue-on-collection-errors
       shell: pwsh
       continue-on-error: true
 
     - name: Upload Pytest Reports
       if: ${{ success() || failure() }}
-      uses: actions/upload-artifact@v7
+      uses: actions/upload-artifact@v4
       with:
         name: pytest_report_${{ matrix.os }}_${{ matrix.python_pypy }}_${{ matrix.python-version }}_${{ matrix.architecture }}
         path: |
@@ -193,15 +145,15 @@ jobs:
     needs: runtests
     if: ${{ success() || failure() }}
     runs-on: ubuntu-latest
-    concurrency:
+    concurrency: 
       group: add-test-status-badges-${{ github.ref }}
       cancel-in-progress: true
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
 
       - name: Download all artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@v4
         with:
           path: all_pytest_reports
           pattern: pytest_report_*
@@ -313,7 +265,7 @@ jobs:
             foreach ($INTERPRETER in $INTERPRETERS) {
               foreach ($PYTHON_VERSION in $PYTHON_VERSIONS) {
                 foreach ($ARCH in $ARCHITECTURES) {
-                  if ($OS -ne "windows-latest" -and $OS -ne "windows-2022" -and $OS -ne "windows-2019" -and $ARCH -eq "x86") {
+                  if ($OS -ne "windows-2019" -and $OS -ne "windows-2022" -and $OS -ne "windows-latest" -and $ARCH -eq "x86") {
                     continue  # no x86 support for unix.
                   }
                   $key = "$OS-$INTERPRETER-$PYTHON_VERSION-$ARCH"
@@ -334,7 +286,7 @@ jobs:
                   }
 
                   switch ($OS) {
-                      "windows-latest" { $WindowsBadgeContent += $BadgeMarkdown + "`n" }
+                      "windows-2019" { $WindowsBadgeContent += $BadgeMarkdown + "`n" }
                       "windows-2022" { $WindowsBadgeContent += $BadgeMarkdown + "`n" }
                       "windows-latest" { $WindowsBadgeContent += $BadgeMarkdown + "`n" }
                       "ubuntu-20.04" { $LinuxBadgeContent += $BadgeMarkdown + "`n" }

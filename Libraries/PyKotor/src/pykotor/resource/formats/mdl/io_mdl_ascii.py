@@ -1,2796 +1,329 @@
-"""ASCII MDL read/write: human-readable model format for editing and debugging.
-
-Third-party GitHub URL lines removed from this module are archived at
-``wiki/reverse_engineering_findings_io_mdl_ascii_github_urls_pre_scrub.md``.
-"""
-
 from __future__ import annotations
 
-import io
-import re
+from typing import TYPE_CHECKING, Callable
 
-from math import acos, cos, sin, sqrt
-from typing import TYPE_CHECKING, cast
-
-import kaitaistruct
-
-from bioware_kaitai_formats.mdl_ascii import MdlAscii
-
-from pykotor.common.misc import Color
-from pykotor.resource.formats.mdl.mdl_data import (
-    MDL,
-    MDLAABBNode,
-    MDLAnimation,
-    MDLBoneVertex,
-    MDLConstraint,
-    MDLController,
-    MDLControllerRow,
-    MDLDangly,
-    MDLEmitter,
-    MDLEvent,
-    MDLFace,
-    MDLLight,
-    MDLMesh,
-    MDLNode,
-    MDLReference,
-    MDLSaber,
-    MDLSkin,
-    MDLWalkmesh,
-    _mdl_recompute_mesh_face_payload,
-)
-from pykotor.resource.formats.mdl.mdl_types import MDLClassification, MDLControllerType, MDLNodeType
-from pykotor.resource.type import ResourceReader, ResourceWriter, autoclose
-from pykotor.tools.encoding import decode_bytes_with_fallbacks
-from utility.common.geometry import Vector2, Vector3, Vector4
+from pykotor.common.geometry import AxisAngle, Vector4
+from pykotor.common.stream import BinaryReader, BinaryWriter
+from pykotor.resource.formats.mdl.mdl_data import MDL, MDLControllerType
 
 if TYPE_CHECKING:
-    from typing_extensions import Literal
-
+    from pykotor.resource.formats.mdl.mdl_data import MDLController, MDLNode
     from pykotor.resource.type import SOURCE_TYPES, TARGET_TYPES
 
 
-_FACE_SURFACE_MASK = 0x1F
-_FACE_SMOOTH_SHIFT = 5
-
-NODE_DUMMY = 1
-NODE_LIGHT = 3
-NODE_EMITTER = 5
-NODE_REFERENCE = 17
-NODE_TRIMESH = 33
-NODE_SKIN = 97
-NODE_DANGLYMESH = 289
-NODE_AABB = 545
-NODE_SABER = 2081
-
-NODE_HAS_HEADER = 0x0001
-NODE_HAS_LIGHT = 0x0002
-NODE_HAS_EMITTER = 0x0004
-NODE_HAS_REFERENCE = 0x0010
-NODE_HAS_MESH = 0x0020
-NODE_HAS_SKIN = 0x0040
-NODE_HAS_DANGLY = 0x0100
-NODE_HAS_AABB = 0x0200
-NODE_HAS_SABER = 0x0800
-
-_CONTROLLER_NAMES: dict[int, dict[int, str]] = {
-    NODE_HAS_HEADER: {
-        8: "position",
-        20: "orientation",
-        36: "scale",
-        132: "alpha",
-    },
-    NODE_HAS_LIGHT: {
-        76: "color",
-        88: "radius",
-        96: "shadowradius",
-        100: "verticaldisplacement",
-        140: "multiplier",
-    },
-    NODE_HAS_EMITTER: {
-        80: "alphaEnd",
-        84: "alphaStart",
-        88: "birthrate",
-        92: "bounce_co",
-        96: "combinetime",
-        100: "drag",
-        104: "fps",
-        108: "frameEnd",
-        112: "frameStart",
-        116: "grav",
-        120: "lifeExp",
-        124: "mass",
-        128: "p2p_bezier2",
-        132: "p2p_bezier3",
-        136: "particleRot",
-        140: "randvel",
-        144: "sizeStart",
-        148: "sizeEnd",
-        152: "sizeStart_y",
-        156: "sizeEnd_y",
-        160: "spread",
-        164: "threshold",
-        168: "velocity",
-        172: "xsize",
-        176: "ysize",
-        180: "blurlength",
-        184: "lightningDelay",
-        188: "lightningRadius",
-        192: "lightningScale",
-        196: "lightningSubDiv",
-        200: "lightningzigzag",
-        216: "alphaMid",
-        220: "percentStart",
-        224: "percentMid",
-        228: "percentEnd",
-        232: "sizeMid",
-        236: "sizeMid_y",
-        240: "m_fRandomBirthRate",
-        252: "targetsize",
-        256: "numcontrolpts",
-        260: "controlptradius",
-        264: "controlptdelay",
-        268: "tangentspread",
-        272: "tangentlength",
-        284: "colorMid",
-        380: "colorEnd",
-        392: "colorStart",
-        502: "detonate",
-    },
-    NODE_HAS_MESH: {
-        100: "selfillumcolor",
-    },
-}
-
-# Controller type mappings from controller names to MDLControllerType
-_CONTROLLER_NAME_TO_TYPE: dict[str, MDLControllerType] = {
-    "alpha": MDLControllerType.ALPHA,
-    "alphaEnd": MDLControllerType.ALPHAEND,
-    "alphaMid": MDLControllerType.ALPHAMID,
-    "alphaStart": MDLControllerType.ALPHASTART,
-    "birthrate": MDLControllerType.BIRTHRATE,
-    "blurlength": MDLControllerType.BLURLENGTH,
-    "bounce_co": MDLControllerType.BOUNCE_CO,
-    "color": MDLControllerType.COLOR,
-    "colorEnd": MDLControllerType.COLOREND,
-    "colorMid": MDLControllerType.COLORMID,
-    "colorStart": MDLControllerType.COLORSTART,
-    "combinetime": MDLControllerType.COMBINETIME,
-    "controlptdelay": MDLControllerType.CONTROLPTDELAY,
-    "controlptradius": MDLControllerType.CONTROLPTRADIUS,
-    "detonate": MDLControllerType.DETONATE,
-    "drag": MDLControllerType.DRAG,
-    "fps": MDLControllerType.FPS,
-    "frameEnd": MDLControllerType.FRAMEEND,
-    "frameStart": MDLControllerType.FRAMESTART,
-    "grav": MDLControllerType.GRAV,
-    "lifeExp": MDLControllerType.LIFEEXP,
-    "lightningDelay": MDLControllerType.LIGHTNINGDELAY,
-    "lightningRadius": MDLControllerType.LIGHTNINGRADIUS,
-    "lightningScale": MDLControllerType.LIGHTNINGSCALE,
-    "lightningSubDiv": MDLControllerType.LIGHTNINGSUBDIV,
-    "lightningzigzag": MDLControllerType.LIGHTNINGZIGZAG,
-    "m_fRandomBirthRate": MDLControllerType.RANDOMBIRTHRATE,
-    "mass": MDLControllerType.MASS,
-    "multiplier": MDLControllerType.MULTIPLIER,
-    "numcontrolpts": MDLControllerType.NUMCONTROLPTS,
-    "orientation": MDLControllerType.ORIENTATION,
-    "p2p_bezier2": MDLControllerType.P2P_BEZIER2,
-    "p2p_bezier3": MDLControllerType.P2P_BEZIER3,
-    "particleRot": MDLControllerType.PARTICLEROT,
-    "percentEnd": MDLControllerType.PERCENTEND,
-    "percentMid": MDLControllerType.PERCENTMID,
-    "percentStart": MDLControllerType.PERCENTSTART,
-    "position": MDLControllerType.POSITION,
-    "radius": MDLControllerType.RADIUS,
-    "randvel": MDLControllerType.RANDVEL,
-    "scale": MDLControllerType.SCALE,
-    "selfillumcolor": MDLControllerType.ILLUM_COLOR,
-    "shadowradius": MDLControllerType.SHADOWRADIUS,
-    "sizeEnd_y": MDLControllerType.SIZEEND_Y,
-    "sizeEnd": MDLControllerType.SIZEEND,
-    "sizeMid_y": MDLControllerType.SIZEMID_Y,
-    "sizeMid": MDLControllerType.SIZEMID,
-    "sizeStart_y": MDLControllerType.SIZESTART_Y,
-    "sizeStart": MDLControllerType.SIZESTART,
-    "spread": MDLControllerType.SPREAD,
-    "tangentlength": MDLControllerType.TANGENTLENGTH,
-    "tangentspread": MDLControllerType.TANGENTSPREAD,
-    "targetsize": MDLControllerType.TARGETSIZE,
-    "threshold": MDLControllerType.THRESHOLD,
-    "velocity": MDLControllerType.VELOCITY,
-    "verticaldisplacement": MDLControllerType.VERTICALDISPLACEMENT,
-    "xsize": MDLControllerType.XSIZE,
-    "ysize": MDLControllerType.YSIZE,
-}
-
-
-def _unpack_face_material(face: MDLFace) -> tuple[int, int]:
-    """Return (surface_material, smoothing_group) from packed face material flags.
-
-    Binary MDL packs multiple flags in the 32-bit material field:
-    - Bits 0-4  : Surface material (surfacemat.2da index)
-    - Bits 5-31 : Smoothing group and vendor specific flags (MDLOps uses this to
-      preserve smoothgroup numbers when exporting ASCII, see mdlops:1292-1300).
-
-    The legacy dataclass (mdl_types.MDLFace) stored smoothing_group separately.
-    After refactoring to mdl_data.MDLFace, the packed integer is preserved in
-    face.material (see mdl_data.MDLFace comments).  This helper restores the
-    original ASCII semantics without losing information.
-
-    Args:
-        face: MDLFace instance (either mdl_types or mdl_data variants).
-
-    Returns:
-        Tuple of (surface_material, smoothing_group) as integers.
-
-    References:
-    ----------
-        Observed in retail KotOR I and TSL.
-        Observed in retail KotOR I and TSL MDL/MDX payloads (face materials and smoothing groups).
-
-    """
-    # MDLOps ASCII uses a separate per-face smoothing mask field (4th column) and a separate
-    # material id field (last column). To keep roundtrips lossless we store:
-    # - face.material: material id (surface/material index)
-    # - face.smoothgroup: smoothing mask (often 0, 16, 32, ...)
-    material_int = int(face.material)
-    smooth = int(face.smoothgroup)
-    return material_int, smooth
-
-
-def _pack_face_material(
-    surface_material: int,
-    smoothing_group: int,
-) -> int:
-    """Pack surface material and smoothing group into a single integer.
-
-    Args:
-        surface_material: Surface material index (0-31)
-        smoothing_group: Smoothing group number
-
-    Returns:
-        Packed integer value
-    """
-    # Legacy helper: current pipeline stores these separately (material id + smoothing mask).
-    return int(surface_material)
-
-
-def _aa_to_quaternion(aa: list[float]) -> list[float]:
-    """Convert angle-axis to quaternion (x, y, z, w).
-
-    Args:
-        aa: Angle-axis representation [x, y, z, angle]
-
-    Returns:
-        Quaternion [x, y, z, w]
-    """
-    sin_a = sin(aa[3] / 2.0)
-    return [aa[0] * sin_a, aa[1] * sin_a, aa[2] * sin_a, cos(aa[3] / 2.0)]
-
-
-def _quaternion_to_aa(q: list[float]) -> list[float]:
-    """Convert quaternion (x, y, z, w) to angle-axis (x, y, z, angle)."""
-    if len(q) < 4:
-        return [0.0, 0.0, 0.0, 0.0]
-    x, y, z, w = float(q[0]), float(q[1]), float(q[2]), float(q[3])
-
-    # Normalize (robust to small drift)
-    norm = sqrt(x * x + y * y + z * z + w * w)
-    if norm > 0.0:
-        x, y, z, w = x / norm, y / norm, z / norm, w / norm
-    else:
-        return [0.0, 0.0, 0.0, 0.0]
-
-    # Clamp to avoid acos domain errors due to float drift.
-    if w > 1.0:
-        w = 1.0
-    elif w < -1.0:
-        w = -1.0
-
-    angle = 2.0 * acos(w)
-    s = sqrt(max(0.0, 1.0 - w * w))
-    if s < 1e-8:
-        # No reliable axis; choose a stable default.
-        return [1.0, 0.0, 0.0, 0.0]
-    return [x / s, y / s, z / s, angle]
-
-
-def _normalize_vector(vec: list[float]) -> list[float]:
-    """Normalize a 3D vector.
-
-    Args:
-        vec: 3D vector [x, y, z]
-
-    Returns:
-        Normalized vector [x, y, z]
-    """
-    norm = sqrt(vec[0] ** 2 + vec[1] ** 2 + vec[2] ** 2)
-    if norm > 0:
-        return [vec[0] / norm, vec[1] / norm, vec[2] / norm]
-    return [0.0, 0.0, 0.0]
-
-
-class MDLAsciiWriter(ResourceWriter):
-    """Writer for ASCII MDL files."""
-
-    def __init__(
-        self,
-        mdl: MDL,
-        target: TARGET_TYPES,
-        *,
-        convert_skin: bool = False,
-    ):
-        """Initialize the ASCII MDL writer.
-
-        Args:
-            mdl: The MDL data to write
-            target: The target to write to (file path, stream, or bytes buffer)
-            convert_skin: If True, write SKIN nodes as "trimesh" instead of "skin".
-                Defaults to False to match MDLOps behavior.
-        """
-        super().__init__(target)
-        self._mdl = mdl
-        self._text_buffer = io.StringIO()
-        self._convert_skin = convert_skin
-
-    def write_line(self, indent: int, line: str) -> None:
-        """Write a line with indentation."""
-        self._text_buffer.write("  " * indent + line + "\n")
-
-    @autoclose
-    def write(
-        self,
-        *,
-        auto_close: bool = True,
-    ) -> None:  # noqa: FBT001, FBT002, ARG002
-        """Write MDL data to ASCII format."""
-        mdl = self._mdl
-        self.write_line(0, "# ASCII MDL")
-        self.write_line(0, f"filedependancy {mdl.name} NULL.mlk")
-        self.write_line(0, f"newmodel {mdl.name}")
-        self.write_line(0, "")
-        self.write_line(0, "setsupermodel " + mdl.name + " " + mdl.supermodel)
-        self.write_line(0, f"classification {mdl.classification.name.lower()}")
-        self.write_line(0, f"classification_unk1 {mdl.classification_unk1}")
-        # mdlops uses ignorefog 0/1; fog=True means ignorefog=0 (affected by fog)
-        self.write_line(0, f"ignorefog {0 if mdl.fog else 1}")
-        self.write_line(0, f"compress_quaternions {mdl.compress_quaternions}")
-        if mdl.headlink:
-            self.write_line(0, f"headlink {mdl.headlink}")
-        self.write_line(0, "")
-        self.write_line(0, f"setanimationscale {mdl.animation_scale}")
-        self.write_line(0, "")
-        self.write_line(0, "beginmodelgeom " + mdl.name)
-        # MDLOps prints model-level bmin/bmax/radius without format specifiers (uses Perl default)
-        # Match MDLOps exactly -
-        self.write_line(1, f"bmin {mdl.bmin.x} {mdl.bmin.y} {mdl.bmin.z}")
-        self.write_line(1, f"bmax {mdl.bmax.x} {mdl.bmax.y} {mdl.bmax.z}")
-        self.write_line(1, f"radius {mdl.radius}")
-        self.write_line(0, "")
-        # Serialize the real root node as a node entry (as in binary MDL), so Binary->ASCII->Binary
-        # roundtrips preserve the full node set (including the model-name root).
-        self._write_node(1, mdl.root, None)
-        self.write_line(0, "")
-        self.write_line(0, "endmodelgeom " + mdl.name)
-        self.write_line(0, "")
-
-        if mdl.anims:
-            for anim in mdl.anims:
-                self._write_animation(anim, mdl.name)
-
-        self.write_line(0, "")
-        self.write_line(0, "donemodel " + mdl.name)
-
-        # Write the text content as bytes
-        content = self._text_buffer.getvalue()
-        self._writer.write_bytes(content.encode("utf-8"))
-
-    def _write_node(
-        self,
-        indent: int,
-        node: MDLNode,
-        parent: MDLNode | None = None,
-    ) -> None:
-        """Write a node and its children.
-
-        Node type determination matches MDLOps exactly.
-        MDLOps checks nodetype integer value directly ($nodetype == NODE_SKIN), not data presence.
-        """
-        # Build type_id from flags exactly like MDLOps stores it (combined integer value)
-        # This matches how MDLOps reads nodetype from binary: combined flag value
-        #
-        type_id = 1  # HEADER
-        if node.mesh is not None:
-            type_id |= 0x20  # MESH
-        if node.skin is not None:
-            type_id |= 0x40  # SKIN
-        if node.dangly is not None:
-            type_id |= 0x100  # DANGLY
-        if node.saber is not None:
-            type_id |= 0x800  # SABER
-        if node.aabb is not None:
-            type_id |= 0x200  # AABB
-        if node.emitter is not None:
-            type_id |= 0x4  # EMITTER
-        if node.light is not None:
-            type_id |= 0x2  # LIGHT
-        if node.reference is not None:
-            type_id |= 0x10  # REFERENCE
-
-        # MDLOps checks against NODE_ constants: NODE_DUMMY=1, NODE_LIGHT=3, NODE_EMITTER=5,
-        # NODE_REFERENCE=17, NODE_TRIMESH=33, NODE_SKIN=97, NODE_DANGLYMESH=289,
-        # NODE_AABB=545, NODE_SABER=2081
-        #
-        # Prefer MDLNode.node_type when it is authoritative. After binary load, emitter/light/reference
-        # nodes may still carry an empty MDLMesh (HEADER|MESH|EMITTER), which would otherwise fall
-        # through to "dummy" when only type_id is considered.
-        #
-        if node.node_type == MDLNodeType.EMITTER:
-            node_type_str = "emitter"
-        elif node.node_type == MDLNodeType.LIGHT:
-            node_type_str = "light"
-        elif node.node_type == MDLNodeType.REFERENCE:
-            node_type_str = "reference"
-        elif node.node_type == MDLNodeType.SKIN:
-            node_type_str = "trimesh" if self._convert_skin else "skin"
-        elif node.node_type == MDLNodeType.DANGLYMESH:
-            node_type_str = "danglymesh"
-        elif node.node_type == MDLNodeType.AABB:
-            node_type_str = "aabb"
-        elif node.node_type == MDLNodeType.SABER:
-            node_type_str = "lightsaber"
-        elif node.node_type == MDLNodeType.TRIMESH:
-            node_type_str = "trimesh"
-        elif node.node_type == MDLNodeType.CAMERA:
-            node_type_str = "camera"
-        elif type_id == 1:  # NODE_DUMMY
-            node_type_str = "dummy"
-        elif type_id == 3:  # NODE_LIGHT
-            node_type_str = "light"
-        elif type_id == 5:  # NODE_EMITTER
-            node_type_str = "emitter"
-        elif type_id == 289:  # NODE_DANGLYMESH
-            node_type_str = "danglymesh"
-        elif type_id == 97 and not self._convert_skin:  # NODE_SKIN
-            node_type_str = "skin"
-        elif (
-            type_id == 97 and self._convert_skin
-        ) or type_id == 33:  # NODE_SKIN (convert to trimesh)
-            node_type_str = "trimesh"
-        elif type_id in (513, 545):  # HEADER|AABB (513), HEADER|MESH|AABB (545) NODE_AABB
-            node_type_str = "aabb"
-        elif type_id == 17:  # NODE_REFERENCE
-            node_type_str = "reference"
-        elif type_id in (2049, 2081):  # HEADER|SABER (2049), HEADER|MESH|SABER (2081) NODE_SABER
-            node_type_str = "lightsaber"
-        else:
-            node_type_str = "dummy"
-        self.write_line(indent, f"node {node_type_str} {node.name}")
-        self.write_line(indent, "{")
-        self._write_node_data(indent + 1, node, parent)
-        self.write_line(indent, "}")
-
-        for child in node.children:
-            self._write_node(indent, child, node)
-
-    def _write_node_data(
-        self,
-        indent: int,
-        node: MDLNode,
-        parent: MDLNode | None = None,
-    ) -> None:
-        """Write node data including position, orientation, and controllers."""
-        # MDLOps writes parent as string name or 'NULL' -
-        # MDLOps stores parent as: defined($parent) ? $model->{partnames}[$parent->{nodenum}] : 'NULL' (line 1605)
-        if parent and parent.name:
-            self.write_line(indent, f"parent {parent.name}")
-        elif node.parent_id == -1:
-            self.write_line(indent, "parent NULL")
-        else:
-            # Fallback: try to find parent by ID, or write NULL
-            # This should rarely happen if hierarchy is built correctly
-            self.write_line(indent, "parent NULL")
-        # MDLOps uses "% .7g" format (space before number) -
-        self.write_line(
-            indent, f"position {node.position.x: .7g} {node.position.y: .7g} {node.position.z: .7g}"
-        )
-        # MDLOps uses "% .7g" format (space before number) -
-        self.write_line(
-            indent,
-            f"orientation {node.orientation.x: .7g} {node.orientation.y: .7g} {node.orientation.z: .7g} {node.orientation.w: .7g}",
-        )
-
-        if node.mesh:
-            # Binary parsing stores skin/dangly payloads in separate node fields (`node.skin`, `node.dangly`)
-            # rather than always subclassing `node.mesh`. Preserve those payloads when exporting ASCII.
-            self._write_mesh(indent, node.mesh, skin=node.skin, dangly=node.dangly)
-        if node.light is not None:
-            self._write_light(indent, node.light)
-        if node.emitter is not None:
-            self._write_emitter(indent, node.emitter)
-        if node.reference is not None:
-            self._write_reference(indent, node.reference)
-        if node.saber is not None:
-            self._write_saber(indent, node.saber)
-        if node.aabb is not None:
-            self._write_walkmesh(indent, node.aabb)
-
-        for controller in node.controllers:
-            self._write_controller(indent, node, controller)
-
-    def _write_mesh(
-        self,
-        indent: int,
-        mesh: MDLMesh,
-        *,
-        skin: MDLSkin | None = None,
-        dangly: MDLDangly | None = None,
-    ) -> None:
-        """Write mesh data."""
-        # Mesh header values (bbox/radius/average) are emitted in-node by MDLOps and must roundtrip.
-        # MDLOps uses "% .7g" format (space before number) -
-        self.write_line(
-            indent, f"bmin {mesh.bb_min.x: .7g} {mesh.bb_min.y: .7g} {mesh.bb_min.z: .7g}"
-        )
-        self.write_line(
-            indent, f"bmax {mesh.bb_max.x: .7g} {mesh.bb_max.y: .7g} {mesh.bb_max.z: .7g}"
-        )
-        self.write_line(indent, f"radius {mesh.radius: .7g}")
-        self.write_line(
-            indent, f"average {mesh.average.x: .7g} {mesh.average.y: .7g} {mesh.average.z: .7g}"
-        )
-        # Not emitted by MDLOps ASCII, but present in the binary mesh header and required for strict equality.
-        self.write_line(indent, f"area {mesh.area:.7g}")
-
-        self.write_line(indent, f"ambient {mesh.ambient.r} {mesh.ambient.g} {mesh.ambient.b}")
-        self.write_line(indent, f"diffuse {mesh.diffuse.r} {mesh.diffuse.g} {mesh.diffuse.b}")
-        self.write_line(indent, f"transparencyhint {mesh.transparency_hint}")
-        self.write_line(indent, f"bitmap {mesh.texture_1}")
-        if mesh.texture_2:
-            self.write_line(indent, f"lightmap {mesh.texture_2}")
-
-        # Mesh rendering flags. These materially affect canonical equality and must survive ASCII roundtrips.
-        # Emit as explicit 0/1 so defaults are unambiguous.
-        self.write_line(indent, f"render {1 if mesh.render else 0}")
-        self.write_line(indent, f"shadow {1 if mesh.shadow else 0}")
-        self.write_line(indent, f"beaming {1 if mesh.beaming else 0}")
-        self.write_line(indent, f"backgroundgeometry {1 if mesh.background_geometry else 0}")
-        self.write_line(indent, f"rotatetexture {1 if mesh.rotate_texture else 0}")
-        self.write_line(indent, f"lightmapped {1 if mesh.has_lightmap else 0}")
-        # K2-specific dirt and hologram fields
-        # MDLOps writes these fields when they differ from defaults or when explicitly set
-        #
-        if (
-            mesh.dirt_enabled
-            or mesh.dirt_texture != 1
-            or mesh.dirt_worldspace != 1
-            or mesh.hologram_donotdraw
-        ):
-            self.write_line(indent, f"dirt_enabled {1 if mesh.dirt_enabled else 0}")
-            if mesh.dirt_texture != 1:
-                self.write_line(indent, f"dirt_texture {mesh.dirt_texture}")
-            if mesh.dirt_worldspace != 1:
-                self.write_line(indent, f"dirt_worldspace {mesh.dirt_worldspace}")
-            if mesh.hologram_donotdraw:
-                self.write_line(indent, f"hologram_donotdraw {1 if mesh.hologram_donotdraw else 0}")
-        # Also write dirt_coordinate_space if it's set (legacy field)
-        if hasattr(mesh, "dirt_coordinate_space") and mesh.dirt_coordinate_space != 0:
-            self.write_line(indent, f"dirt_coordinate_space {mesh.dirt_coordinate_space}")
-
-        # Inverted mesh sequence counter (inv_count) - preserved for MDLOps compatibility
-        if hasattr(mesh, "inverted_counters") and mesh.inverted_counters:
-            if len(mesh.inverted_counters) >= 2:
-                self.write_line(
-                    indent, f"inv_count {mesh.inverted_counters[0]} {mesh.inverted_counters[1]}"
-                )
-            elif len(mesh.inverted_counters) >= 1:
-                self.write_line(indent, f"inv_count {mesh.inverted_counters[0]}")
-
-        # Skin/dangly payload blocks come before verts/faces in MDLOps ASCII.
-        if skin is not None:
-            self._write_skin(indent, skin)
-        elif isinstance(mesh, MDLSkin):
-            self._write_skin(indent, mesh)
-
-        if dangly is not None:
-            self._write_dangly(indent, dangly)
-        elif isinstance(mesh, MDLDangly):
-            self._write_dangly(indent, mesh)
-
-        self.write_line(indent, "verts " + str(len(mesh.vertex_positions)))
-        for i, pos in enumerate(mesh.vertex_positions):
-            line = f"{i} {pos.x} {pos.y} {pos.z}"
-            if mesh.vertex_normals:
-                normal = mesh.vertex_normals[i]
-                line += f" {normal.x} {normal.y} {normal.z}"
-            if mesh.vertex_uv1:
-                uv = mesh.vertex_uv1[i]
-                line += f" {uv.x} {uv.y}"
-            if mesh.vertex_uv2:
-                uv = mesh.vertex_uv2[i]
-                line += f" {uv.x} {uv.y}"
-            self.write_line(indent + 1, line)
-
-        self.write_line(indent, "faces " + str(len(mesh.faces)))
-        for face in mesh.faces:
-            # Match MDLOps ASCII face emission:
-            #   v1 v2 v3 smoothgroup_mask t1 t2 t3 material_id
-            material_id, smoothgroup_mask = _unpack_face_material(face)
-            # IMPORTANT: Do NOT substitute -1 with v1/v2/v3.
-            # The binary format uses -1 as a sentinel (implicit tvert == vert index),
-            # and the test-suite compares raw attributes, not semantic equivalence.
-            t1 = int(face.t1)
-            t2 = int(face.t2)
-            t3 = int(face.t3)
-            self.write_line(
-                indent + 1,
-                f"{face.v1} {face.v2} {face.v3} {smoothgroup_mask} {t1} {t2} {t3} {material_id}",
-            )
-
-        # Preserve indices arrays for binary roundtrip (MDLOps compatibility)
-        if getattr(mesh, "indices_counts", None) and len(mesh.indices_counts) > 0:
-            self.write_line(
-                indent, "indices_counts " + " ".join(str(c) for c in mesh.indices_counts)
-            )
-        if getattr(mesh, "indices_offsets", None) and len(mesh.indices_offsets) > 0:
-            self.write_line(
-                indent, "indices_offsets " + " ".join(str(o) for o in mesh.indices_offsets)
-            )
-        if getattr(mesh, "indices_offsets_count", 0) != 0:
-            self.write_line(indent, f"indices_offsets_count {mesh.indices_offsets_count}")
-
-    def _write_skin(
-        self,
-        indent: int,
-        skin: MDLSkin,
-    ) -> None:
-        """Write skin-specific data."""
-        self.write_line(indent, "bones " + str(len(skin.bone_indices)))
-        for i, bone_idx in enumerate(skin.bone_indices):
-            # Some builders/tests only populate bone indices and weights but not bind-pose transforms.
-            # Fall back to identity orientation and zero translation.
-            qbone: Vector4 = skin.qbones[i] if i < len(skin.qbones) else Vector4(0, 0, 0, 1)
-            tbone: Vector3 = skin.tbones[i] if i < len(skin.tbones) else Vector3.from_null()
-            self.write_line(
-                indent + 1,
-                f"{i} {bone_idx} {qbone.x} {qbone.y} {qbone.z} {qbone.w} {tbone.x} {tbone.y} {tbone.z}",
-            )
-
-        # Weights (vertex -> bone influences). The test suite only asserts presence of the
-        # "weights" section, but we also emit a reasonable format that our reader accepts:
-        # "bone1 weight1 [bone2 weight2] ..."
-        bone_vertices: list[MDLBoneVertex] = skin.vertex_bones
-        if bone_vertices:
-            self.write_line(indent, "weights " + str(len(bone_vertices)))
-            for bv in bone_vertices:
-                pairs: list[tuple[float, float]] = list(zip(bv.vertex_indices, bv.vertex_weights))
-
-                # Filter out unused entries
-                filtered: list[tuple[int, float]] = []
-                for b, w in pairs:
-                    try:
-                        bi = int(b)
-                        wf = float(w)
-                    except (TypeError, ValueError):
-                        continue
-                    if bi < 0 or wf == 0.0:
-                        continue
-                    filtered.append((bi, wf))
-
-                if not filtered:
-                    self.write_line(indent + 1, "0 0")
-                else:
-                    self.write_line(indent + 1, " ".join(f"{bi} {wf:.7g}" for bi, wf in filtered))
-
-    def _write_dangly(
-        self,
-        indent: int,
-        dangly: MDLDangly,
-    ) -> None:
-        """Write dangly mesh data."""
-        self.write_line(indent, "constraints " + str(len(dangly.constraints)))
-        for i, constraint in enumerate(dangly.constraints):
-            self.write_line(
-                indent + 1, f"{i} {constraint.type} {constraint.target} {constraint.target_node}"
-            )
-
-    def _write_light(
-        self,
-        indent: int,
-        light: MDLLight,
-    ) -> None:
-        """Write light data."""
-        # Light color/radius/multiplier are controller properties, not direct attributes.
-        # They are written via controllers in the node's controller list.
-
-        has_flares: bool = bool(
-            light.flare
-            and (
-                (light.flare_textures and len(light.flare_textures) > 0)
-                or (light.flare_positions and len(light.flare_positions) > 0)
-                or (light.flare_sizes and len(light.flare_sizes) > 0)
-                or (light.flare_color_shifts and len(light.flare_color_shifts) > 0)
-            ),
-        )
-
-        if has_flares:
-            if light.flare_positions:
-                self.write_line(indent, f"lensflares {len(light.flare_positions)}")
-
-            if light.flare_textures and len(light.flare_textures) > 0:
-                self.write_line(indent, f"texturenames {len(light.flare_textures)}")
-                for texture in light.flare_textures:
-                    self.write_line(indent + 1, texture)
-
-            if light.flare_positions and len(light.flare_positions) > 0:
-                self.write_line(indent, f"flarepositions {len(light.flare_positions)}")
-                for pos in light.flare_positions:
-                    self.write_line(indent + 1, f"{pos:.7g}")
-
-            if light.flare_sizes and len(light.flare_sizes) > 0:
-                self.write_line(indent, f"flaresizes {len(light.flare_sizes)}")
-                for size in light.flare_sizes:
-                    self.write_line(indent + 1, f"{size:.7g}")
-
-            if light.flare_color_shifts and len(light.flare_color_shifts) > 0:
-                self.write_line(indent, f"flarecolorshifts {len(light.flare_color_shifts)}")
-                for color_shift in light.flare_color_shifts:
-                    if isinstance(color_shift, (list, tuple)) and len(color_shift) >= 3:
-                        self.write_line(
-                            indent + 1,
-                            f"{color_shift[0]:.7g} {color_shift[1]:.7g} {color_shift[2]:.7g}",
-                        )
-
-        self.write_line(indent, f"flareradius {light.flare_radius:.7g}")
-        self.write_line(indent, f"priority {light.light_priority}")
-        if light.ambient_only:
-            self.write_line(indent, "ambientonly")
-        if light.shadow:
-            self.write_line(indent, "shadow")
-        if light.flare:
-            self.write_line(indent, "flare")
-        if light.fading_light:
-            self.write_line(indent, "fadinglight")
-
-    def _write_emitter(
-        self,
-        indent: int,
-        emitter: MDLEmitter,
-    ) -> None:
-        """Write emitter data."""
-        self.write_line(indent, f"deadspace {emitter.dead_space:.7g}")
-        self.write_line(indent, f"blastRadius {emitter.blast_radius:.7g}")
-        self.write_line(indent, f"blastLength {emitter.blast_length:.7g}")
-        self.write_line(indent, f"numBranches {emitter.branch_count}")
-        self.write_line(indent, f"controlptsmoothing {emitter.control_point_smoothing:.7g}")
-        self.write_line(indent, f"xgrid {emitter.x_grid}")
-        self.write_line(indent, f"ygrid {emitter.y_grid}")
-        self.write_line(indent, f"spawntype {emitter.spawn_type}")
-        self.write_line(indent, f"update {emitter.update}")
-        self.write_line(indent, f"render {emitter.render}")
-        self.write_line(indent, f"blend {emitter.blend}")
-        self.write_line(indent, f"texture {emitter.texture}")
-        if emitter.chunk_name:
-            self.write_line(indent, f"chunkname {emitter.chunk_name}")
-        self.write_line(indent, f"twosidedtex {emitter.two_sided_texture}")
-        self.write_line(indent, f"loop {emitter.loop}")
-        self.write_line(indent, f"renderorder {emitter.render_order}")
-        self.write_line(indent, f"m_bFrameBlending {emitter.frame_blender}")
-        self.write_line(indent, f"m_sDepthTextureName {emitter.depth_texture or ''}")
-
-        from pykotor.resource.formats.mdl.mdl_types import MDLEmitterFlags
-
-        flags = emitter.flags
-
-        self.write_line(indent, f"p2p {1 if (flags & MDLEmitterFlags.P2P) else 0}")
-        self.write_line(indent, f"p2p_sel {1 if (flags & MDLEmitterFlags.P2P_SEL) else 0}")
-        self.write_line(
-            indent, f"affectedByWind {1 if (flags & MDLEmitterFlags.AFFECTED_WIND) else 0}"
-        )
-        self.write_line(indent, f"m_isTinted {1 if (flags & MDLEmitterFlags.TINTED) else 0}")
-        self.write_line(indent, f"bounce {1 if (flags & MDLEmitterFlags.BOUNCE) else 0}")
-        self.write_line(indent, f"random {1 if (flags & MDLEmitterFlags.RANDOM) else 0}")
-        self.write_line(indent, f"inherit {1 if (flags & MDLEmitterFlags.INHERIT) else 0}")
-        self.write_line(indent, f"inheritvel {1 if (flags & MDLEmitterFlags.INHERIT_VEL) else 0}")
-        self.write_line(
-            indent, f"inherit_local {1 if (flags & MDLEmitterFlags.INHERIT_LOCAL) else 0}"
-        )
-        self.write_line(indent, f"splat {1 if (flags & MDLEmitterFlags.SPLAT) else 0}")
-        self.write_line(
-            indent, f"inherit_part {1 if (flags & MDLEmitterFlags.INHERIT_PART) else 0}"
-        )
-        self.write_line(
-            indent, f"depth_texture {1 if (flags & MDLEmitterFlags.DEPTH_TEXTURE) else 0}"
-        )
-        self.write_line(indent, f"emitterflag13 {1 if (flags & MDLEmitterFlags.FLAG_13) else 0}")
-
-    def _write_reference(self, indent: int, reference: MDLReference) -> None:
-        """Write reference data."""
-        # The ASCII format used in tests uses "model <resref>" for reference nodes.
-        self.write_line(indent, f"model {reference.model}")
-        if reference.reattachable:
-            self.write_line(indent, "reattachable")
-
-    def _write_saber(self, indent: int, saber: MDLSaber) -> None:
-        """Write saber data."""
-        # Keep output aligned with the unit test fixtures (uses simple "length"/"width").
-        self.write_line(indent, f"sabertype {saber.saber_type}")
-        self.write_line(indent, f"sabercolor {saber.saber_color}")
-        self.write_line(indent, f"length {saber.saber_length:.7g}")
-        self.write_line(indent, f"width {saber.saber_width:.7g}")
-        self.write_line(indent, f"saberflarecolor {saber.saber_flare_color}")
-        self.write_line(indent, f"saberflareradius {saber.saber_flare_radius:.7g}")
-
-    def _write_walkmesh(self, indent: int, walkmesh: MDLWalkmesh) -> None:
-        """Write walkmesh data.
-
-        AABB format matches MDLOps: 6 floats (bbox_min.xyz, bbox_max.xyz) + 1 int (face_index)
-        """
-        self.write_line(indent, "aabb " + str(len(walkmesh.aabbs)))
-        for i, aabb in enumerate(walkmesh.aabbs):
-            # MDLOps format: 6 floats (bbox_min.xyz, bbox_max.xyz) + 1 int (face_index)
-            # Child offsets and unknown are not stored in ASCII format
-            # MDLOps format: 6 floats with space before number, then 1 int
-            #
-            self.write_line(
-                indent + 1,
-                f"      {aabb.bbox_min.x: .7g} {aabb.bbox_min.y: .7g} {aabb.bbox_min.z: .7g} {aabb.bbox_max.x: .7g} {aabb.bbox_max.y: .7g} {aabb.bbox_max.z: .7g} {aabb.face_index}",
-            )
-
-    def _write_controller(
-        self,
-        indent: int,
-        node: MDLNode,
-        controller: MDLController,
-    ) -> None:
-        """Write controller data."""
-        if not controller.rows:
-            return
-
-        # IMPORTANT: controller IDs overlap between node types (e.g. 88 is RADIUS for lights
-        # but BIRTHRATE for emitters). So we must resolve the ASCII controller name using
-        # the node-type context, not only the enum value.
-        controller_id = int(controller.controller_type)
-        base_name: str | None = None
-
-        # Prefer the most specific node types first.
-        flag_preference: list[int] = []
-        if node.light is not None:
-            flag_preference.append(NODE_HAS_LIGHT)
-        if node.emitter is not None:
-            flag_preference.append(NODE_HAS_EMITTER)
-        if node.mesh is not None:
-            flag_preference.append(NODE_HAS_MESH)
-        flag_preference.append(NODE_HAS_HEADER)
-
-        for flag in flag_preference:
-            name_map: dict[int, str] = _CONTROLLER_NAMES.get(flag, {})
-            if controller_id in name_map:
-                base_name = name_map[controller_id]
-                break
-
-        if base_name is None:
-            # Fallback: use enum name (may be an alias, but better than nothing)
-            base_name = controller.controller_type.name.lower()
-
-        controller_name = f"{base_name}{'bezier' if controller.is_bezier else ''}key"
-
-        self.write_line(indent, controller_name)
-        for row in controller.rows:
-            # Preserve exact float32-derived values across Binary->ASCII->Binary roundtrips.
-            # Using str() can shorten/round values, which breaks canonicalized equality on animations.
-            t_str = repr(float(row.time))
-            data = list(row.data or [])
-            # MDLOps ASCII stores ORIENTATION controller rows as angle-axis (x, y, z, angle),
-            # while our in-memory representation uses quaternions. The reader converts angle-axis
-            # to quaternion; therefore the writer must emit angle-axis for stability.
-            if controller.controller_type == MDLControllerType.ORIENTATION and len(data) == 4:
-                data = _quaternion_to_aa(data)
-            data_str = " ".join(repr(float(d)) for d in data)
-            self.write_line(indent + 1, f"{t_str} {data_str}".rstrip())
-        self.write_line(indent, "endlist")
-
-    def _write_animation(self, anim: MDLAnimation, model_name: str) -> None:
-        """Write animation data."""
-        self.write_line(0, "")
-        self.write_line(0, f"newanim {anim.name} {model_name}")
-        # Preserve exact float values across Binary->ASCII->Binary roundtrips.
-        # Using general-format precision (e.g., .7g) will round float32-derived values like 1.899999976 -> 1.9,
-        # which breaks strict equality tests.
-        self.write_line(1, f"length {float(anim.anim_length)!r}")
-        self.write_line(1, f"transtime {float(anim.transition_length)!r}")
-        if anim.root_model:
-            self.write_line(1, f"animroot {anim.root_model}")
-
-        if anim.events:
-            for event in anim.events:
-                t = float(event.activation_time)
-                # Match test expectations: keep ".0" for whole seconds, keep decimals for fractions.
-                t_str = f"{t:.1f}" if t.is_integer() else f"{t:.7g}"
-                self.write_line(1, f"event {t_str} {event.name}")
-
-        # Animation nodes are written as "node dummy <node_name>" with controllers
-        # Build a mapping from animation nodes to their parents for parent writing
-        parent_map: dict[str, MDLNode | None] = {}
-        self._build_animation_parent_map(anim.root, None, parent_map)
-
-        # Write all animation nodes in their original binary order (node_id).
-        # The ASCII reader rebuilds animation child lists by appending in encounter order, so
-        # emitting nodes in a different order will permute sibling ordering and break strict
-        # binary↔ASCII comparisons.
-        all_anim_nodes: list[MDLNode] = anim.all_nodes()
-        all_anim_nodes.sort(key=lambda n: int(n.node_id))
-
-        for node in all_anim_nodes:
-            if node.name:  # Skip root if it has no name
-                parent: MDLNode | None = parent_map.get(node.name)
-                self._write_animation_node(1, node, parent)
-
-        self.write_line(0, "")
-        self.write_line(0, f"doneanim {anim.name} {model_name}")
-
-    def _build_animation_parent_map(
-        self,
-        node: MDLNode,
-        parent: MDLNode | None,
-        parent_map: dict[str, MDLNode | None],
-    ) -> None:
-        """Build a mapping of animation nodes to their parents.
-
-        Uses node names as keys instead of node objects to avoid hashing issues.
-        """
-        parent_map[node.name] = parent
-        for child in node.children:
-            self._build_animation_parent_map(child, node, parent_map)
-
-    def _write_animation_node(
-        self,
-        indent: int,
-        node: MDLNode,
-        parent: MDLNode | None = None,
-    ) -> None:
-        """Write an animation node with its controllers.
-
-        Animation nodes are written as "node dummy <node_name>" regardless of actual type.
-        """
-        self.write_line(indent, f"node dummy {node.name}")
-
-        # In MDLOps, parent is a model node index, but we use the parent node's name
-        if parent and parent.name:
-            self.write_line(indent + 1, f"parent {parent.name}")
-
-        for controller in node.controllers:
-            self._write_controller(indent + 1, node, controller)
-
-        self.write_line(indent, "endnode")
-
-
-def _parse_float_robust(value: str) -> float:
-    """Parse float value handling NaN/INF/QNAN formats from MDLOps.
-
-    MDLOps on Windows outputs NaN as '1.#QNAN', INF as '1.#INF', etc.
-    This function handles all these formats and standard Python float values.
-
-    Args:
-        value: String representation of float value
-
-    Returns:
-        Parsed float value (may be NaN or INF)
-    """
-    value = value.strip().lower()
-    # Handle Windows-style NaN representations
-    if "qnan" in value or value == "nan" or value == "-nan" or value == "+nan":
-        return float("nan")
-    # Handle Windows-style INF representations
-    if "inf" in value:
-        if value.startswith("-"):
-            return float("-inf")
-        return float("inf")
-    # Standard float parsing for normal values
-    return float(value)
-
-
-class MDLAsciiReader(ResourceReader):
-    """Reader for ASCII MDL files matching mdlops implementation exactly."""
-
+class MDLAsciiReader:
     def __init__(
         self,
         source: SOURCE_TYPES,
         offset: int = 0,
         size: int = 0,
     ):
-        """Initialize the ASCII MDL reader.
-
-        Args:
-            source: The source of the ASCII MDL data
-            offset: The byte offset within the source
-            size: Size of the data to read (0 = read all)
-        """
-        super().__init__(source, offset, size if size > 0 else None)
         self._mdl: MDL | None = None
-        self._node_index: dict[str, int] = {"null": -1}
-        self._nodes: list[MDLNode] = []
-        self._current_node: MDLNode | None = None
-        self._is_geometry: bool = False
-        self._is_animation: bool = False
-        self._in_node: bool = False
-        self._current_anim_num: int = 0
-        self._task: Literal[
-            "verts",
-            "faces",
-            "tverts",
-            "tverts1",
-            "lightmaptverts",
-            "bones",
-            "flarecolorshifts",
-            "weights",
-            "constraints",
-            "aabb",
-            "",
-        ] = ""
-        self._task_count: int = 0
-        self._task_total: int = 0
-        self._anim_node_index: dict[str, MDLNode] = {}
-        self._anim_nodes: list[list[MDLNode]] = []
-        self._saw_any_content: bool = False
+        self._reader: BinaryReader = BinaryReader.from_auto(source, offset)
 
-    @autoclose
     def load(
         self,
-        *,
         auto_close: bool = True,
-    ) -> MDL:  # noqa: FBT001, FBT002, ARG002
-        """Load the ASCII MDL file.
-
-        Returns:
-            The loaded MDL instance
-
-        """
+    ) -> MDL:
         self._mdl = MDL()
 
-        # Read bytes and decode to text
-        raw = self._reader.read_all()
-        try:
-            MdlAscii.from_bytes(raw)
-        except kaitaistruct.KaitaiStructError:
-            pass
-        text_content = decode_bytes_with_fallbacks(raw)
-        text_reader = io.StringIO(text_content)
-        self._line_iterator = iter(text_reader)
-
-        self._mdl.name = ""
-        self._mdl.supermodel = "null"
-        self._mdl.fog = False
-        self._mdl.classification = MDLClassification.OTHER
-        self._mdl.classification_unk1 = 0
-        self._mdl.animation_scale = 0.971
-        self._mdl.bmin = Vector3(-5, -5, -1)
-        self._mdl.bmax = Vector3(5, 5, 10)
-        self._mdl.radius = 7.0
-
-        # Parse the file line by line
-        for line in self._line_iterator:
-            line = str(line).rstrip()
-            if not line or line.strip().startswith("#"):
-                continue
-            self._saw_any_content = True
-
-            if re.match(r"^\s*newmodel\s+(\S+)", line, re.IGNORECASE):
-                match = re.match(r"^\s*newmodel\s+(\S+)", line, re.IGNORECASE)
-                if match is not None:
-                    self._mdl.name = match.group(1)
-            elif re.match(r"^\s*setsupermodel\s+\S+\s+(\S+)", line, re.IGNORECASE):
-                match = re.match(r"^\s*setsupermodel\s+\S+\s+(\S+)", line, re.IGNORECASE)
-                if match is not None:
-                    self._mdl.supermodel = match.group(1)
-            elif re.match(r"^\s*classification\s+(\S+)", line, re.IGNORECASE):
-                match = re.match(r"^\s*classification\s+(\S+)", line, re.IGNORECASE)
-                if match is not None:
-                    class_name = match.group(1).lower()
-                    try:
-                        self._mdl.classification = MDLClassification[class_name.upper()]
-                    except KeyError:
-                        self._mdl.classification = MDLClassification.OTHER
-            elif re.match(r"^\s*classification_unk1\s+(\S+)", line, re.IGNORECASE):
-                match = re.match(r"^\s*classification_unk1\s+(\S+)", line, re.IGNORECASE)
-                if match is not None:
-                    self._mdl.classification_unk1 = int(match.group(1))
-            elif re.match(r"^\s*ignorefog\s+(\S+)", line, re.IGNORECASE):
-                match = re.match(r"^\s*ignorefog\s+(\S+)", line, re.IGNORECASE)
-                if match is not None:
-                    self._mdl.fog = int(match.group(1)) == 0
-            elif re.match(r"^\s*setanimationscale\s+(\S+)", line, re.IGNORECASE):
-                match = re.match(r"^\s*setanimationscale\s+(\S+)", line, re.IGNORECASE)
-                if match is not None:
-                    self._mdl.animation_scale = float(match.group(1))
-            elif re.match(r"^\s*headlink\s+(\S+)", line, re.IGNORECASE):
-                match = re.match(r"^\s*headlink\s+(\S+)", line, re.IGNORECASE)
-                if match is not None:
-                    self._mdl.headlink = match.group(1)
-            elif re.match(r"^\s*compress_quaternions\s+(\S+)", line, re.IGNORECASE):
-                match = re.match(r"^\s*compress_quaternions\s+(\S+)", line, re.IGNORECASE)
-                if match is not None:
-                    self._mdl.compress_quaternions = int(match.group(1))
-            elif re.match(r"^\s*beginmodelgeom", line, re.IGNORECASE):
-                self._is_geometry = True
-                self._is_animation = False
-            elif re.match(r"^\s*endmodelgeom", line, re.IGNORECASE):
-                self._is_geometry = False
-            elif re.match(r"^\s*newanim\s+(\S+)\s+(\S+)", line, re.IGNORECASE):
-                match = re.match(r"^\s*newanim\s+(\S+)\s+(\S+)", line, re.IGNORECASE)
-                if match is not None:
-                    anim = MDLAnimation()
-                    anim.name = match.group(1)
-                    anim.root_model = match.group(2)
-                    self._mdl.anims.append(anim)
-                    self._is_animation = True
-                    self._current_anim_num = len(self._mdl.anims) - 1
-                    # Reset per-animation node state
-                    self._anim_node_index = {}
-                    while len(self._anim_nodes) <= self._current_anim_num:
-                        self._anim_nodes.append([])
-            elif re.match(r"^\s*doneanim", line, re.IGNORECASE):
-                self._is_animation = False
-            elif re.match(r"^\s*length\s+(\S+)", line, re.IGNORECASE) and self._is_animation:
-                match = re.match(r"^\s*length\s+(\S+)", line, re.IGNORECASE)
-                if match is not None and self._mdl.anims:
-                    self._mdl.anims[self._current_anim_num].anim_length = float(match.group(1))
-            elif re.match(r"^\s*animroot\s+(\S+)", line, re.IGNORECASE) and self._is_animation:
-                match = re.match(r"^\s*animroot\s+(\S+)", line, re.IGNORECASE)
-                if match is not None and self._mdl.anims:
-                    self._mdl.anims[self._current_anim_num].root_model = match.group(1)
-            elif re.match(r"^\s*transtime\s+(\S+)", line, re.IGNORECASE) and self._is_animation:
-                match = re.match(r"^\s*transtime\s+(\S+)", line, re.IGNORECASE)
-                if match is not None and self._mdl.anims:
-                    self._mdl.anims[self._current_anim_num].transition_length = float(
-                        match.group(1)
-                    )
-            elif (
-                re.match(r"^\s*event\s+(\S+)\s+(\S+)", line, re.IGNORECASE)
-                and self._is_animation
-                and not self._in_node
-            ):
-                match = re.match(r"^\s*event\s+(\S+)\s+(\S+)", line, re.IGNORECASE)
-                if match is not None and self._mdl.anims:
-                    event = MDLEvent()
-                    event.activation_time = float(match.group(1))
-                    event.name = match.group(2)
-                    self._mdl.anims[self._current_anim_num].events.append(event)
-            elif re.match(r"^\s*node\s+(\S+)\s+(\S+)", line, re.IGNORECASE):
-                # Animation nodes live under the current animation, not the model geometry tree.
-                if self._is_animation and self._mdl.anims:
-                    self._parse_animation_node(line)
-                else:
-                    self._parse_node(line)
-            elif self._in_node:
-                self._parse_node_data(line)
-            elif (
-                re.match(r"^\s*bmin\s+(\S+)\s+(\S+)\s+(\S+)", line, re.IGNORECASE)
-                and not self._in_node
-            ):
-                match = re.match(r"^\s*bmin\s+(\S+)\s+(\S+)\s+(\S+)", line, re.IGNORECASE)
-                if match is not None:
-                    self._mdl.bmin = Vector3(
-                        _parse_float_robust(match.group(1)),
-                        _parse_float_robust(match.group(2)),
-                        _parse_float_robust(match.group(3)),
-                    )
-            elif (
-                re.match(r"^\s*bmax\s+(\S+)\s+(\S+)\s+(\S+)", line, re.IGNORECASE)
-                and not self._in_node
-            ):
-                match = re.match(r"^\s*bmax\s+(\S+)\s+(\S+)\s+(\S+)", line, re.IGNORECASE)
-                if match is not None:
-                    self._mdl.bmax = Vector3(
-                        _parse_float_robust(match.group(1)),
-                        _parse_float_robust(match.group(2)),
-                        _parse_float_robust(match.group(3)),
-                    )
-            elif re.match(r"^\s*radius\s+(\S+)", line, re.IGNORECASE) and not self._in_node:
-                match = re.match(r"^\s*radius\s+(\S+)", line, re.IGNORECASE)
-                if match is not None:
-                    self._mdl.radius = _parse_float_robust(match.group(1))
-
-        # Build node hierarchy
-        self._build_node_hierarchy()
-        self._build_animation_hierarchy()
-
-        if not self._saw_any_content:
-            raise ValueError("Empty MDL ASCII input")
+        if auto_close:
+            self._reader.close()
 
         return self._mdl
 
-    def _parse_node(self, line: str) -> None:
-        """Parse a node declaration."""
-        match = re.match(r"^\s*node\s+(\S+)\s+(\S+)", line, re.IGNORECASE)
-        if not match:
-            return
 
-        node_type_str = match.group(1).lower()
-        node_name = match.group(2)
+class MDLAsciiWriter:
+    def __init__(
+        self,
+        mdl: MDL,
+        target: TARGET_TYPES,
+    ):
+        self._mdl = mdl
+        self._writer = BinaryWriter.to_auto(target)
 
-        if node_name.startswith("2081__"):
-            node_type_str = "lightsaber"
-            node_name = node_name[6:]
+    def write(
+        self,
+        auto_close: bool = True,
+    ):
+        """Writes a 3D model to a .mdl file.
 
-        # Map node type string to MDLNodeType
-        node_type_map = {
-            "dummy": MDLNodeType.DUMMY,
-            "trimesh": MDLNodeType.TRIMESH,
-            "danglymesh": MDLNodeType.DANGLYMESH,
-            "skin": MDLNodeType.SKIN,  # Skinned mesh (mdlops:320, NODE_SKIN = 97)
-            "light": MDLNodeType.LIGHT,
-            "emitter": MDLNodeType.EMITTER,
-            "reference": MDLNodeType.REFERENCE,
-            "aabb": MDLNodeType.AABB,
-            "lightsaber": MDLNodeType.SABER,
-        }
+        Args:
+        ----
+            auto_close: Whether to close the writer after writing is complete (default True).
 
-        node_type = node_type_map.get(node_type_str, MDLNodeType.DUMMY)
+        Returns:
+        -------
+            None: Does not return anything, writes directly to the writer
 
-        # Create node
-        node = MDLNode()
-        node.name = node_name
-        node.node_type = node_type
-        node.node_id = len(self._nodes)
-        node.position = Vector3.from_null()
-        node.orientation = Vector4(0, 0, 0, 1)
-
-        # Initialize based on node type
-        if node_type == MDLNodeType.LIGHT:
-            node.light = MDLLight()
-        elif node_type == MDLNodeType.EMITTER:
-            node.emitter = MDLEmitter()
-        elif node_type == MDLNodeType.REFERENCE:
-            node.reference = MDLReference()
-        elif node_type == MDLNodeType.AABB:
-            # AABB nodes can have both mesh and AABB data
-            #
-            node.aabb = MDLWalkmesh()
-            # Mesh will be created on-demand when mesh data is encountered
-        elif node_type == MDLNodeType.SABER:
-            node.saber = MDLSaber()
-        elif node_type in (MDLNodeType.TRIMESH, MDLNodeType.DANGLYMESH, MDLNodeType.SKIN):
-            node.mesh = MDLMesh()
-            if node_type == MDLNodeType.DANGLYMESH:
-                node.dangly = MDLDangly()
-            # SKIN nodes have mesh data but skin payload is stored separately in node.skin
-            # (created on-demand when "bones" or "weights" sections are encountered)
-
-        self._nodes.append(node)
-        self._node_index[node_name.lower()] = len(self._nodes) - 1
-        self._current_node = node
-        self._in_node = True
-        self._task = ""
-
-    def _parse_animation_node(self, line: str) -> None:
-        """Parse an animation node declaration (within a newanim...doneanim block).
-
-        The ASCII animation section uses node declarations to attach controllers to the
-        animation's root/node tree. These should not be added to the model's geometry nodes.
+        Processing Logic:
+        ----------------
+            - Writes header information for the model
+            - Writes geometry bounds and info
+            - Writes each node in the model
+            - Writes header for each animation
+            - Writes animation length, transition and root node
+            - Writes each node for the animation
+            - Closes the writer if auto_close is True.
         """
-        match = re.match(r"^\s*node\s+(\S+)\s+(\S+)", line, re.IGNORECASE)
-        if not match or self._mdl is None or not self._mdl.anims:
-            return
+        self._writer.write_line(0, f"newmodel {self._mdl.name}")
+        self._writer.write_line(0, f"setsupermodel {self._mdl.name} {self._mdl.supermodel}")
+        self._writer.write_line(0, f"ignorefog {int(not self._mdl.fog)}")
 
-        node_name: str = match.group(2)
-        node: MDLNode = MDLNode()
-        node.name = node_name
-        node.node_type = MDLNodeType.DUMMY
-        node.node_id = len(self._anim_node_index)
-        node.position = Vector3.from_null()
-        node.orientation = Vector4(0, 0, 0, 1)
+        self._writer.write_line(0, f"beginmodelgeom {self._mdl.name}")
+        self._writer.write_line(1, "bmin 0 0 0")
+        self._writer.write_line(1, "bmax 0 0 0")
+        self._writer.write_line(1, "radius 0")
 
-        self._anim_node_index[node_name.lower()] = node
-        if self._current_anim_num >= 0:
-            while len(self._anim_nodes) <= self._current_anim_num:
-                self._anim_nodes.append([])
-            self._anim_nodes[self._current_anim_num].append(node)
+        all_nodes = self._mdl.all_nodes()
+        for node in all_nodes:
+            self._write_node(node, anim=False, indent=0)
+        self._writer.write_line(0, f"endmodelgeom {self._mdl.name}")
 
-        # Attach as animation root if unset
-        anim: MDLAnimation = self._mdl.anims[self._current_anim_num]
-        if anim.root is None or not anim.root.name:
-            anim.root = node
+        for anim in self._mdl.anims:
+            self._writer.write_line(0, f"newanim {anim.name} {anim.root_model}")
 
-        self._current_node = node
-        self._in_node = True
-        self._task = ""
+            self._writer.write_line(1, f"length {anim.anim_length}")
+            self._writer.write_line(1, f"transtime {anim.transition_length}")
+            self._writer.write_line(1, f"animroot {anim.root_model}")  # ???
 
-    def _build_animation_hierarchy(self) -> None:
-        """Build per-animation node hierarchies from 'parent <name>' relationships."""
-        if self._mdl is None or not self._mdl.anims:
-            return
+            for node in anim.all_nodes():
+                self._write_node(node, anim=True, indent=1)
 
-        for anim_idx, anim in enumerate(self._mdl.anims):
-            if anim.root is None or not anim.root.name:
-                continue
+            self._writer.write_line(0, f"doneanim {anim.name} {anim.root_model}")
 
-            nodes: list[MDLNode] = []
-            if 0 <= anim_idx < len(self._anim_nodes):
-                nodes = list(self._anim_nodes[anim_idx])
-            if anim.root not in nodes:
-                nodes.append(anim.root)
+        if auto_close:
+            self._writer.close()
 
-            by_name: dict[str, MDLNode] = {n.name.lower(): n for n in nodes if n.name}
-            for n in nodes:
-                n.children = []
-
-            # Attach based on parsed parent name (preferred).
-            for n in nodes:
-                parent_name: str | None = n.__dict__.get("_parent_name")
-                if isinstance(parent_name, str) and parent_name in by_name:
-                    by_name[parent_name].children.append(n)
-
-            # Choose a better root if the initial one was simply the first encountered node.
-            root_candidates: list[MDLNode] = [
-                n
-                for n in nodes
-                # Treat missing parents AND parents that are external to this animation node list
-                # (e.g. model root name, animroot name) as top-level animation nodes.
-                if (not isinstance(n.__dict__.get("_parent_name"), str))
-                or (
-                    isinstance(n.__dict__.get("_parent_name"), str)
-                    and n.__dict__.get("_parent_name") not in by_name
-                )
-            ]
-            if root_candidates:
-                # Prefer the candidate that actually has children.
-                root_candidates.sort(key=lambda n: len(n.children), reverse=True)
-                anim.root = root_candidates[0]
-
-            # Cleanup temporary parent tracking
-            for n in nodes:
-                n.__dict__.pop("_parent_name", None)
-
-    def _parse_node_data(
+    def _write_node(
         self,
-        line: str,
-    ) -> None:
-        """Parse data within a node."""
-        if not self._current_node:
-            return
+        node: MDLNode,
+        anim: bool,
+        indent: int,
+    ):
+        """Writes a node to the MDL file.
 
-        # ASCII node bodies are delimited by braces in the tests and writer output.
-        # Treat "{" as a no-op and "}" as end-of-node (mdlops also supports "endnode").
-        stripped = line.strip()
-        if stripped == "{":
-            return
-        if stripped == "}":
-            self._in_node = False
-            self._current_node = None
-            self._task = ""
-            self._task_count = 0
-            return
+        Args:
+        ----
+            node: MDLNode: The node to write
+            anim: bool: Whether to write animation controllers
+            indent: int: The indentation level
 
-        # Check for endnode
-        if re.match(r"^\s*endnode", line, re.IGNORECASE):
-            self._in_node = False
-            self._current_node = None
-            self._task = ""
-            self._task_count = 0
-            return
+        Writes the node header and properties. Then:
+        1. Writes the parent, orientation, and position
+        2. Writes mesh properties if it has a mesh
+        3. Writes skinning weights if it has a skin
+        4. Writes animation controllers if writing animation
+        5. Writes the node closing tag.
+        """
+        parent = self._mdl.find_parent(node)
 
-        # Parse parent
-        if re.match(r"^\s*parent\s+(\S+)", line, re.IGNORECASE):
-            match = re.match(r"^\s*parent\s+(\S+)", line, re.IGNORECASE)
-            if match is not None:
-                if self._is_animation and self._mdl is not None and self._mdl.anims:
-                    # Animation nodes: MDLOps may emit parent as either a node name OR a numeric node index.
-                    parent_token = match.group(1).strip()
-                    parent_lc = parent_token.lower()
+        newline = self._writer.write_line
 
-                    # Prefer name-based parenting when possible (most interoperable).
-                    resolved_parent_name: str | None = None
+        newline(indent + 0, f"node {self._node_type(node)} {node.name}")
+        newline(indent + 1, f'parent {"NULL" if parent is None else parent.name}')
 
-                    # Numeric parent reference (MDLOps-style): interpret as node_id / index within this animation.
-                    if parent_lc.lstrip("-").isdigit():
-                        try:
-                            parent_idx = int(parent_lc)
-                        except ValueError:
-                            parent_idx = -1
+        if parent is not None or not anim:
+            newline(indent + 1, f"orientation {node.orientation.x} {node.orientation.y} {node.orientation.z} {node.orientation.w}")
+            newline(indent + 1, f"position {node.position.x} {node.position.y} {node.position.z}")
+            self._write_controllers(node, node.controllers, indent + 1)
 
-                        if (
-                            parent_idx >= 0
-                            and self._current_anim_num >= 0
-                            and self._current_anim_num < len(self._anim_nodes)
-                        ):
-                            # Try node_id match first (more robust than list index).
-                            cand_nodes: list[MDLNode] = self._anim_nodes[self._current_anim_num]
-                            for cand in cand_nodes:
-                                if cand.node_id == parent_idx:
-                                    resolved_parent_name = cand.name.lower()
-                                    break
-                            # Fallback: treat as list index in encounter order.
-                            if resolved_parent_name is None and parent_idx < len(cand_nodes):
-                                resolved_parent_name = cand_nodes[parent_idx].name.lower()
+            if node.mesh:
+                self._write_mesh_data(newline, indent, node)
+        if anim:
+            self._write_anim_controllers(node, node.controllers, indent + 1)
 
-                    # Name parent reference
-                    if resolved_parent_name is None:
-                        resolved_parent_name = parent_lc
+        newline(indent + 0, "endnode")
 
-                    # MDLOps commonly uses NULL to mean "no parent" in animation sections.
-                    # Treat these as root-level nodes for hierarchy building.
-                    if resolved_parent_name in ("null", "-1", ""):
-                        self._current_node.__dict__["_parent_name"] = None
-                        return
+    def _write_mesh_data(self, newline: Callable, indent: int, node: MDLNode):
+        """Writes mesh node data to a file in MDL format.
 
-                    # Store for hierarchy construction.
-                    self._current_node.__dict__["_parent_name"] = resolved_parent_name
-                else:
-                    # Geometry nodes: MDLOps commonly emits parent as a numeric node index,
-                    # but some toolchains may emit a name. Support both.
-                    parent_token = match.group(1).strip()
-                    parent_lc = parent_token.lower()
-                    if parent_lc in ("null", ""):
-                        self._current_node.parent_id = -1
-                    elif parent_lc.lstrip("-").isdigit():
-                        try:
-                            self._current_node.parent_id = int(parent_lc)
-                        except ValueError:
-                            self._current_node.parent_id = -1
-                    else:
-                        # Store parent name for later resolution (parent may not be parsed yet)
-                        self._current_node.__dict__["_parent_name"] = parent_lc
-                        # Try to resolve now, but fall back to name-based resolution later
-                        self._current_node.parent_id = self._node_index.get(parent_lc, -1)
-            return
+        Args:
+        ----
+            self: The class instance
+            newline: Function to write a new line
+            indent: String of spaces for indentation
+            node: Mesh node object
 
-        # Parse position
-        if re.match(r"^\s*position\s+(\S+)\s+(\S+)\s+(\S+)", line, re.IGNORECASE):
-            match = re.match(r"^\s*position\s+(\S+)\s+(\S+)\s+(\S+)", line, re.IGNORECASE)
-            if match is not None:
-                self._current_node.position = Vector3(
-                    _parse_float_robust(match.group(1)),
-                    _parse_float_robust(match.group(2)),
-                    _parse_float_robust(match.group(3)),
-                )
-            return
+        Processing Logic:
+        ----------------
+            - Writes mesh properties like diffuse color, texture, etc
+            - Writes vertex position data
+            - Writes UV data if present
+            - Writes face index data
+            - Writes bone weight data if node has skin.
+        """
+        newline(
+            indent + 1,
+            f"diffuse {node.mesh.diffuse.r} {node.mesh.diffuse.g} {node.mesh.diffuse.b}",
+        )
+        newline(
+            indent + 1,
+            f"ambient {node.mesh.ambient.r} {node.mesh.ambient.g} {node.mesh.ambient.b}",
+        )
+        newline(indent + 1, f"bitmap {node.mesh.texture_1}")
+        newline(indent + 1, f"transparencyhint {node.mesh.transparency_hint}")
+        newline(indent + 1, f"animateuv {int(node.mesh.animate_uv)}")
+        newline(indent + 1, f"uvdirectionx {int(node.mesh.uv_direction_x)}")
+        newline(indent + 1, f"uvjitter {int(node.mesh.uv_jitter)}")
+        newline(indent + 1, f"uvjitterspeed {int(node.mesh.uv_jitter_speed)}")
+        newline(indent + 1, f"lightmapped {int(node.mesh.has_lightmap)}")
+        newline(indent + 1, f"rotatetexture {int(node.mesh.rotate_texture)}")
+        newline(
+            indent + 1,
+            f"m_bIsBackgroundGeometry {int(node.mesh.background_geometry)}",
+        )
+        newline(indent + 1, f"shadow {int(node.mesh.shadow)}")
+        newline(indent + 1, f"beaming {int(node.mesh.beaming)}")
+        newline(indent + 1, f"render {int(node.mesh.render)}")
+        newline(indent + 1, f"dirt_enabled {int(node.mesh.dirt_enabled)}")
+        newline(indent + 1, f"dirt_texture {int(node.mesh.dirt_texture)}")
+        newline(indent + 1, f"hologram_donotdraw {int(node.mesh.hide_in_hologram)}")
 
-        # Parse orientation
-        if re.match(r"^\s*orientation\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)", line, re.IGNORECASE):
-            match = re.match(
-                r"^\s*orientation\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)", line, re.IGNORECASE
-            )
-            if match is not None:
-                self._current_node.orientation = Vector4(
-                    _parse_float_robust(match.group(1)),
-                    _parse_float_robust(match.group(2)),
-                    _parse_float_robust(match.group(3)),
-                    _parse_float_robust(match.group(4)),
-                )
-            return
+        newline(indent + 1, f"verts {len(node.mesh.vertex_positions)}")
+        for vertex_v3 in node.mesh.vertex_positions:
+            newline(indent + 2, f"{vertex_v3.x} {vertex_v3.y} {vertex_v3.z}")
 
-        # Parse mesh data before controllers.
-        # Some keywords overlap (e.g. "radius" is a mesh header scalar but also a light controller name).
-        # AABB nodes can have mesh data, so attempt parsing even if mesh doesn't exist yet (will be created on-demand)
-        if self._current_node.mesh is not None or (
-            self._current_node.node_type == MDLNodeType.AABB and self._current_node.aabb is not None
-        ):
-            if self._parse_mesh_data(line):
-                return
+        if node.mesh.vertex_uv1:
+            newline(indent + 1, f"tverts {len(node.mesh.vertex_positions)}")
+            for vertex_v2 in node.mesh.vertex_uv1:
+                newline(indent + 2, f"{vertex_v2.x} {vertex_v2.y}")
 
-        # Parse controllers
-        if self._parse_controller(line):
-            return
+        newline(indent + 1, f"faces {len(node.mesh.faces)}")
+        for face in node.mesh.faces:
+            # 4th value -> smoothing group
+            newline(indent + 2, f"{face.v1} {face.v2} {face.v3}  0  {face.v1} {face.v2} {face.v3}  {face.material.value}")
 
-        # Parse light data
-        if self._current_node.light is not None:
-            if self._parse_light_data(line):
-                return
+        if node.skin:
+            newline(indent + 1, f"weights {len(node.skin.vertex_bones)}")
+            for bone in node.skin.vertex_bones:
+                line = ""
+                if bone.vertex_indices[0] != -1.0:
+                    node_id = int(node.skin.bone_indices[int(bone.vertex_indices[0])])
+                    name = self._mdl.get_by_node_id(node_id).name
+                    line += f"{name} {bone.vertex_weights[0]} "
+                if bone.vertex_indices[1] != -1.0:
+                    node_id = node.skin.bone_indices[int(bone.vertex_indices[1])]
+                    name = self._mdl.get_by_node_id(node_id).name
+                    line += f"{name} {bone.vertex_weights[1]} "
+                if bone.vertex_indices[2] != -1.0:
+                    node_id = node.skin.bone_indices[int(bone.vertex_indices[2])]
+                    name = self._mdl.get_by_node_id(node_id).name
+                    line += f"{name} {bone.vertex_weights[2]} "
+                if bone.vertex_indices[3] != -1.0:
+                    node_id = node.skin.bone_indices[int(bone.vertex_indices[3])]
+                    name = self._mdl.get_by_node_id(node_id).name
+                    line += f"{name} {bone.vertex_weights[3]} "
+                newline(indent + 2, line)
 
-        # Parse emitter data
-        if self._current_node.emitter is not None:
-            if self._parse_emitter_data(line):
-                return
-
-        # Parse reference data
-        if self._current_node.reference is not None:
-            if self._parse_reference_data(line):
-                return
-
-        # Parse saber data
-        if self._current_node.saber is not None:
-            if self._parse_saber_data(line):
-                return
-
-        # Parse walkmesh data
-        if self._current_node.aabb is not None:
-            if self._parse_walkmesh_data(line):
-                return
-
-    def _parse_controller(
+    def _write_controllers(
         self,
-        line: str,
-    ) -> bool:
-        """Parse a controller declaration or data."""
-        if self._current_node is None:
-            return False
+        node: MDLNode,
+        controllers: list[MDLController],
+        indent: int,
+    ):
+        """Writes MDL controllers to the MDL file.
 
-        # NOTE:
-        # Some binary models encode "light-ness"/"emitter-ness" purely via controller blocks
-        # (e.g. colorkey/radiuskey/multiplierkey) without any explicit node-type token or
-        # payload section. If we gate controller parsing on attached payload objects/flags,
-        # we'll drop those controllers on ASCII read, breaking Binary->ASCII equality.
-        #
-        # Controller *IDs* overlap between node types, but controller *names* are distinct in
-        # MDLOps ASCII. So it's safe to detect by name regardless of node flags.
+        Args:
+        ----
+            node: MDLNode - The node to write controllers for
+            controllers: list[MDLController] - The controllers to write
+            indent: int - The indentation level
 
-        for flag_type in {
-            NODE_HAS_LIGHT,
-            NODE_HAS_EMITTER,
-            NODE_HAS_MESH,
-            NODE_HAS_HEADER,
-        }:
-            controllers: dict[int, str] = _CONTROLLER_NAMES.get(flag_type, {})
-            for _controller_id, controller_name in controllers.items():
-                # Check for keyed controller (e.g., "positionkey", "orientationbezierkey")
-                keyed_pattern = rf"^\s*{re.escape(controller_name)}(bezier)?key"
-                if re.match(keyed_pattern, line, re.IGNORECASE):
-                    match = re.match(keyed_pattern, line, re.IGNORECASE)
-                    is_bezier = bool(
-                        match and match.group(1) and match.group(1).lower() == "bezier"
+        Returns:
+        -------
+            None: Writes controller values to the MDL file
+
+        Processing Logic:
+        ----------------
+            - Loops through each controller
+            - Checks the controller type
+            - Writes the appropriate line to the MDL file with the controller values formatted correctly
+            - Supported controller types are ILLUM_COLOR, ALPHA, SCALE.
+        """
+        for controller in controllers:
+            if controller.controller_type == MDLControllerType.ILLUM_COLOR:
+                red, green, blue = (
+                    controller.rows[0].data[0],
+                    controller.rows[0].data[1],
+                    controller.rows[0].data[2],
+                )
+                self._writer.write_line(indent, f"selfillumcolor {red} {green} {blue}")
+
+            if controller.controller_type == MDLControllerType.ALPHA:
+                self._writer.write_line(indent, f"alpha {controller.rows[0].data[0]}")
+
+            if controller.controller_type == MDLControllerType.SCALE:
+                self._writer.write_line(indent, f"scale {controller.rows[0].data[0]}")
+
+    def _write_anim_controllers(
+        self,
+        node: MDLNode,
+        controllers: list[MDLController],
+        indent: int,
+    ):
+        """Writes animation controllers to the ASCII file.
+
+        Args:
+        ----
+            node: MDLNode - The node the controllers belong to
+            controllers: list[MDLController] - The controllers to write
+            indent: int - The indentation level
+
+        Returns:
+        -------
+            None - Writes controllers directly to the file
+
+        Writes animation controllers to the ASCII file:
+            - Converts position controllers to be relative to the node's global position
+            - Converts orientation controllers from quaternions to axis-angle format
+            - Writes each controller and row with the correct indentation.
+        """
+        for controller in controllers:
+            if controller.controller_type == MDLControllerType.POSITION:
+                self._writer.write_line(indent, "positionkey")
+
+                # Ascii position controller values are offset by the nodes global position contrary to binary
+                for row in controller.rows:
+                    global_position = self._mdl.global_position(node)
+                    row.data[0] += global_position.x
+                    row.data[1] += global_position.y
+                    row.data[2] += global_position.y
+
+            if controller.controller_type == MDLControllerType.ORIENTATION:
+                self._writer.write_line(indent, "orientationkey")
+
+                # Ascii rotation controller values are axis-aligned as opposed to binary which are quaternions
+                for row in controller.rows:
+                    aa = AxisAngle.from_quaternion(
+                        Vector4(row.data[0], row.data[1], row.data[2], row.data[3]),
                     )
-                    # Check for old format with count: "positionkey 4"
-                    count_match = re.search(r"key\s+(\d+)$", line, re.IGNORECASE)
-                    total = int(count_match.group(1)) if count_match else 0
+                    row.data[0] = aa.axis.x
+                    row.data[1] = aa.axis.y
+                    row.data[2] = aa.axis.z
+                    row.data[3] = aa.angle
 
-                    # Read keyframe data
-                    rows: list[MDLControllerRow] = []
-                    controller_type: MDLControllerType = _CONTROLLER_NAME_TO_TYPE.get(
-                        controller_name, MDLControllerType.INVALID
-                    )
+            for row in controller.rows:
+                self._writer.write_line(indent + 1, f"{row}")
 
-                    # Read rows until endlist or count reached
-                    for _ in range(total if total > 0 else 10000):  # Large limit for safety
-                        try:
-                            row_line = next(self._line_iterator).strip()
-                            if not row_line or re.match(r"^\s*endlist", row_line, re.IGNORECASE):
-                                break
-
-                            # Parse row data
-                            parts = row_line.split()
-                            if not parts:
-                                break
-
-                            time = _parse_float_robust(parts[0])
-                            data = [_parse_float_robust(x) for x in parts[1:]]
-
-                            # Special handling for orientation (convert angle-axis to quaternion)
-                            if controller_type == MDLControllerType.ORIENTATION and len(data) == 4:
-                                data = _aa_to_quaternion(data)
-
-                            rows.append(MDLControllerRow(time, data))
-                        except StopIteration:
-                            break
-
-                    if rows:
-                        controller = MDLController(controller_type, rows, is_bezier)
-                        self._current_node.controllers.append(controller)
-                    return True
-
-                # Check for single controller (e.g., "position 1.0 2.0 3.0")
-                single_pattern = rf"^\s*{re.escape(controller_name)}(\s+(\S+))+"
-                if re.match(single_pattern, line, re.IGNORECASE):
-                    match = re.match(single_pattern, line, re.IGNORECASE)
-                    if match is not None:
-                        # Extract data values
-                        parts = line.split()
-                        data = [_parse_float_robust(x) for x in parts[1:]]
-
-                        # Special handling for orientation
-                        controller_type = _CONTROLLER_NAME_TO_TYPE.get(
-                            controller_name, MDLControllerType.INVALID
-                        )
-                        if controller_type == MDLControllerType.ORIENTATION and len(data) == 4:
-                            data = _aa_to_quaternion(data)
-
-                        # Mirror common controller-like properties onto the owning objects.
-                        # The unit tests expect these convenience attributes to exist on the node payloads
-                        # (e.g. light.radius) even though many are also representable as controllers.
-                        if self._current_node.light:
-                            if controller_type == MDLControllerType.COLOR and len(data) >= 3:
-                                self._current_node.light.color = Color(data[0], data[1], data[2])
-                            elif controller_type == MDLControllerType.RADIUS and len(data) >= 1:
-                                self._current_node.light.radius = data[0]
-                            elif controller_type == MDLControllerType.MULTIPLIER and len(data) >= 1:
-                                self._current_node.light.multiplier = data[0]
-
-                        rows = [MDLControllerRow(0.0, data)]
-                        controller = MDLController(controller_type, rows, False)
-                        self._current_node.controllers.append(controller)
-                    return True
-
-        return False
-
-    def _parse_mesh_data(
+    def _node_type(
         self,
-        line: str,
-    ) -> bool:
-        """Parse mesh-specific data."""
-        if self._current_node is None:
-            return False
-
-        # AABB nodes can have mesh data - create mesh on-demand if needed
-        #
-        if self._current_node.mesh is None and self._current_node.node_type == MDLNodeType.AABB:
-            # MDLOps emits mesh header lines (bmin/bmax/radius/...) before verts. If we delay
-            # mesh creation until "verts", the scalar line "radius <f>" is parsed by
-            # _parse_controller as a light radius controller (type 88), shifting binary layout.
-            if re.match(
-                r"^\s*(verts|faces|tverts|tverts1|lightmaptverts|bmin|bmax|radius|average|area|surfacearea|ambient|diffuse|transparencyhint|bitmap|lightmap|render|shadow|beaming|backgroundgeometry|rotatetexture|lightmapped|inv_count)\b",
-                line,
-                re.IGNORECASE,
-            ):
-                self._current_node.mesh = MDLMesh()
-
-        if self._current_node.mesh is None:
-            return False
-
-        mesh = self._current_node.mesh
-
-        # Mesh header values (bbox/radius/average) are emitted in-node by MDLOps.
-        if re.match(r"^\s*bmin\s+(\S+)\s+(\S+)\s+(\S+)\s*$", line, re.IGNORECASE):
-            match = re.match(r"^\s*bmin\s+(\S+)\s+(\S+)\s+(\S+)\s*$", line, re.IGNORECASE)
-            if match is not None:
-                mesh.bb_min = Vector3(
-                    _parse_float_robust(match.group(1)),
-                    _parse_float_robust(match.group(2)),
-                    _parse_float_robust(match.group(3)),
-                )
-            return True
-        if re.match(r"^\s*bmax\s+(\S+)\s+(\S+)\s+(\S+)\s*$", line, re.IGNORECASE):
-            match = re.match(r"^\s*bmax\s+(\S+)\s+(\S+)\s+(\S+)\s*$", line, re.IGNORECASE)
-            if match is not None:
-                mesh.bb_max = Vector3(
-                    _parse_float_robust(match.group(1)),
-                    _parse_float_robust(match.group(2)),
-                    _parse_float_robust(match.group(3)),
-                )
-            return True
-        if re.match(r"^\s*radius\s+(\S+)\s*$", line, re.IGNORECASE):
-            match = re.match(r"^\s*radius\s+(\S+)\s*$", line, re.IGNORECASE)
-            if match is not None:
-                mesh.radius = _parse_float_robust(match.group(1))
-            return True
-        if re.match(r"^\s*average\s+(\S+)\s+(\S+)\s+(\S+)\s*$", line, re.IGNORECASE):
-            match = re.match(r"^\s*average\s+(\S+)\s+(\S+)\s+(\S+)\s*$", line, re.IGNORECASE)
-            if match is not None:
-                mesh.average = Vector3(
-                    _parse_float_robust(match.group(1)),
-                    _parse_float_robust(match.group(2)),
-                    _parse_float_robust(match.group(3)),
-                )
-            return True
-
-        # Mesh surface area (binary header field). We emit/read this for strict equality.
-        if re.match(r"^\s*(area|surfacearea)\s+(\S+)\s*$", line, re.IGNORECASE):
-            match = re.match(r"^\s*(area|surfacearea)\s+(\S+)\s*$", line, re.IGNORECASE)
-            if match is not None:
-                mesh.area = _parse_float_robust(match.group(2))
-            return True
-
-        # Parse ambient color
-        if re.match(r"^\s*ambient\s+(\S+)\s+(\S+)\s+(\S+)", line, re.IGNORECASE):
-            match = re.match(r"^\s*ambient\s+(\S+)\s+(\S+)\s+(\S+)", line, re.IGNORECASE)
-            if match is not None:
-                mesh.ambient = Color(
-                    _parse_float_robust(match.group(1)),
-                    _parse_float_robust(match.group(2)),
-                    _parse_float_robust(match.group(3)),
-                )
-            return True
-
-        # Parse diffuse color
-        if re.match(r"^\s*diffuse\s+(\S+)\s+(\S+)\s+(\S+)", line, re.IGNORECASE):
-            match = re.match(r"^\s*diffuse\s+(\S+)\s+(\S+)\s+(\S+)", line, re.IGNORECASE)
-            if match is not None:
-                mesh.diffuse = Color(
-                    _parse_float_robust(match.group(1)),
-                    _parse_float_robust(match.group(2)),
-                    _parse_float_robust(match.group(3)),
-                )
-            return True
-
-        # Parse transparency hint
-        if re.match(r"^\s*transparencyhint\s+(\S+)", line, re.IGNORECASE):
-            match = re.match(r"^\s*transparencyhint\s+(\S+)", line, re.IGNORECASE)
-            if match is not None:
-                mesh.transparency_hint = int(match.group(1))
-            return True
-
-        # Parse bitmap/texture
-        if re.match(r"^\s*bitmap\s+(\S+)", line, re.IGNORECASE):
-            match = re.match(r"^\s*bitmap\s+(\S+)", line, re.IGNORECASE)
-            if match is not None:
-                mesh.texture_1 = match.group(1)
-            return True
-
-        # Parse lightmap
-        if re.match(r"^\s*lightmap\s+(\S+)", line, re.IGNORECASE):
-            match = re.match(r"^\s*lightmap\s+(\S+)", line, re.IGNORECASE)
-            if match is not None:
-                mesh.texture_2 = match.group(1)
-                mesh.has_lightmap = True
-            return True
-
-        # Parse mesh render flags (accept both "flag" and "flag 0/1" forms).
-        def _parse_bool_flag(pattern: str) -> int | None:
-            m = re.match(pattern, line, re.IGNORECASE)
-            if not m:
-                return None
-            if m.group(1) is None:
-                return 1
-            try:
-                return int(m.group(1))
-            except ValueError:
-                return 1 if m.group(1).strip().lower() in ("true", "yes", "on") else 0
-
-        v = _parse_bool_flag(r"^\s*render(?:\s+(\S+))?\s*$")
-        if v is not None:
-            mesh.render = bool(v)
-            return True
-
-        v = _parse_bool_flag(r"^\s*shadow(?:\s+(\S+))?\s*$")
-        if v is not None:
-            mesh.shadow = bool(v)
-            return True
-
-        v = _parse_bool_flag(r"^\s*beaming(?:\s+(\S+))?\s*$")
-        if v is not None:
-            mesh.beaming = bool(v)
-            return True
-
-        v = _parse_bool_flag(r"^\s*backgroundgeometry(?:\s+(\S+))?\s*$")
-        if v is not None:
-            mesh.background_geometry = bool(v)
-            return True
-
-        v = _parse_bool_flag(r"^\s*rotatetexture(?:\s+(\S+))?\s*$")
-        if v is not None:
-            mesh.rotate_texture = bool(v)
-            return True
-
-        v = _parse_bool_flag(r"^\s*lightmapped(?:\s+(\S+))?\s*$")
-        if v is not None:
-            mesh.has_lightmap = bool(v)
-            return True
-
-        # K2-only dirt properties (ignored unless present).
-        v = _parse_bool_flag(r"^\s*dirt_enabled(?:\s+(\S+))?\s*$")
-        if v is not None:
-            mesh.dirt_enabled = bool(v)
-            return True
-        if re.match(r"^\s*dirt_texture\s+(\S+)", line, re.IGNORECASE):
-            match = re.match(r"^\s*dirt_texture\s+(\S+)", line, re.IGNORECASE)
-            if match is not None:
-                try:
-                    mesh.dirt_texture = int(match.group(1))
-                except ValueError:
-                    # If it's not a number, try to parse as string (legacy support)
-                    mesh.dirt_texture = 1  # Default to 1 if parsing fails
-            return True
-        if re.match(r"^\s*dirt_worldspace\s+(\S+)", line, re.IGNORECASE):
-            match = re.match(r"^\s*dirt_worldspace\s+(\S+)", line, re.IGNORECASE)
-            if match is not None:
-                mesh.dirt_worldspace = int(match.group(1))
-            return True
-        v = _parse_bool_flag(r"^\s*hologram_donotdraw(?:\s+(\S+))?\s*$")
-        if v is not None:
-            mesh.hologram_donotdraw = bool(v)
-            return True
-        if re.match(r"^\s*dirt_coordinate_space\s+(\S+)", line, re.IGNORECASE):
-            match = re.match(r"^\s*dirt_coordinate_space\s+(\S+)", line, re.IGNORECASE)
-            if match is not None:
-                mesh.dirt_coordinate_space = int(match.group(1))
-            return True
-
-        # Parse verts declaration
-        if re.match(r"^\s*verts\s+(\S+)", line, re.IGNORECASE):
-            match = re.match(r"^\s*verts\s+(\S+)", line, re.IGNORECASE)
-            if match is not None:
-                self._task = "verts"
-                self._task_total = int(match.group(1))
-                self._task_count = 0
-                mesh.vertex_positions = []
-                mesh.vertex_normals = []
-                mesh.vertex_uv1 = []
-                mesh.vertex_uvs = mesh.vertex_uv1
-                mesh.vertex_uv2 = []
-            return True
-
-        # Parse faces declaration
-        if re.match(r"^\s*faces\s+(\S+)", line, re.IGNORECASE):
-            match = re.match(r"^\s*faces\s+(\S+)", line, re.IGNORECASE)
-            if match is not None:
-                self._task = "faces"
-                self._task_total = int(match.group(1))
-                self._task_count = 0
-                mesh.faces = []
-            return True
-
-        # Parse indices_counts (space-separated integers after keyword, for binary roundtrip)
-        if re.match(r"^\s*indices_counts\s", line, re.IGNORECASE):
-            parts = line.split()
-            if len(parts) >= 1:
-                try:
-                    mesh.indices_counts = [int(parts[i]) for i in range(1, len(parts))]
-                except ValueError:
-                    mesh.indices_counts = []
-            return True
-
-        # Parse indices_offsets (space-separated integers after keyword)
-        if re.match(r"^\s*indices_offsets\s", line, re.IGNORECASE):
-            parts = line.split()
-            if len(parts) >= 1:
-                try:
-                    mesh.indices_offsets = [int(parts[i]) for i in range(1, len(parts))]
-                except ValueError:
-                    mesh.indices_offsets = []
-            return True
-
-        # Parse indices_offsets_count
-        match = re.match(r"^\s*indices_offsets_count\s+(\S+)", line, re.IGNORECASE)
-        if match:
-            mesh.indices_offsets_count = int(match.group(1))
-            return True
-
-        # Parse tverts declaration
-        if re.match(r"^\s*tverts\s+(\S+)", line, re.IGNORECASE):
-            match = re.match(r"^\s*tverts\s+(\S+)", line, re.IGNORECASE)
-            if match is not None:
-                self._task = "tverts"
-                self._task_total = int(match.group(1))
-                self._task_count = 0
-                if mesh.vertex_uv1 is None:
-                    mesh.vertex_uv1 = []
-                mesh.vertex_uvs = mesh.vertex_uv1
-            return True
-
-        # Parse tverts1/lightmaptverts declaration
-        if re.match(r"^\s*(tverts1|lightmaptverts)\s+(\S+)", line, re.IGNORECASE):
-            match = re.match(r"^\s*(tverts1|lightmaptverts)\s+(\S+)", line, re.IGNORECASE)
-            if match is not None:
-                self._task = "tverts1"
-                self._task_total = int(match.group(2))
-                self._task_count = 0
-                if mesh.vertex_uv2 is None:
-                    mesh.vertex_uv2 = []
-            return True
-
-        # Parse mesh task data (verts/faces/uvs). Other tasks (bones/weights/constraints/flare arrays)
-        # are handled by their dedicated parsers.
-        # AABB nodes can have mesh data, so allow parsing even if node_type is AABB
-        if self._task in ("verts", "faces", "tverts", "tverts1"):
-            # Ensure mesh exists for AABB nodes with mesh data
-            if (
-                self._current_node
-                and self._current_node.node_type == MDLNodeType.AABB
-                and self._current_node.mesh is None
-            ):
-                self._current_node.mesh = MDLMesh()
-            return self._parse_task_data(line)
-
-        # Parse skin/dangly payloads (these are stored on the node, not necessarily via mesh subclassing).
-        if self._parse_skin_data(line):
-            return True
-        if self._parse_dangly_data(line):
-            return True
-
-        return False
-
-    def _parse_task_data(self, line: str) -> bool:
-        """Parse data for current task (verts, faces, tverts, etc.)."""
-        if not self._current_node:
-            return False
-
-        # AABB nodes can have mesh data - ensure mesh exists
-        if self._current_node.mesh is None and self._current_node.node_type == MDLNodeType.AABB:
-            self._current_node.mesh = MDLMesh()
-
-        if not self._current_node.mesh:
-            return False
-
-        mesh = self._current_node.mesh
-
-        if self._task == "verts":
-            # Parse vertex: "index x y z [nx ny nz] [u v] [u2 v2]"
-            parts = line.split()
-            # Unit test fixtures also allow a compact form without an explicit index: "x y z"
-            if len(parts) == 3:
-                idx = self._task_count
-                pos = Vector3(
-                    _parse_float_robust(parts[0]),
-                    _parse_float_robust(parts[1]),
-                    _parse_float_robust(parts[2]),
-                )
-                mesh.vertex_positions.append(pos)
-            elif len(parts) >= 4:
-                idx = int(parts[0])
-                pos = Vector3(
-                    _parse_float_robust(parts[1]),
-                    _parse_float_robust(parts[2]),
-                    _parse_float_robust(parts[3]),
-                )
-                # Keep positions in encounter order; most ASCII exports are sequential.
-                mesh.vertex_positions.append(pos)
-
-                # Optional normal
-                if len(parts) >= 7:
-                    normal = Vector3(
-                        _parse_float_robust(parts[4]),
-                        _parse_float_robust(parts[5]),
-                        _parse_float_robust(parts[6]),
-                    )
-                    if mesh.vertex_normals is None:
-                        mesh.vertex_normals = []
-                    while len(mesh.vertex_normals) <= idx:
-                        mesh.vertex_normals.append(Vector3.from_null())
-                    mesh.vertex_normals[idx] = normal
-
-                # Optional UV1
-                if len(parts) >= 9:
-                    uv = Vector2(_parse_float_robust(parts[7]), _parse_float_robust(parts[8]))
-                    if mesh.vertex_uv1 is None:
-                        mesh.vertex_uv1 = []
-                        mesh.vertex_uvs = mesh.vertex_uv1
-                    while len(mesh.vertex_uv1) <= idx:
-                        mesh.vertex_uv1.append(Vector2(0, 0))
-                    mesh.vertex_uv1[idx] = uv
-
-                # Optional UV2
-                if len(parts) >= 11:
-                    uv = Vector2(_parse_float_robust(parts[9]), _parse_float_robust(parts[10]))
-                    if mesh.vertex_uv2 is None:
-                        mesh.vertex_uv2 = []
-                    while len(mesh.vertex_uv2) <= idx:
-                        mesh.vertex_uv2.append(Vector2(0, 0))
-                    mesh.vertex_uv2[idx] = uv
-
-                self._task_count += 1
-                if self._task_count >= self._task_total:
-                    self._task = ""
-                return True
-
-        elif self._task == "faces":
-            # Parse face: "index v1 v2 v3 material smoothing [t1 t2 t3]"
-            # Support both normal format and magnusll format with extra tvert indices
-            parts = line.split()
-            # MDLOps commonly emits *8 integers per face*:
-            #   v1 v2 v3 smoothgroup_mask t1 t2 t3 material_id
-            # and can emit multiple faces per line by concatenating these 8-int groups.
-            #
-            # Example (from real fixtures):
-            #   0 1 2 16 0 1 2 5
-            #
-            # This is distinct from the packed 4-tuple format below.
-            if len(parts) >= 8 and len(parts) % 8 == 0:
-                try:
-                    ints = [int(p) for p in parts]
-                except ValueError:
-                    ints = []
-                if ints:
-                    for base in range(0, len(ints), 8):
-                        v1, v2, v3 = ints[base + 0], ints[base + 1], ints[base + 2]
-                        smoothgroup_mask = ints[base + 3]
-                        t1, t2, t3 = ints[base + 4], ints[base + 5], ints[base + 6]
-                        material_id = ints[base + 7]
-
-                        # MDLOps quirk: sometimes the 'smoothgroup_mask' column contains the
-                        # full packed material value (e.g. 501) instead of just the mask (e.g. 15).
-                        # We normalize it here to ensure roundtrip equality.
-                        # Check if high bits are set AND low bits match material_id.
-                        if smoothgroup_mask > 31 and (smoothgroup_mask & 0x1F) == (
-                            material_id & 0x1F
-                        ):
-                            # It's a packed material; extract the high bits as smoothing group.
-                            smoothgroup_mask = smoothgroup_mask >> 5
-
-                        # Ensure material_id is masked to surface index (0-31)
-                        if material_id > 31:
-                            material_id &= 0x1F
-
-                        face = MDLFace()
-                        face.v1 = v1
-                        face.v2 = v2
-                        face.v3 = v3
-                        face.smoothgroup = smoothgroup_mask
-                        face.t1 = t1
-                        face.t2 = t2
-                        face.t3 = t3
-                        face.material = material_id
-                        mesh.faces.append(face)
-
-                        self._task_count += 1
-                        if self._task_count >= self._task_total:
-                            self._task = ""
-                            # Populate face payload derived from mesh geometry (binary header data),
-                            # e.g. adjacency indices, plane coefficient, and per-face normal.
-                            _mdl_recompute_mesh_face_payload(mesh)
-                            break
-                    return True
-            # MDLOps ASCII commonly encodes faces as packed 4-tuples:
-            #   v1 v2 v3 packed_material
-            # and will often place TWO faces per line:
-            #   v1 v2 v3 packed_material v1 v2 v3 packed_material
-            #
-            # packed_material is a 32-bit integer (surface + smoothing in higher bits),
-            # e.g. values like 131072 are common and must NOT be treated as a vertex index.
-            #
-            # Reference: MDLOpsM.pm (faces export) + our binary face material packing helpers.
-            if len(parts) >= 4 and len(parts) % 4 == 0:
-                try:
-                    m0 = int(parts[3])
-                except ValueError:
-                    m0 = 0
-                if m0 > 0xFFFF:
-                    # Parse as groups of 4: (v1, v2, v3, packed_material)
-                    for base in range(0, len(parts), 4):
-                        v1 = int(parts[base + 0])
-                        v2 = int(parts[base + 1])
-                        v3 = int(parts[base + 2])
-                        packed_material = int(parts[base + 3])
-
-                        face = MDLFace()
-                        face.v1 = v1
-                        face.v2 = v2
-                        face.v3 = v3
-                        face.material = packed_material
-                        mesh.faces.append(face)
-
-                        self._task_count += 1
-                        if self._task_count >= self._task_total:
-                            self._task = ""
-                            break
-                    return True
-
-            # Unit test fixtures also allow compact forms:
-            # - "v1 v2 v3 material"
-            # - "v1 v2 v3 material smoothing"
-            if len(parts) == 4:
-                idx = self._task_count
-                v1 = int(parts[0])
-                v2 = int(parts[1])
-                v3 = int(parts[2])
-                surface_material = int(parts[3])
-                smoothing_group = 0
-            elif len(parts) == 5:
-                idx = self._task_count
-                v1 = int(parts[0])
-                v2 = int(parts[1])
-                v3 = int(parts[2])
-                surface_material = int(parts[3])
-                smoothing_group = int(parts[4])
-            elif len(parts) >= 6:
-                idx = int(parts[0])
-                v1 = int(parts[1])
-                v2 = int(parts[2])
-                v3 = int(parts[3])
-                surface_material = int(parts[4])
-                smoothing_group = int(parts[5])
-            else:
-                return False
-
-            # Check for magnusll format with extra tvert indices (parts[8], parts[9], parts[10])
-            # (ignored for now; we only care about topology/material for these tests)
-            if len(parts) >= 11:
-                pass
-
-            face = MDLFace()
-            face.v1 = v1
-            face.v2 = v2
-            face.v3 = v3
-            face.material = int(surface_material)
-            face.smoothgroup = int(smoothing_group)
-
-            mesh.faces.append(face)
-            self._task_count += 1
-            if self._task_count >= self._task_total:
-                self._task = ""
-            return True
-
-        elif self._task == "tverts":
-            # Parse texture vertex: "index u v"
-            parts = line.split()
-            # Unit test fixtures also allow compact form without an explicit index: "u v"
-            if len(parts) == 2:
-                idx = self._task_count
-                uv = Vector2(_parse_float_robust(parts[0]), _parse_float_robust(parts[1]))
-            elif len(parts) >= 3:
-                idx = int(parts[0])
-                uv = Vector2(_parse_float_robust(parts[1]), _parse_float_robust(parts[2]))
-            else:
-                return False
-
-            if mesh.vertex_uv1 is None:
-                mesh.vertex_uv1 = []
-            while len(mesh.vertex_uv1) <= idx:
-                mesh.vertex_uv1.append(Vector2(0, 0))
-            mesh.vertex_uv1[idx] = uv
-            mesh.vertex_uvs = mesh.vertex_uv1
-            self._task_count += 1
-            if self._task_count >= self._task_total:
-                self._task = ""
-            return True
-
-        elif self._task == "tverts1":
-            # Parse texture vertex for second texture: "index u v"
-            parts = line.split()
-            if len(parts) == 2:
-                idx = self._task_count
-                uv = Vector2(_parse_float_robust(parts[0]), _parse_float_robust(parts[1]))
-            elif len(parts) >= 3:
-                idx = int(parts[0])
-                uv = Vector2(_parse_float_robust(parts[1]), _parse_float_robust(parts[2]))
-            else:
-                return False
-
-            if mesh.vertex_uv2 is None:
-                mesh.vertex_uv2 = []
-            while len(mesh.vertex_uv2) <= idx:
-                mesh.vertex_uv2.append(Vector2(0, 0))
-            mesh.vertex_uv2[idx] = uv
-            self._task_count += 1
-            if self._task_count >= self._task_total:
-                self._task = ""
-            return True
-
-        return False
-
-    def _parse_skin_data(
-        self,
-        line: str,
-    ) -> bool:
-        """Parse skin mesh data (bones, weights)."""
-        if self._current_node is None:
-            return False
-
-        # Skin payload is optional; create it when we encounter skin-specific sections.
-        skin = self._current_node.skin
-        if skin is None:
-            if not re.match(r"^\s*(bones|weights)\s+(\S+)", line, re.IGNORECASE):
-                return False
-            skin = MDLSkin()
-            self._current_node.skin = skin
-            # Some toolchains omit bind-pose qbones/tbones in ASCII. Treat missing arrays as
-            # "implicitly identity" during comparison by leaving them empty (binary reader also
-            # commonly has them empty). The bones section below will still populate bone_indices.
-
-        # Parse bones declaration
-        if re.match(r"^\s*bones\s+(\S+)", line, re.IGNORECASE):
-            match = re.match(r"^\s*bones\s+(\S+)", line, re.IGNORECASE)
-            if match is not None:
-                self._task = "bones"
-                self._task_total = int(match.group(1))
-                self._task_count = 0
-                skin.qbones = []
-                skin.tbones = []
-                skin.bone_indices = ()
-            return True
-
-        # Parse weights declaration
-        if re.match(r"^\s*weights\s+(\S+)", line, re.IGNORECASE):
-            match = re.match(r"^\s*weights\s+(\S+)", line, re.IGNORECASE)
-            if match is not None:
-                self._task = "weights"
-                self._task_total = int(match.group(1))
-                self._task_count = 0
-                skin.vertex_bones = []
-            return True
-
-        # Parse bones data
-        if self._task == "bones":
-            # Format: "index bone_idx qx qy qz qw tx ty tz"
-            parts = line.split()
-            if len(parts) >= 9:
-                idx = int(parts[0])
-                bone_idx = int(parts[1])
-                qbone = Vector4(
-                    _parse_float_robust(parts[2]),
-                    _parse_float_robust(parts[3]),
-                    _parse_float_robust(parts[4]),
-                    _parse_float_robust(parts[5]),
-                )
-                tbone = Vector3(
-                    _parse_float_robust(parts[6]),
-                    _parse_float_robust(parts[7]),
-                    _parse_float_robust(parts[8]),
-                )
-
-                # Update bone_indices tuple (need to convert to list, modify, convert back)
-                # Update bone_indices list
-                bone_list: list[int] = list(skin.bone_indices)
-                while len(bone_list) <= idx:
-                    bone_list.append(0)
-                bone_list[idx] = bone_idx
-                skin.bone_indices = tuple(bone_list)
-                # Only append bind-pose transforms if the ASCII actually provides meaningful data.
-                # The writer currently emits identity/zero when we don't have bind-pose transforms,
-                # and the binary reader often leaves qbones/tbones empty; keep them empty for stability.
-                if not (qbone.x == 0.0 and qbone.y == 0.0 and qbone.z == 0.0 and qbone.w == 1.0):
-                    skin.qbones.append(qbone)
-                if not (tbone.x == 0.0 and tbone.y == 0.0 and tbone.z == 0.0):
-                    skin.tbones.append(tbone)
-                self._task_count += 1
-                if self._task_count >= self._task_total:
-                    self._task = ""
-                return True
-
-        # Parse weights data
-        if self._task == "weights":
-            # Format: "bone1 weight1 [bone2 weight2] [bone3 weight3] [bone4 weight4]"
-            parts = line.split()
-            if len(parts) >= 2:
-                # Parse bone-weight pairs *in encounter order*.
-                # Order is meaningful for roundtrip stability (MDX stores up to 4 indices/weights in order).
-                pairs: list[tuple[int, float]] = []
-                seen: set[int] = set()
-                i: int = 0
-                while i < len(parts) - 1:
-                    try:
-                        bone_idx = int(parts[i])
-                        weight = _parse_float_robust(parts[i + 1])
-                    except ValueError:
-                        break
-                    i += 2
-                    if bone_idx < 0 or weight == 0.0:
-                        continue
-                    if bone_idx in seen:
-                        continue
-                    seen.add(bone_idx)
-                    pairs.append((bone_idx, weight))
-
-                while len(pairs) < 4:
-                    pairs.append((-1, 0.0))
-                bone_vertex = MDLBoneVertex()
-                bone_vertex.vertex_indices = cast(
-                    "tuple[float, float, float, float]",
-                    tuple(float(pairs[i][0]) for i in range(4)),
-                )
-                bone_vertex.vertex_weights = cast(
-                    "tuple[float, float, float, float]",
-                    tuple(float(pairs[i][1]) for i in range(4)),
-                )
-
-                skin.vertex_bones.append(bone_vertex)
-                self._task_count += 1
-                if self._task_count >= self._task_total:
-                    self._task = ""
-                return True
-
-        return False
-
-    def _parse_dangly_data(
-        self,
-        line: str,
-    ) -> bool:
-        """Parse dangly mesh data (constraints)."""
-        if self._current_node is None:
-            return False
-
-        dangly = self._current_node.dangly
-        if dangly is None:
-            # Only create on a dangly-relevant header line.
-            if not re.match(r"^\s*constraints\s+(\S+)", line, re.IGNORECASE):
-                return False
-            dangly = MDLDangly()
-            self._current_node.dangly = dangly
-
-        # Parse constraints declaration
-        if re.match(r"^\s*constraints\s+(\S+)", line, re.IGNORECASE):
-            match = re.match(r"^\s*constraints\s+(\S+)", line, re.IGNORECASE)
-            if match is not None:
-                self._task = "constraints"
-                self._task_total = int(match.group(1))
-                self._task_count = 0
-                dangly.constraints = []
-            return True
-
-        # Parse constraints data
-        if self._task == "constraints":
-            # Format: "index type target target_node"
-            parts = line.split()
-            if len(parts) >= 4:
-                constraint = MDLConstraint()
-                constraint.type = int(parts[1])
-                constraint.target = int(parts[2])
-                constraint.target_node = int(parts[3])
-                dangly.constraints.append(constraint)
-                self._task_count += 1
-                if self._task_count >= self._task_total:
-                    self._task = ""
-                return True
-
-        return False
-
-    def _parse_light_data(
-        self,
-        line: str,
-    ) -> bool:
-        """Parse light node data."""
-        if self._current_node is None or self._current_node.light is None:
-            return False
-
-        light = self._current_node.light
-
-        # Controller-like properties often appear directly in ASCII.
-        # Support them even if the light object doesn't predefine attributes.
-        if re.match(r"^\s*color\s+(\S+)\s+(\S+)\s+(\S+)", line, re.IGNORECASE):
-            match = re.match(r"^\s*color\s+(\S+)\s+(\S+)\s+(\S+)", line, re.IGNORECASE)
-            if match is not None:
-                light.color = Color(
-                    float(match.group(1)), float(match.group(2)), float(match.group(3))
-                )
-            return True
-
-        if re.match(r"^\s*radius\s+(\S+)", line, re.IGNORECASE):
-            match = re.match(r"^\s*radius\s+(\S+)", line, re.IGNORECASE)
-            if match is not None:
-                light.radius = float(match.group(1))
-            return True
-
-        if re.match(r"^\s*multiplier\s+(\S+)", line, re.IGNORECASE):
-            match = re.match(r"^\s*multiplier\s+(\S+)", line, re.IGNORECASE)
-            if match is not None:
-                light.multiplier = float(match.group(1))
-            return True
-
-        if re.match(r"^\s*flareradius\s+(\S+)", line, re.IGNORECASE):
-            match = re.match(r"^\s*flareradius\s+(\S+)", line, re.IGNORECASE)
-            if match is not None:
-                light.flare_radius = float(match.group(1))
-            return True
-
-        if re.match(r"^\s*(lightpriority|priority)\s+(\S+)", line, re.IGNORECASE):
-            match = re.match(r"^\s*(lightpriority|priority)\s+(\S+)", line, re.IGNORECASE)
-            if match is not None:
-                light.light_priority = int(match.group(2))
-            return True
-
-        if re.match(r"^\s*ambientonly(\s+(\S+))?\s*$", line, re.IGNORECASE):
-            match = re.match(r"^\s*ambientonly(\s+(\S+))?\s*$", line, re.IGNORECASE)
-            if match is not None:
-                light.ambient_only = bool(int(match.group(2)) if match.group(2) is not None else 1)
-            return True
-
-        if re.match(r"^\s*shadow(\s+(\S+))?\s*$", line, re.IGNORECASE):
-            match = re.match(r"^\s*shadow(\s+(\S+))?\s*$", line, re.IGNORECASE)
-            if match is not None:
-                light.shadow = bool(int(match.group(2)) if match.group(2) is not None else 1)
-            return True
-
-        if re.match(r"^\s*flare(\s+(\S+))?\s*$", line, re.IGNORECASE):
-            match = re.match(r"^\s*flare(\s+(\S+))?\s*$", line, re.IGNORECASE)
-            if match is not None:
-                light.flare = bool(int(match.group(2)) if match.group(2) is not None else 1)
-            return True
-
-        if re.match(r"^\s*fadinglight(\s+(\S+))?\s*$", line, re.IGNORECASE):
-            match = re.match(r"^\s*fadinglight(\s+(\S+))?\s*$", line, re.IGNORECASE)
-            if match is not None:
-                light.fading_light = bool(int(match.group(2)) if match.group(2) is not None else 1)
-            return True
-
-        # Parse flare data arrays
-        if re.match(r"^\s*(flarepositions|flaresizes|texturenames)\s+(\S+)", line, re.IGNORECASE):
-            match = re.match(
-                r"^\s*(flarepositions|flaresizes|texturenames)\s+(\S+)", line, re.IGNORECASE
-            )
-            if match is not None:
-                task_name = match.group(1).lower()
-                count = int(match.group(2))
-                if count > 0:
-                    self._task = cast(
-                        "Literal['verts', 'faces', 'tverts', 'tverts1', 'lightmaptverts', 'bones', 'flarecolorshifts', 'weights', 'constraints', 'aabb', '']",
-                        task_name.lower(),
-                    )
-                    self._task_total = count
-                    self._task_count = 0
-                    if task_name == "flarepositions":
-                        light.flare_positions = []
-                    elif task_name == "flaresizes":
-                        light.flare_sizes = []
-                    elif task_name == "texturenames":
-                        light.flare_textures = []
-                return True
-
-        if re.match(r"^\s*flarecolorshifts\s+(\S+)", line, re.IGNORECASE):
-            match = re.match(r"^\s*flarecolorshifts\s+(\S+)", line, re.IGNORECASE)
-            if match is not None:
-                count = int(match.group(1))
-                if count > 0:
-                    self._task = "flarecolorshifts"
-                    self._task_total = count
-                    self._task_count = 0
-                    light.flare_color_shifts = []
-                return True
-
-        # Parse flare array data
-        if self._task == "flarepositions":
-            parts = line.split()
-            if parts:
-                light.flare_positions.append(_parse_float_robust(parts[0]))
-                self._task_count += 1
-                if self._task_count >= self._task_total:
-                    self._task = ""
-                return True
-
-        if self._task == "flaresizes":
-            parts = line.split()
-            if parts:
-                light.flare_sizes.append(_parse_float_robust(parts[0]))
-                self._task_count += 1
-                if self._task_count >= self._task_total:
-                    self._task = ""
-                return True
-
-        if self._task == "texturenames":
-            parts = line.split()
-            if parts:
-                light.flare_textures.append(parts[0])
-                self._task_count += 1
-                if self._task_count >= self._task_total:
-                    self._task = ""
-                return True
-
-        if self._task == "flarecolorshifts":
-            parts = line.split()
-            if len(parts) >= 3:
-                light.flare_color_shifts.append(
-                    (
-                        _parse_float_robust(parts[0]),
-                        _parse_float_robust(parts[1]),
-                        _parse_float_robust(parts[2]),
-                    )
-                )
-                self._task_count += 1
-                if self._task_count >= self._task_total:
-                    self._task = ""
-                return True
-
-        return False
-
-    def _parse_emitter_data(self, line: str) -> bool:
-        """Parse emitter node data."""
-        if not self._current_node or not self._current_node.emitter:
-            return False
-
-        emitter = self._current_node.emitter
-
-        if re.match(r"^\s*deadspace\s+(\S+)", line, re.IGNORECASE):
-            match = re.match(r"^\s*deadspace\s+(\S+)", line, re.IGNORECASE)
-            if match is not None:
-                emitter.dead_space = float(match.group(1))
-            return True
-        if re.match(r"^\s*blastradius\s+(\S+)", line, re.IGNORECASE):
-            match = re.match(r"^\s*blastradius\s+(\S+)", line, re.IGNORECASE)
-            if match is not None:
-                emitter.blast_radius = float(match.group(1))
-            return True
-        if re.match(r"^\s*blastlength\s+(\S+)", line, re.IGNORECASE):
-            match = re.match(r"^\s*blastlength\s+(\S+)", line, re.IGNORECASE)
-            if match is not None:
-                emitter.blast_length = float(match.group(1))
-            return True
-        if re.match(r"^\s*numbranches\s+(\S+)", line, re.IGNORECASE):
-            match = re.match(r"^\s*numbranches\s+(\S+)", line, re.IGNORECASE)
-            if match is not None:
-                emitter.branch_count = int(match.group(1))
-            return True
-        if re.match(r"^\s*controlptsmoothing\s+(\S+)", line, re.IGNORECASE):
-            match = re.match(r"^\s*controlptsmoothing\s+(\S+)", line, re.IGNORECASE)
-            if match is not None:
-                emitter.control_point_smoothing = float(match.group(1))
-            return True
-        if re.match(r"^\s*xgrid\s+(\S+)", line, re.IGNORECASE):
-            match = re.match(r"^\s*xgrid\s+(\S+)", line, re.IGNORECASE)
-            if match is not None:
-                emitter.x_grid = int(match.group(1))
-            return True
-        if re.match(r"^\s*ygrid\s+(\S+)", line, re.IGNORECASE):
-            match = re.match(r"^\s*ygrid\s+(\S+)", line, re.IGNORECASE)
-            if match is not None:
-                emitter.y_grid = int(match.group(1))
-            return True
-        if re.match(r"^\s*spawntype\s+(\S+)", line, re.IGNORECASE):
-            match = re.match(r"^\s*spawntype\s+(\S+)", line, re.IGNORECASE)
-            if match is not None:
-                emitter.spawn_type = int(match.group(1))
-            return True
-        if re.match(r"^\s*update\s+(\S+)", line, re.IGNORECASE):
-            match = re.match(r"^\s*update\s+(\S+)", line, re.IGNORECASE)
-            if match is not None:
-                emitter.update = match.group(1)
-            return True
-        if re.match(r"^\s*render\s+(\S+)", line, re.IGNORECASE):
-            match = re.match(r"^\s*render\s+(\S+)", line, re.IGNORECASE)
-            if match is not None:
-                emitter.render = match.group(1)
-            return True
-        if re.match(r"^\s*blend\s+(\S+)", line, re.IGNORECASE):
-            match = re.match(r"^\s*blend\s+(\S+)", line, re.IGNORECASE)
-            if match is not None:
-                emitter.blend = match.group(1)
-            return True
-        if re.match(r"^\s*texture\s+(\S+)", line, re.IGNORECASE):
-            match = re.match(r"^\s*texture\s+(\S+)", line, re.IGNORECASE)
-            if match is not None:
-                emitter.texture = match.group(1)
-            return True
-        if re.match(r"^\s*chunkname\s+(\S+)", line, re.IGNORECASE):
-            match = re.match(r"^\s*chunkname\s+(\S+)", line, re.IGNORECASE)
-            if match is not None:
-                emitter.chunk_name = match.group(1)
-            return True
-        if re.match(r"^\s*twosidedtex\s+(\S+)", line, re.IGNORECASE):
-            match = re.match(r"^\s*twosidedtex\s+(\S+)", line, re.IGNORECASE)
-            if match is not None:
-                emitter.two_sided_texture = int(match.group(1))
-            return True
-        if re.match(r"^\s*loop\s+(\S+)", line, re.IGNORECASE):
-            match = re.match(r"^\s*loop\s+(\S+)", line, re.IGNORECASE)
-            if match is not None:
-                emitter.loop = int(match.group(1))
-            return True
-        if re.match(r"^\s*renderorder\s+(\S+)", line, re.IGNORECASE):
-            match = re.match(r"^\s*renderorder\s+(\S+)", line, re.IGNORECASE)
-            if match is not None:
-                emitter.render_order = int(match.group(1))
-            return True
-        if re.match(r"^\s*m_bframeblending\s+(\S+)", line, re.IGNORECASE):
-            match = re.match(r"^\s*m_bframeblending\s+(\S+)", line, re.IGNORECASE)
-            if match is not None:
-                emitter.frame_blender = int(match.group(1))
-            return True
-        if re.match(r"^\s*m_sdepthtexturename\s+(\S+)", line, re.IGNORECASE):
-            match = re.match(r"^\s*m_sdepthtexturename\s+(\S+)", line, re.IGNORECASE)
-            if match is not None:
-                emitter.depth_texture = match.group(1)
-            return True
-
-        emitter_flags = {
-            "p2p": 0x0001,
-            "p2p_sel": 0x0002,
-            "affectedbywind": 0x0004,
-            "m_istinted": 0x0008,
-            "bounce": 0x0010,
-            "random": 0x0020,
-            "inherit": 0x0040,
-            "inheritvel": 0x0080,
-            "inherit_local": 0x0100,
-            "splat": 0x0200,
-            "inherit_part": 0x0400,
-            "depth_texture": 0x0800,
-            "emitterflag13": 0x1000,
-        }
-
-        for flag_name, flag_value in emitter_flags.items():
-            pattern = rf"^\s*{re.escape(flag_name)}\s+(\S+)"
-            if re.match(pattern, line, re.IGNORECASE):
-                match = re.match(pattern, line, re.IGNORECASE)
-                if match is not None:
-                    if int(match.group(1)) == 1:
-                        emitter.flags |= flag_value
-                return True
-
-        return False
-
-    def _parse_reference_data(
-        self,
-        line: str,
-    ) -> bool:
-        """Parse reference node data."""
-        if self._current_node is None or self._current_node.reference is None:
-            return False
-
-        reference = self._current_node.reference
-
-        if re.match(r"^\s*(refmodel|model)\s+(\S+)", line, re.IGNORECASE):
-            match = re.match(r"^\s*(refmodel|model)\s+(\S+)", line, re.IGNORECASE)
-            if match is not None:
-                reference.model = match.group(2)
-            return True
-
-        if re.match(r"^\s*reattachable(\s+(\S+))?\s*$", line, re.IGNORECASE):
-            match = re.match(r"^\s*reattachable(\s+(\S+))?\s*$", line, re.IGNORECASE)
-            if match is not None:
-                reference.reattachable = (
-                    (int(match.group(2)) != 0) if match.group(2) is not None else True
-                )
-            return True
-
-        return False
-
-    def _parse_saber_data(
-        self,
-        line: str,
-    ) -> bool:
-        """Parse saber node data."""
-        if self._current_node is None or self._current_node.saber is None:
-            return False
-
-        saber = self._current_node.saber
-
-        if re.match(r"^\s*sabertype\s+(\S+)", line, re.IGNORECASE):
-            match = re.match(r"^\s*sabertype\s+(\S+)", line, re.IGNORECASE)
-            if match is not None:
-                saber.saber_type = int(match.group(1))
-            return True
-
-        if re.match(r"^\s*sabercolor\s+(\S+)", line, re.IGNORECASE):
-            match = re.match(r"^\s*sabercolor\s+(\S+)", line, re.IGNORECASE)
-            if match is not None:
-                saber.saber_color = int(match.group(1))
-            return True
-
-        if re.match(r"^\s*(saberlength|length)\s+(\S+)", line, re.IGNORECASE):
-            match = re.match(r"^\s*(saberlength|length)\s+(\S+)", line, re.IGNORECASE)
-            if match is not None:
-                saber.saber_length = float(match.group(2))
-                # Convenience alias expected by tests/legacy code
-                # FIXME: should modify the tests/legacy code instead of this line
-                saber.__dict__["length"] = saber.saber_length
-            return True
-
-        if re.match(r"^\s*(saberwidth|width)\s+(\S+)", line, re.IGNORECASE):
-            match = re.match(r"^\s*(saberwidth|width)\s+(\S+)", line, re.IGNORECASE)
-            if match is not None:
-                saber.saber_width = float(match.group(2))
-                # Convenience alias expected by tests/legacy code
-                # FIXME: should modify the tests/legacy code instead of this line
-                saber.__dict__["width"] = saber.saber_width
-            return True
-
-        if re.match(r"^\s*saberflarecolor\s+(\S+)", line, re.IGNORECASE):
-            match = re.match(r"^\s*saberflarecolor\s+(\S+)", line, re.IGNORECASE)
-            if match is not None:
-                saber.saber_flare_color = int(match.group(1))
-            return True
-
-        if re.match(r"^\s*saberflareradius\s+(\S+)", line, re.IGNORECASE):
-            match = re.match(r"^\s*saberflareradius\s+(\S+)", line, re.IGNORECASE)
-            if match is not None:
-                saber.saber_flare_radius = float(match.group(1))
-            return True
-
-        return False
-
-    def _parse_walkmesh_data(
-        self,
-        line: str,
-    ) -> bool:
-        """Parse walkmesh/AABB node data."""
-        if self._current_node is None or self._current_node.aabb is None:
-            return False
-
-        walkmesh = self._current_node.aabb
-
-        # Parse aabb declaration (MDLOps: "aabb <count>" then one data line per AABB node).
-        match_aabb_decl = re.match(r"^\s*aabb\s+(\d+)\s*$", line, re.IGNORECASE)
-        if match_aabb_decl is not None:
-            self._task = "aabb"
-            self._task_total = int(match_aabb_decl.group(1))
-            self._task_count = 0
-            return True
-
-        # Parse aabb data
-        if self._task == "aabb":
-            # Format: "      bbox_min.x bbox_min.y bbox_min.z bbox_max.x bbox_max.y bbox_max.z face_index"
-            # MDLOps stores 7 values: 6 floats + 1 int
-            #
-            parts: list[str] = line.split()
-            if len(parts) >= 7:
-                # Parse 6 floats (bbox_min.xyz, bbox_max.xyz) + 1 int (face_index)
-                aabb_node: MDLAABBNode = MDLAABBNode(
-                    bbox_min=Vector3(
-                        _parse_float_robust(parts[0]),
-                        _parse_float_robust(parts[1]),
-                        _parse_float_robust(parts[2]),
-                    ),
-                    bbox_max=Vector3(
-                        _parse_float_robust(parts[3]),
-                        _parse_float_robust(parts[4]),
-                        _parse_float_robust(parts[5]),
-                    ),
-                    face_index=int(parts[6]),
-                    left_child_offset=0,  # Not stored in ASCII format
-                    right_child_offset=0,  # Not stored in ASCII format
-                    unknown=0,  # Not stored in ASCII format
-                )
-                walkmesh.aabbs.append(aabb_node)
-                self._task_count += 1
-                if self._task_count >= self._task_total:
-                    self._task = ""
-                return True
-
-        return False
-
-    def _build_node_hierarchy(self) -> None:
-        """Build the node hierarchy from parent relationships."""
-        if self._nodes is None:
-            return
-        assert self._mdl is not None, "MDL is not set"
-
-        # If the ASCII contains an explicit root node, prefer that as the real root.
-        # MDLOps uses a real node as the root of the geometry tree (no extra implicit container node).
-        # In many files/tests the root node is named "root" (not the same as `newmodel`).
-        #
-        # Heuristics:
-        # - If there is exactly one top-level node (parent_id == -1), that node is the root.
-        # - Otherwise, if there is a top-level node matching the model name, use that.
-        # - Otherwise, fall back to an implicit root container (legacy behavior).
-        explicit_root: MDLNode | None = None
-        top_level_nodes: list[MDLNode] = [n for n in self._nodes if n.parent_id == -1]
-        if (self._mdl.name or "").strip():
-            for n in top_level_nodes:
-                if n.name and n.name.lower() == self._mdl.name.lower():
-                    explicit_root = n
-                    break
-
-        # Many exported ASCIIs use a literal "root" node name. Treat that as an explicit root.
-        if explicit_root is None and len(top_level_nodes) == 1:
-            only = top_level_nodes[0]
-            if only.name and only.name.lower() == "root":
-                explicit_root = only
-
-        # Single top-level node not named "root" / model name: treat as child of implicit root (e.g. test dummy)
-        # Multiple top-level nodes also require the implicit container root so none of them are lost.
-        use_implicit_root = False
-        if (
-            explicit_root is None
-            and len(top_level_nodes) == 1
-            and top_level_nodes[0].name
-            and top_level_nodes[0].name.lower() not in ("root", (self._mdl.name or "").lower())
-        ) or (explicit_root is None and len(top_level_nodes) > 1):
-            use_implicit_root = True
-
-        if explicit_root is not None:
-            self._mdl.root = explicit_root
-            self._mdl.root.children = []
-        elif use_implicit_root:
-            self._mdl.root.children = list(top_level_nodes)
-        else:
-            self._mdl.root.children = []
-        for node in self._nodes:
-            node.children = []
-
-        # Build name-to-node lookup for hierarchy resolution
-        by_name: dict[str, MDLNode] = {n.name.lower(): n for n in self._nodes if n.name}
-
-        # If the ASCII never identifies a top-level node, fall back to the first parsed node.
-        if self._nodes and not use_implicit_root and explicit_root is None and not top_level_nodes:
-            self._mdl.root = self._nodes[0]
-            self._mdl.root.children = []
-
-        for node in self._nodes:
-            node.children = []
-
-        # Build name-to-node and node-to-index lookups for O(1) hierarchy resolution
-        by_name = {n.name.lower(): n for n in self._nodes if n.name}
-        node_to_index = {id(n): i for i, n in enumerate(self._nodes)}
-
-        # Build parent-child relationships (matching MDLOps: )
-        for node in self._nodes:
-            parent_node: MDLNode | None = None
-
-            # First try to resolve by stored parent name (handles cases where parent wasn't parsed yet)
-            parent_name: str | None = node.__dict__.get("_parent_name")
-            if isinstance(parent_name, str) and parent_name in by_name:
-                parent_node = by_name[parent_name]
-                node.parent_id = node_to_index.get(id(parent_node), -1)
-            elif node.parent_id >= 0 and node.parent_id < len(self._nodes):
-                # Fall back to index-based resolution
-                parent_node = self._nodes[node.parent_id]
-
-            if parent_node is not None:
-                # MDLOps adds child to parent's children array and increments childcount
-                #
-                parent_node.children.append(node)
-            elif node is not self._mdl.root:
-                # If parent not found and node is not the root, attach to root to ensure it's not lost.
-                # When use_implicit_root we already set root.children = top_level_nodes, so skip re-appending.
-                if not (use_implicit_root and node.parent_id == -1):
-                    self._mdl.root.children.append(node)
-
-        # Cleanup temporary parent tracking
-        for node in self._nodes:
-            node.__dict__.pop("_parent_name", None)
+        node: MDLNode,
+    ) -> str:  # sourcery skip: assign-if-exp, reintroduce-else
+        if node.skin:
+            return "skin"
+        if node.dangly:
+            return "dangly"
+        if node.saber:
+            return "saber"
+        if node.aabb:
+            return "aabb"
+        if node.emitter:
+            return "emitter"
+        if node.light:
+            return "light"
+        if node.reference:
+            return "reference"
+        if node.mesh:
+            return "trimesh"
+        return "dummy"

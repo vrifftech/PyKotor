@@ -1,4 +1,3 @@
-#!/usr/bin/env pwsh
 Set-Location -Path $PSScriptRoot
 
 $sevenZipPath = "C:\Program Files\7-Zip\7z.exe"  # Path to 7zip executable

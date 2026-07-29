@@ -1,26 +1,17 @@
-"""2DA modification algorithms for TSLPatcher/HoloPatcher.
-
-This module implements 2DA modification logic for applying patches from changes.ini files.
-Handles row/column additions, cell modifications, and memory token resolution.
-
-References:
-----------
-        Observed retail KotOR 2DA load/unload behavior.
-"""
-
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from enum import IntEnum
-from pathlib import PureWindowsPath
-from typing import TYPE_CHECKING, Mapping
+from typing import TYPE_CHECKING
 
-from loggerplus import RobustLogger
 from pykotor.resource.formats.twoda import bytes_2da, read_2da
 from pykotor.tslpatcher.mods.template import PatcherModifications
+from utility.error_handling import universal_simplify_exception
+from utility.logger_util import RobustRootLogger
+from utility.system.path import PureWindowsPath
 
 if TYPE_CHECKING:
-    from typing_extensions import Literal  # pyright: ignore[reportMissingModuleSource]
+    from typing_extensions import Literal
 
     from pykotor.common.misc import Game
     from pykotor.resource.formats.twoda import TwoDA, TwoDARow
@@ -42,30 +33,13 @@ class TargetType(IntEnum):
 
 
 class Target:
-    def __init__(
-        self,
-        target_type: TargetType,
-        value: str | int | RowValue2DAMemory | RowValueTLKMemory,
-    ):
+    def __init__(self, target_type: TargetType, value: str | int | RowValue2DAMemory | RowValueTLKMemory):
         self.target_type: TargetType = target_type
         self.value: str | int | RowValueTLKMemory | RowValue2DAMemory = value
 
         if target_type == TargetType.ROW_INDEX and isinstance(value, str):
             msg = "Target value must be int if type is row index."
             raise ValueError(msg)
-
-    def __str__(self):
-        value_str = str(self.value)
-        class_name = self.value.__class__.__name__
-        if class_name in ("RowValue2DAMemory", "RowValueTLKMemory"):
-            value_str = repr(self.value)
-        type_names = {
-            TargetType.ROW_INDEX: "row index",
-            TargetType.ROW_LABEL: "row label",
-            TargetType.LABEL_COLUMN: "label column",
-        }
-        type_name = type_names.get(self.target_type, self.target_type.name)
-        return f"Target({type_name}={value_str})"
 
     def __repr__(self):
         return f"{self.__class__.__name__}(target_type={self.target_type.__class__.__name__}.{self.target_type.name}, value={self.value!r})"
@@ -80,12 +54,9 @@ class Target:
         Args:
         ----
             twoda: TwoDA - The TwoDA to search
-            memory: PatcherMemory - The memory context
-
+            target_type: TargetType - The type of target to search for
         Returns:
-        -------
             TwoDARow | None - The matching row if found, else None
-
         Processing Logic:
         ----------------
             - Checks target_type and searches twoda accordingly
@@ -94,11 +65,10 @@ class Target:
             - For label column, checks for label column, then iterates rows to find match
             - Returns matching row or None.
         """
-        value: str | int = (
-            self.value.value(memory, twoda, None)
-            if isinstance(self.value, (RowValueTLKMemory, RowValue2DAMemory))
-            else self.value
-        )
+        if isinstance(self.value, (RowValueTLKMemory, RowValue2DAMemory)):
+            value = self.value.value(memory, twoda, None)
+        else:
+            value = self.value
         source_row: TwoDARow | None = None
         if self.target_type == TargetType.ROW_INDEX:
             source_row = twoda.get_row(int(value))
@@ -120,30 +90,13 @@ class Target:
 
 # region Value Returners
 class RowValue(ABC):
-    def __str__(self):
-        return f"{self.__class__.__name__}()"
-
-    def __repr__(self):
-        return f"{self.__class__.__name__}()"
-
     @abstractmethod
-    def value(self, memory: PatcherMemory, twoda: TwoDA, row: TwoDARow | None) -> str:
-        """Returns the value of the row.
-
-        Args:
-        ----
-            memory: PatcherMemory - The memory context
-            twoda: TwoDA - The TwoDA to search
-            row: TwoDARow | None - The row to search
-        """
+    def value(self, memory: PatcherMemory, twoda: TwoDA, row: TwoDARow | None) -> str: ...
 
 
 class RowValueConstant(RowValue):
     def __init__(self, string: str):
         self.string: str = string
-
-    def __str__(self):
-        return f"Constant('{self.string}')"
 
     def __repr__(self):
         return f"{self.__class__.__name__}(string='{self.string}')"
@@ -155,9 +108,6 @@ class RowValueConstant(RowValue):
 class RowValue2DAMemory(RowValue):
     def __init__(self, token_id: int):
         self.token_id: int = token_id
-
-    def __str__(self):
-        return f"2DAMEMORY{self.token_id}"
 
     def __repr__(self):
         return f"{self.__class__.__name__}(token_id={self.token_id})"
@@ -176,9 +126,6 @@ class RowValue2DAMemory(RowValue):
 class RowValueTLKMemory(RowValue):
     def __init__(self, token_id: int):
         self.token_id: int = token_id
-
-    def __str__(self):
-        return f"StrRef{self.token_id}"
 
     def __repr__(self):
         return f"{self.__class__.__name__}(token_id={self.token_id})"
@@ -200,11 +147,6 @@ class RowValueHigh(RowValue):
 
     def __init__(self, column: str | None):
         self.column: str | None = column
-
-    def __str__(self):
-        if self.column is None:
-            return "High(label_max)"
-        return f"High(column_max('{self.column}'))"
 
     def __repr__(self):
         return f"{self.__class__.__name__}(column='{self.column}')"
@@ -231,49 +173,27 @@ class RowValueHigh(RowValue):
 
 
 class RowValueRowIndex(RowValue):
-    """The row index of the row."""
-
     def __init__(self): ...
-
-    def __str__(self):
-        return "RowIndex()"
-
-    def __repr__(self):
-        return f"{self.__class__.__name__}()"
 
     def value(self, memory: PatcherMemory, twoda: TwoDA, row: TwoDARow | None) -> str:
         return "" if row is None else str(twoda.row_index(row))
 
 
 class RowValueRowLabel(RowValue):
-    """The row label of the row."""
-
     def __init__(self): ...
-
-    def __str__(self):
-        return "RowLabel()"
-
-    def __repr__(self):
-        return f"{self.__class__.__name__}()"
 
     def value(self, memory: PatcherMemory, twoda: TwoDA, row: TwoDARow | None) -> str:
         return "" if row is None else row.label()
 
 
 class RowValueRowCell(RowValue):
-    """The value of a cell in the row."""
-
     def __init__(self, column: str):
         self.column: str = column
-
-    def __str__(self):
-        return f"RowCell('{self.column}')"
 
     def __repr__(self):
         return f"{self.__class__.__name__}(column='{self.column}')"
 
     def value(self, memory: PatcherMemory, twoda: TwoDA, row: TwoDARow | None) -> str:
-        """Returns the value of a cell in the row."""
         return "" if row is None else row.get_string(self.column)
 
 
@@ -282,12 +202,6 @@ class RowValueRowCell(RowValue):
 
 # region Modify 2DA
 class Modify2DA(ABC):
-    def __str__(self):
-        return f"{self.__class__.__name__}()"
-
-    def __repr__(self):
-        return f"{self.__class__.__name__}()"
-
     @abstractmethod
     def __init__(self): ...
 
@@ -323,13 +237,13 @@ class ChangeRow2DA(Modify2DA):
         self,
         identifier: str,
         target: Target,
-        cells: Mapping[str, RowValue],
+        cells: dict[str, RowValue],
         store_2da: dict[int, RowValue] | None = None,
         store_tlk: dict[int, RowValue] | None = None,
     ):
         self.identifier: str = identifier
         self.target: Target = target
-        self.cells: dict[str, RowValue] = dict(cells)
+        self.cells: dict[str, RowValue] = cells
         self.store_2da: dict[int, RowValue] = {} if store_2da is None else store_2da
         self.store_tlk: dict[int, RowValue] = {} if store_tlk is None else store_tlk
 
@@ -343,19 +257,6 @@ class ChangeRow2DA(Modify2DA):
         )
 
     def apply(self, twoda: TwoDA, memory: PatcherMemory):
-        """Applies a ChangeRow patch to a TwoDA.
-
-        Args:
-        ----
-            twoda: TwoDA - The TwoDA to apply the patch to
-            memory: PatcherMemory - The memory context
-
-        Processing Logic:
-        ----------------
-            - Searches for the target row
-            - Unpacks the cells and applies them to the target row
-            - Stores any 2DA or TLK values in the memory context.
-        """
         source_row: TwoDARow | None = self.target.search(twoda, memory)
 
         if source_row is None:
@@ -380,19 +281,19 @@ class AddRow2DA(Modify2DA):
         modifiers: For the row, sets a cell under column KEY to have the text VALUE.
     """
 
-    def __init__(  # noqa: PLR0913
+    def __init__(
         self,
         identifier: str,
         exclusive_column: str | None,
         row_label: str | None,
-        cells: Mapping[str, RowValue],
+        cells: dict[str, RowValue],
         store_2da: dict[int, RowValue] | None = None,
         store_tlk: dict[int, RowValue] | None = None,
     ):
         self.identifier: str = identifier
         self.exclusive_column: str | None = exclusive_column
         self.row_label: str | None = row_label
-        self.cells: dict[str, RowValue] = dict(cells)
+        self.cells: dict[str, RowValue] = cells
         self.store_2da: dict[int, RowValue] = {} if store_2da is None else store_2da
         self.store_tlk: dict[int, RowValue] = {} if store_tlk is None else store_tlk
 
@@ -465,7 +366,7 @@ class CopyRow2DA(Modify2DA):
         modifiers: For the row, sets a cell under column KEY to have the text VALUE.
     """
 
-    def __init__(  # noqa: PLR0913
+    def __init__(
         self,
         identifier: str,
         target: Target,
@@ -521,7 +422,7 @@ class CopyRow2DA(Modify2DA):
                 msg = f"Exclusive column {self.exclusive_column} does not exists"
                 raise WarningError(msg)
 
-            exclusive_value: str = self.cells[self.exclusive_column].value(
+            exclusive_value = self.cells[self.exclusive_column].value(
                 memory,
                 twoda,
                 None,
@@ -532,12 +433,7 @@ class CopyRow2DA(Modify2DA):
                 target_row = row
 
         if target_row is not None:
-            # If the row already exists (based on exclusive_column) then we copy all columns from source first
-            # Copy all column values from source row to target row
-            for header in twoda.get_headers():
-                source_value = source_row.get_string(header)
-                target_row.set_string(header, source_value)
-            # Then update with the cells dictionary (which will override the copied values)
+            # If the row already exists (based on exclusive_column) then we update the cells
             cells = self._unpack(self.cells, memory, twoda, target_row)
             target_row.update_values(cells)
             self._row = target_row
@@ -556,10 +452,7 @@ class CopyRow2DA(Modify2DA):
 
 
 class AddColumn2DA(Modify2DA):
-    """Adds a column.
-
-    The new cells are either given a default value or can be given a
-    value based on what the row index or row label is.
+    """Adds a column. The new cells are either given a default value or can be given a value based on what the row index or row label is.
 
     Attributes:
     ----------
@@ -570,7 +463,7 @@ class AddColumn2DA(Modify2DA):
         label_insert: For the new column, if the row label is KEY then set cell to VALUE.
     """
 
-    def __init__(  # noqa: PLR0913
+    def __init__(
         self,
         identifier: str,
         header: str,
@@ -615,7 +508,7 @@ class AddColumn2DA(Modify2DA):
 
         for row_index, row_value in self.index_insert.items():
             index_str: str = row_value.value(memory, twoda, None)
-            this_row: TwoDARow | None = twoda.get_row(row_index)
+            this_row = twoda.get_row(row_index)
             if this_row:
                 this_row.set_string(self.header, index_str)
             else:
@@ -624,7 +517,7 @@ class AddColumn2DA(Modify2DA):
 
         for row_label, row_value in self.label_insert.items():
             label_str: str = row_value.value(memory, twoda, None)
-            this_row = twoda.find_row(row_label)
+            this_row: TwoDARow | None = twoda.find_row(row_label)
             if this_row:
                 this_row.set_string(self.header, label_str)
             else:
@@ -632,15 +525,12 @@ class AddColumn2DA(Modify2DA):
                 raise WarningError(msg)
 
         for token_id, value in self.store_2da.items():
+            # TODO: Exception handling
             if value.startswith("I"):
-                cell: str = twoda.get_row(int(value[1:])).get_string(self.header)
+                cell = twoda.get_row(int(value[1:])).get_string(self.header)
                 memory.memory_2da[token_id] = cell
             elif value.startswith("L"):
-                row = twoda.find_row(value[1:])
-                if row is None:
-                    msg = f"Could not find row {value[1:]} in {self.header}"
-                    raise WarningError(msg)
-                cell = row.get_string(self.header)
+                cell = twoda.find_row(value[1:]).get_string(self.header)
                 memory.memory_2da[token_id] = cell
             else:
                 msg = f"store_2da dict has an invalid value at {token_id}: '{value}'"
@@ -651,56 +541,37 @@ class AddColumn2DA(Modify2DA):
 
 
 class Modifications2DA(PatcherModifications):
-    hardcapped_row_limits = {
-        "placeables.2da": 256,
-        "upcrystals.2da": 256,
-        "upgrade.2da": 32,
-    }
-
     def __init__(self, filename: str):
         super().__init__(filename)
         self.modifiers: list[Modify2DA] = []
 
     def patch_resource(
         self,
-        source: SOURCE_TYPES,
+        source_2da: SOURCE_TYPES,
         memory: PatcherMemory,
         logger: PatchLogger,
         game: Game,
     ) -> bytes | Literal[True]:
-        twoda: TwoDA = read_2da(source)
+        twoda: TwoDA = read_2da(source_2da)
         self.apply(twoda, memory, logger, game)
         return bytes_2da(twoda)
 
     def apply(
         self,
-        mutable_data: TwoDA,
+        twoda: TwoDA,
         memory: PatcherMemory,
         logger: PatchLogger,
         game: Game,
     ):
         for row in self.modifiers:
             try:
-                row.apply(mutable_data, memory)
+                row.apply(twoda, memory)
             except Exception as e:  # noqa: PERF203, BLE001
-                msg = f"{(e.__class__.__name__, str(e))} when patching the file '{self.saveas}'"
-                RobustLogger().critical(str(e), exc_info=e)
+                msg = f"{universal_simplify_exception(e)} when patching the file '{self.saveas}'"
+                RobustRootLogger().critical(str(e), exc_info=e)
                 if isinstance(e, WarningError):
                     logger.add_warning(msg)
-                    RobustLogger().debug(msg, exc_info=True)
+                    RobustRootLogger().debug(msg, exc_info=True)
                 else:
                     logger.add_error(msg)
                     break
-        if game.is_k2():  # k2 doesn't have hard limits?
-            return
-
-        # Exceeding row count maximums will break the game.
-        twoda_row_limit = self.hardcapped_row_limits.get(self.saveas.lower())
-        if twoda_row_limit is None:
-            return
-        cur_row_count = len(mutable_data._rows)
-        rows_added = cur_row_count - twoda_row_limit
-        if cur_row_count > twoda_row_limit:
-            raise ValueError(
-                f"{self.saveas} has a max row count of {twoda_row_limit}. Adding more will break the game. This mod attempted to add {rows_added} rows and have not been applied.",
-            )

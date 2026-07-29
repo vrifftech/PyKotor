@@ -1,5 +1,3 @@
-"""UTS (sound) generic: GFF-based sound object definitions and audio settings."""
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -18,75 +16,41 @@ if TYPE_CHECKING:
 class UTS:
     """Stores sound data.
 
-    UTS files are GFF-based format files that store sound object definitions including
-    audio settings, positioning, looping, and volume controls.
-
-    Sound objects in modules are GFF-backed: tag, ``TemplateResRef``, activation and playback flags
-    (active, continuous, looping, positional, random pick/position), distances, intervals, pitch
-    and volume, optional ``Sounds`` list entries, and optional position fields on instances in GIT.
-    Some fields (e.g. localized name, hours, times) appear in on-disk templates but are not relied on
-    for runtime behavior in the same way as the core audio flags. Observed retail KotOR I and TSL
-    share this layout; engine loader symbols and RVAs are in ``wiki/reverse_engineering_findings.md``.
-
-    Note: ``GFFContent.UTS``.
-
     Attributes:
     ----------
-        resref: "TemplateResRef" field. The resource reference for this sound template.
+        tag: "Tag" field.
+        resref: "TemplateResRef" field.
+        active: "Active" field.
+        continuous: "Continuous" field.
+        looping: "Looping" field.
+        positional: "Positional" field.
+        random_position: "RandomPosition" field.
+        random_pick: "Random" field.
+        elevation: "Elevation" field.
+        max_distance: "MaxDistance" field.
+        min_distance: "MinDistance" field.
+        random_range_x: "RandomRangeX" field.
+        random_range_y: "RandomRangeY" field.
+        interval: "Interval" field.
+        interval_variation: "IntervalVrtn" field.
+        pitch_variation: "PitchVariation" field.
+        priority: "Priority" field.
+        volume: "Volume" field.
+        volume_variation: "VolumeVrtn" field.
+        comment: "Comment" field.
 
-        tag: "Tag" field. Tag identifier for this sound.
+        palette_id: "PaletteID" field. Used in toolset only.
 
-        active: "Active" field. Whether sound is active.
-
-        continuous: "Continuous" field. Whether sound plays continuously.
-
-        looping: "Looping" field. Whether sound loops.
-
-        positional: "Positional" field. Whether sound is positional (3D).
-
-        random_position: "RandomPosition" field. Whether sound position is randomized.
-
-        random_pick: "Random" field. Whether sound is randomly selected from list.
-
-        elevation: "Elevation" field. Elevation offset for positional sounds.
-
-        max_distance: "MaxDistance" field. Maximum distance for positional sounds.
-
-        min_distance: "MinDistance" field. Minimum distance for positional sounds.
-
-        random_range_x: "RandomRangeX" field. X-axis range for random positioning.
-
-        random_range_y: "RandomRangeY" field. Y-axis range for random positioning.
-
-        interval: "Interval" field. Time interval between sound plays (in seconds).
-
-        interval_variation: "IntervalVrtn" field. Variation in interval timing.
-
-        pitch_variation: "PitchVariation" field. Pitch variation amount.
-
-        priority: "Priority" field. Sound priority level.
-
-        volume: "Volume" field. Volume level (0-255).
-
-        volume_variation: "VolumeVrtn" field. Volume variation amount.
-
-        sounds: List of ResRef objects representing sound files to play.
-
-        comment: "Comment" field. Developer comment.
-
-        palette_id: "PaletteID" field. Palette identifier. Used in toolset only.
-
-        name: "LocName" field. Localized name. Not used by the game engine.
-
-        hours: "Hours" field. Hour restriction. Not used by the game engine.
-
-        times: "Times" field. Time restriction. Not used by the game engine.
-            Note: PyKotor comment notes some files have this as uint8, others as uint32
+        name: "LocName" field. Not used by the game engine.
+        hours: "Hours" field. Not used by the game engine.
+        times: "Times" field. Not used by the game engine.
     """
 
     BINARY_TYPE = ResourceType.UTS
 
-    def __init__(self):
+    def __init__(
+        self,
+    ):
         self.resref: ResRef = ResRef.from_blank()
         self.tag: str = ""
         self.comment: str = ""
@@ -124,14 +88,7 @@ class UTS:
 
 def construct_uts(
     gff: GFF,
-    game: Game = Game.K2,
-    *,
-    use_deprecated: bool = True,
 ) -> UTS:
-    """Constructs a UTS object from a GFF structure.
-
-    Missing fields use blank tag/ResRef, false flags, and zero floats/integers (observed retail).
-    """
     uts = UTS()
 
     root: GFFStruct = gff.root
@@ -206,9 +163,7 @@ def dismantle_uts(
     if use_deprecated:
         root.set_locstring("LocName", uts.name)
         root.set_uint32("Hours", uts.hours)
-        root.set_uint8(
-            "Times", uts.times
-        )  # TODO(th3w1zard1): double check this. Some files have this field as uint8 others as uint32?
+        root.set_uint8("Times", uts.times)  # TODO: double check this. Some files have this field as uint8 others as uint32?
 
     return gff
 
@@ -218,7 +173,7 @@ def read_uts(
     offset: int = 0,
     size: int | None = None,
 ) -> UTS:
-    gff: GFF = read_gff(source, offset, size)
+    gff = read_gff(source, offset, size)
     return construct_uts(gff)
 
 
@@ -230,7 +185,7 @@ def write_uts(
     *,
     use_deprecated: bool = True,
 ):
-    gff: GFF = dismantle_uts(uts, game, use_deprecated=use_deprecated)
+    gff = dismantle_uts(uts, game, use_deprecated=use_deprecated)
     write_gff(gff, target, file_format)
 
 
@@ -241,5 +196,5 @@ def bytes_uts(
     *,
     use_deprecated: bool = True,
 ) -> bytes:
-    gff: GFF = dismantle_uts(uts, game, use_deprecated=use_deprecated)
+    gff = dismantle_uts(uts, game, use_deprecated=use_deprecated)
     return bytes_gff(gff, file_format)

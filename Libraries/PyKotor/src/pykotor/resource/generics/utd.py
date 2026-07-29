@@ -1,5 +1,3 @@
-"""UTD (door) generic: GFF-based door definitions and lock/unlock mechanics."""
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -16,21 +14,73 @@ if TYPE_CHECKING:
 
 
 class UTD:
-    """Stores door data from the on-disk UTD GFF template.
+    """Stores door data.
 
-    Fields cover locks, HP, scripts, traps, appearance, localized strings, and KotOR II-only
-    modifiers. Defaults match observed retail when a field is absent. The former long class
-    docstring (load-path references, GFF field walkthrough, engine-facing type names) is archived
-    verbatim in ``wiki/reverse_engineering_findings_generics_utd_class_docstring_pre_scrub.md``.
-    See ``wiki/reverse_engineering_findings.md`` (section *resource/generics/utd.py*) and
-    ``wiki/GFF-UTD.md`` for format-oriented documentation.
+    Attributes:
+    ----------
+        tag: "Tag" field.
+        name: "LocName" field.
+        resref: "TemplateResRef" field.
+        auto_remove_key: "AutoRemoveKey" field.
+        conversation: "Conversation" field.
+        faction_id: "Faction" field.
+        plot: "Plot" field.
+        min1_hp: "Min1HP" field.
+        key_required: "KeyRequired" field.
+        lockable: "Lockable" field.
+        locked: "Locked" field.
+        unlock_dc: "OpenLockDC" field.
+        key_name: "KeyName" field.
+        animation_state: "AnimationState" field.
+        maximum_hp: "HP" field.
+        current_hp: "CurrentHP" field.
+        hardness: "Hardness" field.
+        fortitude: "Fort" field.
+        on_closed: "OnClosed" field.
+        on_damaged: "OnDamaged" field.
+        on_death: "OnDeath" field.
+        on_heartbeat: "OnHeartbeat" field.
+        on_lock: "OnLock" field.
+        on_melee: "OnMeleeAttacked" field.
+        on_open: "OnOpen" field.
+        on_unlock: "OnUnlock" field.
+        on_user_defined: "OnUserDefined" field.
+        appearance_id: "GenericType" field.
+        static: "Static" field.
+        on_click: "OnClick" field.
+        on_open_failed: "OnFailToOpen" field.
+        comment: "Comment" field.
 
-    Note: ``GFFContent.UTD``.
+        unlock_diff: "OpenLockDiff" field. KotOR 2 Only.
+        unlock_diff_mod: "OpenLockDiffMod" field. KotOR 2 Only.
+        open_state: "OpenState" field. KotOR 2 Only.
+        not_blastable: "NotBlastable" field. KotOR 2 Only.
+
+        palette_id: "PaletteID" field. Used in toolset only.
+
+        description: "Description" field. Not used by the game engine.
+        lock_dc: "CloseLockDC" field. Not used by the game engine.
+        interruptable: "Interruptable" field. Not used by the game engine.
+        portrait_id: "PortraitId" field. Not used by the game engine.
+        trap_detectable: "TrapDetectable" field. Not used by the game engine.
+        trap_detect_dc: "TrapDetectDC" field. Not used by the game engine.
+        trap_disarmable: "TrapDisarmable" field. Not used by the game engine.
+        trap_disarm_dc: "DisarmDC" field. Not used by the game engine.
+        trap_flag: "TrapFlag" field. Not used by the game engine.
+        trap_one_shot: "TrapOneShot" field. Not used by the game engine.
+        trap_type: "TrapType" field. Not used by the game engine.
+        unused_appearance: "Appearance" field. Not used by the game engine.
+        reflex: "Ref" field. Not used by the game engine.
+        willpower: "Will" field. Not used by the game engine.
+        on_disarm: "OnDisarm" field. Not used by the game engine.
+        on_power: "OnSpellCastAt" field. Not used by the game engine.
+        on_trap_triggered: "OnTrapTriggered" field. Not used by the game engine.
+        loadscreen_id: "LoadScreenID" field. Not used by the game engine.
     """
 
     BINARY_TYPE = ResourceType.UTD
 
-    def __init__(  # noqa: PLR0915
+    def __init__(
         self,
     ):
         self.resref: ResRef = ResRef.from_blank()
@@ -121,18 +171,12 @@ def utd_version(
 def construct_utd(
     gff: GFF,
 ) -> UTD:
-    """Build UTD from GFF. Defaults when field missing match engine ReadField* (template load: 0/""/blank ResRef). Omit OK.
-
-    Reference: CSWSDoor::LoadDoor @  (/K1/k1_win_gog_swkotor.exe: 0x0058a1f0, TSL: 0x006531e0 legacy PC / 0x00765620 Aspyr).
-    """
     utd = UTD()
 
     root = gff.root
-    # Identity: Tag/LocName/TemplateResRef "" or empty. K1 LoadDoor @ 0x0058a1f0, TSL @ 0x00765620. Omit OK.
     utd.tag = root.acquire("Tag", "")
     utd.name = root.acquire("LocName", LocalizedString.from_invalid())
     utd.resref = root.acquire("TemplateResRef", ResRef.from_blank())
-    # Lock/key: AutoRemoveKey, KeyRequired, Lockable, Locked, OpenLockDC 0; KeyName "". K1/TSL ReadFieldBYTE/CExoString. Omit OK.
     utd.auto_remove_key = bool(root.acquire("AutoRemoveKey", 0))
     utd.conversation = root.acquire("Conversation", ResRef.from_blank())
     utd.faction_id = root.acquire("Faction", 0)
@@ -144,12 +188,10 @@ def construct_utd(
     utd.unlock_dc = root.acquire("OpenLockDC", 0)
     utd.key_name = root.acquire("KeyName", "")
     utd.animation_state = root.acquire("AnimationState", 0)
-    # HP/stats: HP, CurrentHP, Hardness, Fort 0. K1 LoadDoor @ 0x0058a1f0, TSL @ 0x00765620 ReadFieldSHORT/BYTE. Omit OK.
     utd.maximum_hp = root.acquire("HP", 0)
     utd.current_hp = root.acquire("CurrentHP", 0)
     utd.hardness = root.acquire("Hardness", 0)
     utd.fortitude = root.acquire("Fort", 0)
-    # Scripts: OnClosed/OnDamaged/OnDeath/OnHeartbeat etc. ResRef "" when missing. K1/TSL ReadFieldCResRef. Omit OK.
     utd.on_closed = root.acquire("OnClosed", ResRef.from_blank())
     utd.on_damaged = root.acquire("OnDamaged", ResRef.from_blank())
     utd.on_death = root.acquire("OnDeath", ResRef.from_blank())
@@ -197,14 +239,9 @@ def dismantle_utd(
     *,
     use_deprecated: bool = True,
 ) -> GFF:
-    """Build GFF from UTD. Written fields match engine; omit = engine default.
-
-    Reference: CSWSDoor::LoadDoor @  (/K1/k1_win_gog_swkotor.exe: 0x0058a1f0, TSL: 0x006531e0 legacy PC / 0x00765620 Aspyr).
-    """
     gff = GFF(GFFContent.UTD)
 
     root: GFFStruct = gff.root
-    # Root fields: same defaults as engine when missing (0, "", blank ResRef). K1 LoadDoor @ 0x0058a1f0, TSL @ 0x00765620. Omit OK.
     root.set_string("Tag", utd.tag)
     root.set_locstring("LocName", utd.name)
     root.set_resref("TemplateResRef", utd.resref)

@@ -1,8 +1,6 @@
-"""Capsule (ERF/RIM) abstraction: LazyCapsule and in-memory load/save for archives."""
-
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 from pykotor.common.stream import BinaryReader
 from pykotor.extract.file import FileResource, ResourceIdentifier, ResourceResult
@@ -10,14 +8,12 @@ from pykotor.resource.formats.erf import ERF, ERFType, write_erf
 from pykotor.resource.formats.rim import RIM, write_rim
 from pykotor.resource.type import ResourceType
 from pykotor.tools.misc import is_any_erf_type_file, is_capsule_file, is_rim_file
-from pykotor.tools.path import CaseAwarePath
+from utility.system.path import Path
 
 if TYPE_CHECKING:
     import os
 
     from collections.abc import Iterator
-
-    from typing_extensions import Self  # pyright: ignore[reportMissingModuleSource]
 
 
 class LazyCapsule(FileResource):
@@ -25,9 +21,7 @@ class LazyCapsule(FileResource):
 
     Resource data is not actually stored in memory by default but is instead loaded up on demand with the
     LazyCapsule.resource() method. Use the Capsule, RIM, or ERF classes if you want to solely work with capsules in memory.
-
     """
-
     def __init__(
         self,
         path: os.PathLike | str,
@@ -55,21 +49,25 @@ class LazyCapsule(FileResource):
             - Reload resources from file.
         """
         ident = ResourceIdentifier.from_path(path)
-        c_filepath = CaseAwarePath(path)
+        c_filepath = Path.pathify(path)
         if not is_capsule_file(c_filepath):
             msg = f"Invalid file extension in capsule filepath '{c_filepath}'."
             raise ValueError(msg)
-        if create_nonexisting and not c_filepath.is_file():
+        if create_nonexisting and not c_filepath.safe_isfile():
             if is_rim_file(c_filepath):
                 write_rim(RIM(), c_filepath)
             elif is_any_erf_type_file(c_filepath):
                 write_erf(ERF(ERFType.from_extension(c_filepath.suffix)), c_filepath)
         super().__init__(*ident.unpack(), c_filepath.stat().st_size, 0x0, c_filepath)
 
-    def __iter__(self) -> Iterator[FileResource]:
+    def __iter__(
+        self,
+    ) -> Iterator[FileResource]:
         yield from self.resources()
 
-    def __len__(self):
+    def __len__(
+        self,
+    ):
         return len(self.resources())
 
     def resource(
@@ -169,7 +167,7 @@ class LazyCapsule(FileResource):
             next(
                 (resource for resource in self.resources() if resource == query),
                 False,
-            ),
+            )
         )
 
     def info(
@@ -197,7 +195,9 @@ class LazyCapsule(FileResource):
         query = ResourceIdentifier(resref, restype)
         return next((resource for resource in self.resources() if resource == query), None)
 
-    def resources(self) -> list[FileResource]:
+    def resources(
+        self,
+    ) -> list[FileResource]:
         """Get the list of FileResources from the ERF/RIM file.
 
         Args:
@@ -211,15 +211,10 @@ class LazyCapsule(FileResource):
         Processing Logic:
         ----------------
             - Check if capsule exists on disk and print error if not
-            - Check if file is empty (0 bytes) and return empty list if so
             - Open file and read header
             - Call appropriate reload method based on file type
             - Raise error if unknown file type.
         """
-        # Check if file is empty (0 bytes) - empty files cannot be valid capsules
-        if self._filepath.exists() and self._filepath.stat().st_size == 0:
-            return []
-
         with BinaryReader.from_file(self._filepath) as reader:
             file_type = reader.read_string(4)
             reader.skip(4)  # file version
@@ -231,7 +226,7 @@ class LazyCapsule(FileResource):
             else:
                 msg = f"File '{self._filepath}' must be a ERF/MOD/SAV/RIM capsule, '{self._filepath.suffix}' is not implemented."
                 raise NotImplementedError(msg)
-        # get_root_logger().debug("%s.resources() call, found %s total resources inside %s", self.__class__.__name__, len(resources), self._filepath)
+        #get_root_logger().debug("%s.resources() call, found %s total resources inside %s", self.__class__.__name__, len(resources), self._filepath)
         return resources
 
     def add(
@@ -259,11 +254,13 @@ class LazyCapsule(FileResource):
             - Calls set_data to add the resource
             - Writes the container back to the file.
         """
-
         def _add_to(container: RIM | ERF):
             container.set_data(resname, restype, resdata)
             for resource in self.resources():
                 container.set_data(resource.resname(), resource.restype(), resource.data())
+            self._hash_task_running = True
+            self._file_hash = ""
+            self._hash_task_running = False
 
         if is_rim_file(self._filepath.name):
             container = RIM()
@@ -300,12 +297,14 @@ class LazyCapsule(FileResource):
             - Calls ERF.remove or RIM.remove
             - Writes the container back to the file.
         """
-
         def _remove_from(container: RIM | ERF):
             for resource in self.resources():
                 if resource.resname().lower() == resname.lower() and resource.restype() is restype:
                     continue
                 container.set_data(resource.resname(), resource.restype(), resource.data())
+            self._hash_task_running = True
+            self._file_hash = ""
+            self._hash_task_running = False
 
         if is_rim_file(self._filepath.name):
             container = RIM()
@@ -333,7 +332,9 @@ class LazyCapsule(FileResource):
 
     def as_cached(self) -> ERF | RIM:
         return (
-            self.as_cached_erf() if is_any_erf_type_file(self._filepath) else self.as_cached_rim()
+            self.as_cached_erf()
+            if is_any_erf_type_file(self._filepath)
+            else self.as_cached_rim()
         )
 
     def _load_erf(
@@ -365,13 +366,12 @@ class LazyCapsule(FileResource):
         offset_to_keys = reader.read_uint32()
         offset_to_resources = reader.read_uint32()
 
-        resrefs: list[str] = []
-        resids: list[int] = []
+        resrefs:  list[str] = []
+        resids:   list[int] = []
         restypes: list[ResourceType] = []
         reader.seek(offset_to_keys)
-
         for _ in range(entry_count):
-            resref = reader.read_string(16).rstrip("\0")
+            resref = reader.read_string(16)
             resrefs.append(resref)
             resids.append(reader.read_uint32())
             restype = reader.read_uint16()
@@ -381,10 +381,8 @@ class LazyCapsule(FileResource):
         reader.seek(offset_to_resources)
         for i in range(entry_count):
             res_offset: int = reader.read_uint32()
-            res_size: int = reader.read_uint32()
-            resources.append(
-                FileResource(resrefs[i], restypes[i], res_size, res_offset, self._filepath)
-            )
+            res_size:   int = reader.read_uint32()
+            resources.append(FileResource(resrefs[i], restypes[i], res_size, res_offset, self._filepath))
         return resources
 
     def _load_rim(
@@ -420,9 +418,8 @@ class LazyCapsule(FileResource):
         offset_to_entries = reader.read_uint32()
 
         reader.seek(offset_to_entries)
-
         for _ in range(entry_count):
-            resref = reader.read_string(16).rstrip("\0")
+            resref = reader.read_string(16)
             restype = ResourceType.from_id(reader.read_uint32())
             reader.skip(4)
             offset = reader.read_uint32()
@@ -591,7 +588,9 @@ class Capsule(LazyCapsule):
             self.reload()
         return super().info(resref, restype)
 
-    def reload(self):
+    def reload(
+        self,
+    ):
         """Reload the list of resource info linked from the module file.
 
         Args:
@@ -650,31 +649,3 @@ class Capsule(LazyCapsule):
         result = super().add(resname, restype, resdata)
         self.reload()
         return result
-
-    @classmethod
-    def from_data(cls, data: bytes, resname: str, restype: ResourceType) -> Self:
-        """Initialize a Capsule object from raw data bytes.
-
-        Args:
-        ----
-            data: The raw bytes of the capsule file.
-            resname: The resource name for identification.
-            restype: The resource type.
-
-        Returns:
-        -------
-            Capsule: The initialized Capsule object.
-        """
-        with BinaryReader.from_bytes(data) as reader:
-            capsule = cast("cls", object())
-            capsule.__class__ = cls
-            file_type = reader.read_string(4)
-            reader.skip(4)
-            if file_type in (member.value for member in ERFType):
-                capsule._resources = capsule._load_erf(reader)  # noqa: SLF001
-            elif file_type == "RIM ":
-                capsule._resources = capsule._load_rim(reader)  # noqa: SLF001
-            else:
-                msg = f"Data provided is not a valid ERF/MOD/SAV/RIM format, found '{file_type}'."
-                raise ValueError(msg)
-            return capsule

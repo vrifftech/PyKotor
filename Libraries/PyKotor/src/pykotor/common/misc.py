@@ -1,80 +1,48 @@
-"""Common KotOR types: ResRef, LocalizedString, enums (Game, Gender, Language, etc.), and helpers."""
+"""This module holds various unrelated classes and methods."""
 
 from __future__ import annotations
 
-import warnings
-
+from collections.abc import Mapping
 from enum import Enum, IntEnum
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, Iterable, TypeVar
+from typing import TYPE_CHECKING, ClassVar, Generic, ItemsView, Iterable, Iterator, TypeVar, overload
 
-from utility.common.geometry import Vector3
+from pykotor.common.geometry import Vector3
 
 if TYPE_CHECKING:
     import os
 
-    from collections.abc import Iterable
-
-    from typing_extensions import Self  # pyright: ignore[reportMissingModuleSource]
+    from collections.abc import ItemsView, Iterable, Iterator
 
 T = TypeVar("T")
 VT = TypeVar("VT")
 _unique_sentinel = object()
 
 
-class ResRef(str):
+class ResRef:
     """A string reference to a game resource.
 
     ResRefs are the names of resources without the extension (the file stem).
-    They serve as identifiers for game resources stored in archives (BIF, ERF, RIM)
-    or as standalone files in the Override folder.
-
-    NOTE: ResRef Case-INSensitivity is critical for cross-platform compatibility
 
     Used in:
     -------
-        - BioWare Archive/Container Files (BIF/ERF/MOD/RIM/SAV)
+        - Encapsulated Resource Files (ERF/MOD/SAV)
+        - RIM/BIF archives
         - Filenames in the Override folder
-        - GFF field values (ResRef field type)
-        - Resource lookups and references throughout the engine
 
     Restrictions:
     ------------
-        - ResRefs must be in ASCII format (non-ASCII characters are invalid)
-        - ResRefs cannot exceed 16 characters in length (MAX_LENGTH = 16)
-        - ResRefs cannot contain Windows filename invalid characters: '<>:"/\\|?*'
-        - Usable in case-insensitive applications (KOTOR was created for Windows case-insensitive filesystem)
-        - (recommended) Stored as case-sensitive text for cross-platform compatibility
-        - ResRefs are trimmed of whitespace (leading/trailing spaces removed)
-
+        - ResRefs must be in ASCII format
+        - ResRefs cannot exceed 16 characters in length.
+        - Usable in case-insensitive applications. This is because KOTOR was created for Windows, which uses a case-insensitive filesystem.
+        - (recommended) Stored as case-sensitive text.
     """
-
-    __slots__: ClassVar[tuple[str, ...]] = ("_value",)
 
     MAX_LENGTH: ClassVar[int] = 16
-    """Maximum length of a ResRef in characters.
-    
-    This is a hard limit enforced by the BioWare Odyssey Engine.
-    """
 
     INVALID_CHARACTERS: ClassVar[str] = '<>:"/\\|?*'
-    """Characters that are invalid in ResRefs (Windows filename restrictions).
-    
-    These characters cannot appear in Windows filenames and are therefore
-    invalid for ResRefs which are used as filenames.
-    """
 
     class InvalidFormatError(ValueError):
         """ResRefs must conform to Windows filename requirements."""
-
-        def __init__(self, bad_text: str):
-            invalid_chars: list[tuple[str, int]] = [
-                (char, pos)
-                for pos, char in enumerate(bad_text)
-                if char in ResRef.INVALID_CHARACTERS
-            ]
-            details: str = ", ".join(f"'{char}' at position {pos}" for char, pos in invalid_chars)
-            message: str = f"String '{bad_text}' contains invalid characters: {details}. Full list of invalid characters: '{ResRef.INVALID_CHARACTERS}'"
-            super().__init__(message)
 
     class InvalidEncodingError(ValueError):
         """ResRefs must only contain ASCII characters."""
@@ -94,25 +62,22 @@ class ResRef(str):
         """ResRefs cannot be converted to a different case."""
 
         def __init__(self, resref: ResRef, func_name: str, *args, **kwargs):
-            super().__init__(
-                f"ResRef's must be case-insensitive, attempted {resref!r}.{func_name}({args, kwargs})"
-            )
+            super().__init__(f"ResRef's must be case-insensitive, attempted {resref!r}.{func_name}({args, kwargs})")
 
-    def __new__(cls, text: str) -> Self:
-        # Create the instance
-        instance: Self = super().__new__(cls, text)
-        instance.set_data(text)
-        return instance
+    def __init__(
+        self,
+        text: str,
+    ):
+        self._value = ""
+        self.set_data(text)
 
-    def __len__(self):
-        return len(
-            self._value.strip()
-        )  # should already be stripped, leave here for clarity (it is a fast operation)
+    def __len__(
+        self,
+    ):
+        return len(self._value)
 
     def __bool__(self):
-        return bool(
-            self._value.strip()
-        )  # should already be stripped, leave here for clarity (it is a fast operation)
+        return bool(self._value)
 
     def __eq__(
         self,
@@ -121,99 +86,116 @@ class ResRef(str):
         """A ResRef can be compared to another ResRef or a str."""
         if self is other:
             return True
-        if not isinstance(other, str):
-            return NotImplemented  # type: ignore[no-any-return]
-        other_value: str = other.casefold().strip()
-        return other_value == self._value.casefold()
+        if isinstance(other, ResRef):
+            other_value = str(other).lower()
+        elif isinstance(other, str):
+            other_value = other.lower().strip()
+        else:
+            return NotImplemented
+        return other_value == self._value.lower()
 
     def __hash__(self):
-        return hash(self._value.casefold())
+        return hash(self._value.lower())
 
-    def __repr__(self):
+    def __repr__(
+        self,
+    ):
         return f"ResRef({self._value})"
 
-    def __str__(self):
-        return str(self._value)
+    def __str__(
+        self,
+    ):
+        return self._value
 
     @classmethod
-    def from_blank(cls) -> Self:
+    def from_blank(cls) -> ResRef:
+        """Returns a blank ResRef.
+
+        Returns:
+        -------
+            A new ResRef instance.
+        """
         return cls("")
 
     @classmethod
     def from_path(
         cls,
         file_path: os.PathLike | str,
-    ) -> Self:
+    ) -> ResRef:
+        """Returns a ResRef from the filename in the specified path.
+
+        Args:
+        ----
+            file_path (os.PathLike | str): The path to the file.
+
+        Returns:
+        -------
+            A new ResRef instance.
+        """
         from pykotor.extract.file import ResourceIdentifier  # Prevent circular imports
 
-        resname: str = ResourceIdentifier.from_path(file_path).resname
+        resname = ResourceIdentifier.from_path(file_path).resname
         return cls(resname)
 
     @classmethod
-    def is_valid(
-        cls,
-        text: str,
-    ) -> bool:
-        """Validates that text is a valid ResRef.
-
-        Checks (in order):
-        1. Must be a non-empty string
-        2. Must be trimmed (no leading/trailing whitespace)
-        3. Strict ASCII validation (ASCII only, 0-127)
-        4. Strict maximum length validation (16 characters maximum)
-        5. Must not contain invalid characters (Windows filename restrictions)
-        """
-        if not isinstance(text, str) or text == "":
+    def is_valid(cls, text: str) -> bool:
+        if not isinstance(text, str):
             return False
-
-        # Must be trimmed (no leading/trailing whitespace)
-        if text != text.strip():
-            return False
-
-        # Strict ASCII validation
-        if not text.isascii():
-            return False
-
-        # Strict maximum length validation (16 characters)
-        if len(text) > cls.MAX_LENGTH:
-            return False
-
-        # Must not contain invalid characters
-        return not any(char in cls.INVALID_CHARACTERS for char in text)
+        return next(
+            (False for char in cls.INVALID_CHARACTERS if char in text),
+            (
+                text != ""
+                and text.isascii()
+                and len(text) <= cls.MAX_LENGTH
+                and text == text.strip()
+            ),
+        )
 
     def set_data(
         self,
         text: str,
-    ):
+        *,
+        truncate: bool = False,
+    ):  # sourcery skip: remove-unnecessary-cast
         """Sets the ResRef.
 
         Args:
         ----
             text - str: The reference string.
+            truncate - bool: Whether to truncate the text to 16 characters. Default is False.
+
+        Raises:
+        ------
+            InvalidEncodingError - text was not in ascii format
+            ExceedsMaxLengthError - text exceeded 16 characters
+            InvalidFormatError - text starts/ends with a space or contains windows invalid filename characters.
+            All of the above exceptions inherit ValueError.
         """
-        # Strip whitespace and warn if original had leading/trailing whitespace
-        raw_text = str(text)
-        parsed_text = raw_text.strip()
-        if raw_text != parsed_text:
-            msg = f"String '{raw_text}' starts or ends with whitespace. It will be stripped to '{parsed_text}'"
-            warnings.warn(msg, stacklevel=2)
+        parsed_text: str = str(text)
 
-        # Strict ASCII validation - must be checked first
-        if not parsed_text.isascii():
-            raise self.InvalidEncodingError(parsed_text)
+        # Ensure text only contains ASCII characters.
+        if not text.isascii():
+            raise self.InvalidEncodingError(text)
 
-        # Strict maximum length validation (16 characters)
+        # Validate text length.
         if len(parsed_text) > self.MAX_LENGTH:
-            # if not truncate:
-            #    raise self.ExceedsMaxLengthError(parsed_text)
-            # warnings.warn(f"String '{raw_text}' exceeds the maximum allowed length ({self.MAX_LENGTH}) and will be truncated to '{parsed_text[: self.MAX_LENGTH]}'", stacklevel=2)
+            if not truncate:
+                ...
+                # raise self.ExceedsMaxLengthError(parsed_text)  # FIXME: pykotor isn't stable enough to enforce this yet.
             parsed_text = parsed_text[: self.MAX_LENGTH]
 
-        # Check for invalid characters (Windows filename restrictions)
-        if any(char in self.INVALID_CHARACTERS for char in parsed_text):
-            raise self.InvalidFormatError(parsed_text)
+        # Ensure text doesn't start/end with whitespace.
+        if parsed_text != parsed_text.strip():
+            msg = f"ResRef '{text}' cannot start or end with a space."
+            # raise self.InvalidFormatError(msg)  # FIXME: pykotor isn't stable enough to enforce this yet.
 
-        self._value = parsed_text
+        # Ensure text doesn't contain any invalid ASCII characters.
+        for i in range(len(parsed_text)):
+            if parsed_text[i] in self.INVALID_CHARACTERS:
+                msg = f"ResRef '{text}' cannot contain any invalid characters in [{self.INVALID_CHARACTERS}]"
+                # raise self.InvalidFormatError(msg)  # FIXME: pykotor isn't stable enough to enforce this yet.
+
+        self._value = parsed_text.strip()
 
     def get(self) -> str:
         """Returns a case-insensitive wrapped string."""
@@ -259,11 +241,11 @@ class Game(IntEnum):
 
 class Color:
     # Listed here for hinting purposes
-    RED: ClassVar[Color]
-    GREEN: ClassVar[Color]
-    BLUE: ClassVar[Color]
-    BLACK: ClassVar[Color]
-    WHITE: ClassVar[Color]
+    RED: Color
+    GREEN: Color
+    BLUE: Color
+    BLACK: Color
+    WHITE: Color
 
     def __init__(
         self,
@@ -277,10 +259,14 @@ class Color:
         self.b: float = b
         self.a: float = a
 
-    def __repr__(self):
+    def __repr__(
+        self,
+    ):
         return f"Color({self})"
 
-    def __str__(self) -> str:
+    def __str__(
+        self,
+    ) -> str:
         """Returns a string of each color component separated by whitespace."""
         return f"{self.r} {self.g} {self.b} {self.a}"
 
@@ -292,18 +278,20 @@ class Color:
         if self is other:
             return True
         if not isinstance(other, Color):
-            return NotImplemented  # type: ignore[no-any-return]
+            return NotImplemented
 
         return hash(self) == hash(other)
 
-    def __hash__(self):
-        return hash((self.r, self.g, self.b, self.a or 1.0))
+    def __hash__(
+        self,
+    ):
+        return hash((self.r, self.g, self.b, self.a))
 
     @classmethod
     def from_rgb_integer(
         cls,
         integer: int,
-    ) -> Self:
+    ) -> Color:
         """Returns a Color by decoding the specified integer.
 
         Args:
@@ -314,16 +302,16 @@ class Color:
         -------
             A new Color instance.
         """
-        red: float = (0x000000FF & integer) / 255
-        green: float = ((0x0000FF00 & integer) >> 8) / 255
-        blue: float = ((0x00FF0000 & integer) >> 16) / 255
-        return cls(red, green, blue)
+        red = (0x000000FF & integer) / 255
+        green = ((0x0000FF00 & integer) >> 8) / 255
+        blue = ((0x00FF0000 & integer) >> 16) / 255
+        return Color(red, green, blue)
 
     @classmethod
     def from_rgba_integer(
         cls,
         integer: int,
-    ) -> Self:
+    ) -> Color:
         """Returns a Color by decoding the specified integer.
 
         Args:
@@ -334,17 +322,17 @@ class Color:
         -------
             A new Color instance.
         """
-        red: float = (0x000000FF & integer) / 255
-        green: float = ((0x0000FF00 & integer) >> 8) / 255
-        blue: float = ((0x00FF0000 & integer) >> 16) / 255
-        alpha: float = ((0xFF000000 & integer) >> 24) / 255
-        return cls(red, green, blue, alpha)
+        red = (0x000000FF & integer) / 255
+        green = ((0x0000FF00 & integer) >> 8) / 255
+        blue = ((0x00FF0000 & integer) >> 16) / 255
+        alpha = ((0xFF000000 & integer) >> 24) / 255
+        return Color(red, green, blue, alpha)
 
     @classmethod
     def from_bgr_integer(
         cls,
         integer: int,
-    ) -> Self:
+    ) -> Color:
         """Returns a Color by decoding the specified integer.
 
         Args:
@@ -355,10 +343,10 @@ class Color:
         -------
             A new Color instance.
         """
-        red: float = ((0x00FF0000 & integer) >> 16) / 255
-        green: float = ((0x0000FF00 & integer) >> 8) / 255
-        blue: float = (0x000000FF & integer) / 255
-        return cls(red, green, blue)
+        red = ((0x00FF0000 & integer) >> 16) / 255
+        green = ((0x0000FF00 & integer) >> 8) / 255
+        blue = (0x000000FF & integer) / 255
+        return Color(red, green, blue)
 
     @classmethod
     def from_rgb_vector3(
@@ -375,16 +363,16 @@ class Color:
         -------
             A new Color instance.
         """
-        red: float = vector3.x
-        green: float = vector3.y
-        blue: float = vector3.z
+        red = vector3.x
+        green = vector3.y
+        blue = vector3.z
         return Color(red, green, blue)
 
     @classmethod
     def from_bgr_vector3(
         cls,
         vector3: Vector3,
-    ) -> Self:
+    ) -> Color:
         """Returns a Color from the specified vector components.
 
         Args:
@@ -395,84 +383,57 @@ class Color:
         -------
             A new Color instance.
         """
-        red: float = vector3.z
-        green: float = vector3.y
-        blue: float = vector3.x
-        return cls(red, green, blue)
+        red = vector3.z
+        green = vector3.y
+        blue = vector3.x
+        return Color(red, green, blue)
 
-    @classmethod
-    def from_hex_string(
-        cls,
-        hex_string: str,
-    ) -> Self:
-        # Remove '#' if present and convert to lowercase
-        color_str: str = hex_string.lstrip("#").lower()
-        instance: Self = cls(0, 0, 0)
-
-        # Handle different hex color formats
-        # All values are normalized to 0.0-1.0 range by dividing by 255.0
-        if len(color_str) == 3:  # Short hex format (RGB)  # noqa: PLR2004
-            instance.r = int(color_str[0] * 2, 16) / 255.0
-            instance.g = int(color_str[1] * 2, 16) / 255.0
-            instance.b = int(color_str[2] * 2, 16) / 255.0
-            instance.a = 1.0
-        elif len(color_str) == 4:  # Short hex format with alpha (RGBA)  # noqa: PLR2004
-            instance.r = int(color_str[0] * 2, 16) / 255.0
-            instance.g = int(color_str[1] * 2, 16) / 255.0
-            instance.b = int(color_str[2] * 2, 16) / 255.0
-            instance.a = int(color_str[3] * 2, 16) / 255.0
-        elif len(color_str) == 6:  # Full hex format (RGB)  # noqa: PLR2004
-            instance.r = int(color_str[0:2], 16) / 255.0
-            instance.g = int(color_str[2:4], 16) / 255.0
-            instance.b = int(color_str[4:6], 16) / 255.0
-            instance.a = 1.0
-        elif len(color_str) == 8:  # Full hex format with alpha (RGBA)  # noqa: PLR2004
-            instance.r = int(color_str[0:2], 16) / 255.0
-            instance.g = int(color_str[2:4], 16) / 255.0
-            instance.b = int(color_str[4:6], 16) / 255.0
-            instance.a = int(color_str[6:8], 16) / 255.0
-        else:
-            raise ValueError(f"Invalid hex color format: {color_str}")
-        return instance
-
-    def rgb_integer(self) -> int:
+    def rgb_integer(
+        self,
+    ) -> int:
         """Returns a RGB integer encoded from the color components.
 
         Returns:
         -------
             A integer representing a color.
         """
-        red: int = int(self.r * 0xFF) << 0
-        green: int = int(self.g * 0xFF) << 8
-        blue: int = int(self.b * 0xFF) << 16
+        red = int(self.r * 0xFF) << 0
+        green = int(self.g * 0xFF) << 8
+        blue = int(self.b * 0xFF) << 16
         return red + green + blue
 
-    def rgba_integer(self) -> int:
+    def rgba_integer(
+        self,
+    ) -> int:
         """Returns a RGB integer encoded from the color components.
 
         Returns:
         -------
             A integer representing a color.
         """
-        red: int = int(self.r * 0xFF) << 0
-        green: int = int(self.g * 0xFF) << 8
-        blue: int = int(self.b * 0xFF) << 16
-        alpha: int = int((self.a or 1.0) * 0xFF) << 24
+        red = int(self.r * 0xFF) << 0
+        green = int(self.g * 0xFF) << 8
+        blue = int(self.b * 0xFF) << 16
+        alpha = int(self.a * 0xFF) << 24
         return red + green + blue + alpha
 
-    def bgr_integer(self) -> int:
+    def bgr_integer(
+        self,
+    ) -> int:
         """Returns a BGR integer encoded from the color components.
 
         Returns:
         -------
             A integer representing a color.
         """
-        red: int = int(self.r * 255) << 16
-        green: int = int(self.g * 255) << 8
-        blue: int = int(self.b * 255)
+        red = int(self.r * 255) << 16
+        green = int(self.g * 255) << 8
+        blue = int(self.b * 255)
         return red + green + blue
 
-    def rgb_vector3(self) -> Vector3:
+    def rgb_vector3(
+        self,
+    ) -> Vector3:
         """Returns a Vector3 representing a color with its components.
 
         Returns:
@@ -481,7 +442,9 @@ class Color:
         """
         return Vector3(self.r, self.g, self.b)
 
-    def bgr_vector3(self) -> Vector3:
+    def bgr_vector3(
+        self,
+    ) -> Vector3:
         """Returns a Vector3 representing a color with its components.
 
         Returns:
@@ -515,7 +478,7 @@ class WrappedInt:
         if isinstance(other, int):
             self._value += other
             return None
-        return NotImplemented  # type: ignore[no-any-return]
+        return NotImplemented
 
     def __hash__(self):
         return hash(self._value)
@@ -528,7 +491,7 @@ class WrappedInt:
             return True
         if isinstance(other, WrappedInt):
             return self.get() == other.get()
-        if isinstance(other, int):
+        if isinstance(other, int):  # sourcery skip: assign-if-exp
             return self.get() == other
         return hash(self) == hash(other)
 
@@ -538,7 +501,9 @@ class WrappedInt:
     ):
         self._value = value
 
-    def get(self) -> int:
+    def get(
+        self,
+    ) -> int:
         return self._value
 
 
@@ -553,7 +518,9 @@ class InventoryItem:
         self.droppable: bool = droppable
         self.infinite: bool = infinite
 
-    def __str__(self) -> str:
+    def __str__(
+        self,
+    ) -> str:
         return str(self.resref)
 
     def __eq__(
@@ -563,12 +530,12 @@ class InventoryItem:
         if self is other:
             return True
         if isinstance(other, InventoryItem):
-            return (
-                self.resref == other.resref and self.droppable == other.droppable
-            )  # and self.infinite == other.infinite
-        return NotImplemented  # type: ignore[no-any-return]
+            return self.resref == other.resref and self.droppable == other.droppable  # and self.infinite == other.infinite
+        return NotImplemented
 
-    def __hash__(self):
+    def __hash__(
+        self,
+    ):
         return hash(self.resref)
 
 
@@ -593,83 +560,252 @@ class EquipmentSlot(Enum):
 
 
 class CaseInsensitiveHashSet(set, Generic[T]):
-    def __init__(
-        self,
-        iterable: Iterable[T] | None = None,
-    ):
+    def __init__(self, iterable: Iterable[T] | None = None):
         super().__init__()
         if iterable is not None:
             for item in iterable:
                 self.add(item)
 
-    def _normalize_key(self, item: T) -> str | object:
+    def _normalize_key(self, item: T):
         return item.casefold() if isinstance(item, str) else item
 
-    def add(
-        self,
-        item: T,
-    ):
+    def add(self, item: T):
         """Add an element to a set.
 
         This has no effect if the element is already present.
         """
         key: str | object = self._normalize_key(item)
-        if key in self:
-            return
-        super().add(item)
+        if key not in self:
+            super().add(item)
 
-    def remove(
-        self,
-        item: T,
-    ):
+    def remove(self, item: T):
         """Remove an element from a set; it must be a member.
 
         If the element is not a member, raise a KeyError.
         """
         super().remove(self._normalize_key(item))
 
-    def discard(
-        self,
-        item: T,
-    ):
+    def discard(self, item: T):
         """Remove an element from a set if it is a member.
 
         Unlike set.remove(), the discard() method does not raise an exception when an element is missing from the set.
         """
         super().discard(self._normalize_key(item))
 
-    def update(
-        self,
-        *others,
-    ):
+    def update(self, *others):
         """Update a set with the union of itself and others."""
         for other in others:
             for item in other:
                 self.add(item)
 
-    def __contains__(
-        self,
-        item,
-    ):
+    def __contains__(self, item):
         return super().__contains__(self._normalize_key(item))
 
-    def __eq__(
-        self,
-        other,
-    ):
+    def __eq__(self, other):
         if self is other:
             return True
         return super().__eq__({self._normalize_key(item) for item in other})
 
-    def __hash__(self) -> int:  # type: ignore[override]
-        # Use a normalized, immutable representation for the hash
-        def _sort_key(x: Any) -> str:
-            return x if isinstance(x, str) else str(x)
-
-        normalized_items = tuple(
-            sorted((self._normalize_key(item) for item in self), key=_sort_key)
-        )
-        return hash(normalized_items)
-
     def __ne__(self, other):
         return super().__ne__({self._normalize_key(item) for item in other})
+
+
+class CaseInsensitiveDict(Generic[T]):
+    """A class exactly like the builtin dict[str, Any], but provides case-insensitive key lookups.
+
+    The case-sensitivity of the keys themselves are always preserved.
+    """
+
+    def __init__(
+        self,
+        initial: Mapping[str, T] | Iterable[tuple[str, T]] | ItemsView[str, T] | None = None,
+    ):
+        self._dictionary: dict[str, T] = {}
+        self._case_map: dict[str, T] = {}
+
+        if initial:
+            # If initial is a mapping, use its items method.
+            items: Iterable[tuple[str, T]] | ItemsView[str, T] | ItemsView[tuple[str, T], T] = (
+                initial.items()
+                if isinstance(initial, Mapping)
+                else initial
+            )
+
+            # Iterate over initial items directly, avoiding the creation of an interim dict
+            for key, value in items:
+                assert not isinstance(key, tuple), f"key '{key!r}' and value '{value!r}' are not expected types."
+                if isinstance(key, tuple):
+                    # Unpack key-value tuple
+                    k, v = key
+                    self[k] = v
+                else:
+                    self[key] = value
+
+    @classmethod
+    def from_dict(cls, initial: dict[str, T]) -> CaseInsensitiveDict[T]:
+        """Class method to create a CaseInsensitiveDict instance from a dictionary.
+
+        Args:
+        ----
+            initial (dict[str, T]): A dictionary from which to create the CaseInsensitiveDict.
+
+        Returns:
+        -------
+            CaseInsensitiveDict[T]: A new instance of CaseInsensitiveDict.
+        """
+        # Create an empty instance of CaseInsensitiveDict
+        case_insensitive_dict = cls()
+
+        for key, value in initial.items():
+            case_insensitive_dict[key] = value  # Utilize the __setitem__ method for setting items
+
+        return case_insensitive_dict
+
+    #    @classmethod
+    #    def __class_getitem__(cls, item: Any) -> GenericAlias:
+    #        return GenericAlias(cls, item)
+
+    def __eq__(self, other: object) -> bool:
+        # Quick checks.
+        if self is other:
+            return True
+        is_casedict = isinstance(other, CaseInsensitiveDict)
+        is_dict = isinstance(other, dict) and not is_casedict  # for future implementation when we make CaseInsensitiveDict subclass dict.
+        if not is_dict and not is_casedict:
+            return NotImplemented
+        # it's a dict of some sort, do some more quick checks.
+        if is_casedict and other._case_map != self._case_map:
+            return False
+        other_dict: dict[str, T] = other._dictionary if isinstance(other, CaseInsensitiveDict) else other  # pyright: ignore[reportAssignmentType]
+        if len(self._dictionary) != len(other_dict):
+            return False
+
+        # unfortunately we must now iterate over each and compare (slow)
+        for key, value in self._dictionary.items():
+            other_value: T | None = other_dict.get(key.lower())
+            if other_value != value:
+                return False
+
+        return True
+
+    def __iter__(self) -> Iterator[str]:
+        yield from self._dictionary
+
+    def __getitem__(self, key: str) -> T:
+        if not isinstance(key, str):
+            msg = f"Keys must be strings in CaseInsensitiveDict-inherited classes, got {key!r}"
+            raise KeyError(msg)
+        return self._dictionary[self._case_map[key.lower()]]  # pyright: ignore[reportArgumentType]
+
+    def __setitem__(self, key: str, value: T):
+        if not isinstance(key, str):
+            msg = f"Keys must be strings in CaseInsensitiveDict-inherited classes, got {key!r}"
+            raise KeyError(msg)
+        if key in self:
+            self.__delitem__(key)
+        self._case_map[key.lower()] = key  # pyright: ignore[reportArgumentType]
+        self._dictionary[key] = value
+
+    def __delitem__(self, key: str):
+        if not isinstance(key, str):
+            msg = f"Keys must be strings in CaseInsensitiveDict-inherited classes, got {key!r}"
+            raise KeyError(msg)
+        lower_key = key.lower()
+        del self._dictionary[self._case_map[lower_key]]  # pyright: ignore[reportArgumentType]
+        del self._case_map[lower_key]
+
+    def __contains__(self, key: str) -> bool:
+        return key.lower() in self._case_map
+
+    def __len__(self) -> int:
+        return len(self._dictionary)
+
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}.from_dict({self._dictionary!r})"
+
+    def __or__(self, other):
+        if not isinstance(other, (dict, CaseInsensitiveDict)):
+            return NotImplemented
+        new_dict: CaseInsensitiveDict[T] = self.copy()
+        new_dict.update(other)
+        return new_dict
+
+    def __ror__(self, other):
+        if not isinstance(other, (dict, CaseInsensitiveDict)):
+            return NotImplemented
+        other_dict: CaseInsensitiveDict[T] = other if isinstance(other, CaseInsensitiveDict) else CaseInsensitiveDict.from_dict(other)
+        new_dict: CaseInsensitiveDict[T] = other_dict.copy()
+        new_dict.update(self)
+        return new_dict
+
+    def __ior__(self, other):
+        self.update(other)
+        return self
+
+    def __reversed__(self) -> Iterator[str]:
+        return reversed(list(self._dictionary.keys()))
+
+    @overload
+    def pop(self, __key: str) -> T: ...
+    @overload
+    def pop(self, __key: str, __default: VT = None) -> VT | T: ...
+
+    def pop(self, __key: str, __default: VT = _unique_sentinel) -> VT | T:  # type: ignore[assignment]
+        lower_key: str = __key.lower()
+        try:
+            # Attempt to pop the value using the case-insensitive key.
+            value: T = self._dictionary.pop(self._case_map.pop(lower_key))  # pyright: ignore[reportArgumentType]
+        except KeyError:
+            if __default is _unique_sentinel:
+                raise
+            # Return the default value if lower_key is not found in the case map.
+            return __default
+        return value
+
+    def update(self, other):
+        """Extend the dictionary with the key/value pairs from other, overwriting existing keys.
+
+        This method acts like the `update` method in a regular dictionary, but is case-insensitive.
+
+        Args:
+        ----
+            other (Iterable[tuple[str, T]] | dict[str, T]):
+                Key/value pairs to add to the dictionary. Can be another dictionary or an iterable of key/value pairs.
+        """
+        if isinstance(other, (dict, CaseInsensitiveDict)):
+            for key, value in other.items():
+                if not isinstance(key, str):
+                    msg = f"{key} must be a str, got type {key.__class__}"
+                    raise TypeError(msg)
+                self[key] = value
+        else:
+            for key, value in other:
+                if not isinstance(key, str):
+                    msg = f"{key} must be a str, got type {key.__class__}"
+                    raise TypeError(msg)
+                self[key] = value
+
+    @overload
+    def get(self, __key: str) -> T: ...
+    @overload
+    def get(self, __key: str, __default: VT = None) -> VT | T: ...
+
+    def get(self, __key: str, __default: VT = None) -> VT | T:  # type: ignore[assignment]
+        key_lookup: str = self._case_map.get(__key.lower(), _unique_sentinel)  # type: ignore[arg-type]
+        return (
+            __default
+            if key_lookup is _unique_sentinel
+            else self._dictionary.get(key_lookup, __default)
+        )
+
+    def items(self):
+        return self._dictionary.items()
+
+    def values(self):
+        return self._dictionary.values()
+
+    def keys(self):
+        return self._dictionary.keys()
+
+    def copy(self) -> CaseInsensitiveDict[T]:
+        return self.from_dict(self._dictionary)

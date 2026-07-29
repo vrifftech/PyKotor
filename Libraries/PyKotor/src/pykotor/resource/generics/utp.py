@@ -1,5 +1,3 @@
-"""UTP (placeable) generic: GFF-based placeable definitions and inventory."""
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -8,7 +6,6 @@ from pykotor.common.language import LocalizedString
 from pykotor.common.misc import Game, InventoryItem, ResRef
 from pykotor.resource.formats.gff import GFF, GFFContent, GFFList, read_gff, write_gff
 from pykotor.resource.formats.gff.gff_auto import bytes_gff
-from pykotor.resource.formats.gff.gff_data import GFFStruct
 from pykotor.resource.type import ResourceType
 
 if TYPE_CHECKING:
@@ -17,19 +14,77 @@ if TYPE_CHECKING:
 
 
 class UTP:
-    """Stores placeable data from the on-disk UTP GFF template.
+    """Stores placeable data.
 
-    Placeables share most door (UTD) lock, script, and trap semantics; this type adds inventory
-    (``ItemList``) and placeable-specific hooks. The former long class docstring (References and field
-    notes) is archived in ``wiki/reverse_engineering_findings_generics_utp_class_docstring_pre_scrub.md``. See
-    ``wiki/reverse_engineering_findings.md`` (*resource/generics/utp.py*) and ``wiki/GFF-UTP.md``.
+    Attributes:
+    ----------
+        tag: "Tag" field.
+        name: "LocName" field.
+        resref: "TemplateResRef" field.
+        auto_remove_key: "AutoRemoveKey" field.
+        conversation: "Conversation" field.
+        faction_id: "Faction" field.
+        plot: "Plot" field.
+        min1_hp: "Min1HP" field.
+        key_required: "KeyRequired" field.
+        lockable: "Lockable" field.
+        locked: "Locked" field.
+        unlock_dc: "OpenLockDC" field.
+        key_name: "KeyName" field.
+        animation_state: "AnimationState" field.
+        appearance_id: "Appearance" field.
+        maximum_hp: "HP" field.
+        current_hp: "CurrentHP" field.
+        hardness: "Hardness" field.
+        fortitude: "Fort" field.
+        on_closed: "OnClosed" field.
+        on_damaged: "OnDamaged" field.
+        on_death: "OnDeath" field.
+        on_heartbeat: "OnHeartbeat" field.
+        on_lock: "OnLock" field.
+        on_melee_attack: "OnMeleeAttacked" field.
+        on_open: "OnOpen" field.
+        on_force_power: "OnSpellCastAt" field.
+        on_unlock: "OnUnlock" field.
+        on_user_defined: "OnUserDefined" field.
+        has_inventory: "HasInventory" field.
+        party_interact: "PartyInteract" field.
+        static: "Static" field.
+        useable: "Useable" field.
+        on_end_dialog: "OnEndDialogue" field.
+        on_inventory: "OnInvDisturbed" field.
+        on_used: "OnUsed" field.
+        comment: "Comment" field.
 
-    Note: ``GFFContent.UTP``.
+        not_blastable: "NotBlastable" field. KotOR 2 Only.
+        unlock_diff: "OpenLockDiff" field. KotOR 2 Only.
+        unlock_diff_mod: "OpenLockDiffMod" field. KotOR 2 Only.
+        on_open_failed: "OnFailToOpen" field. KotOR 2 Only.
+        lock_dc: "CloseLockDC" field. KotOR 2 Only.
+
+        palette_id: "PaletteID" field. Used in toolset only.
+
+        description: "Description" field. Not used by the game engine.
+        interruptable: "Interruptable" field. Not used by the game engine.
+        portrait_id: "PortraitId" field. Not used by the game engine.
+        trap_detectable: "TrapDetectable" field. Not used by the game engine.
+        trap_detect_dc: "TrapDetectDC" field. Not used by the game engine.
+        trap_disarmable: "TrapDisarmable" field. Not used by the game engine.
+        trap_disarm_dc: "DisarmDC" field. Not used by the game engine.
+        trap_flag: "TrapFlag" field. Not used by the game engine.
+        trap_one_shot: "TrapOneShot" field. Not used by the game engine.
+        trap_type: "TrapType" field. Not used by the game engine.
+        will: "Will" field. Not used by the game engine.
+        on_disarm: "OnDisarm" field. Not used by the game engine.
+        on_trap_triggered: "OnTrapTriggered" field. Not used by the game engine.
+        bodybag_id: "BodyBag" field. Not used by the game engine.
+        type_id: "Type" field. Not used by the game engine.
+        lock_dc: "CloseLockDC" field. Not used by the game engine.
     """
 
     BINARY_TYPE = ResourceType.UTP
 
-    def __init__(  # noqa: PLR0915
+    def __init__(
         self,
     ):
         self.resref: ResRef = ResRef.from_blank()
@@ -104,27 +159,15 @@ class UTP:
         self.lock_dc: int = 0
 
 
-def construct_utp(  # noqa: PLR0915
+def construct_utp(
     gff: GFF,
 ) -> UTP:
-    """Constructs a UTP object from a GFF structure.
-
-    Defaults when field missing (from engine): K1 CSWSPlaceable::LoadPlaceable (K1: 0x00585670, TSL: 0x006a1680 legacy PC),
-    SavePlaceable (K1: 0x00586a70, TSL: TODO). Tag "", TemplateResRef "", LocName empty; BYTE 0,
-    scripts ResRef "". Optional when missing.
-
-    Reference functions: (1) LoadPlaceable root UTP parser, (2) SavePlaceable writer,
-    (3) LoadPlaceables area placeables, (4) LoadFromTemplate, (5) CResGFF::ReadField* for Tag,
-    LocName, Appearance, HP, ItemList, etc. TSL same semantics; addresses in UTP class References.
-    """
     utp = UTP()
 
-    root: GFFStruct = gff.root
-    # Identity: Tag "", LocName empty, TemplateResRef "". K1 LoadPlaceable 0x00585670; TSL same (addresses in UTP References). Optional.
+    root = gff.root
     utp.tag = root.acquire("Tag", "")
     utp.name = root.acquire("LocName", LocalizedString.from_invalid())
     utp.resref = root.acquire("TemplateResRef", ResRef.from_blank())
-    # Lock/key: AutoRemoveKey, KeyRequired, Lockable, Locked, OpenLockDC, KeyName. Default 0 or "". K1/TSL LoadPlaceable. Optional.
     utp.auto_remove_key = bool(root.acquire("AutoRemoveKey", 0))
     utp.lock_dc = root.acquire("CloseLockDC", 0)
     utp.conversation = root.acquire("Conversation", ResRef.from_blank())
@@ -138,13 +181,11 @@ def construct_utp(  # noqa: PLR0915
     utp.unlock_dc = root.acquire("OpenLockDC", 0)
     utp.key_name = root.acquire("KeyName", "")
     utp.animation_state = root.acquire("AnimationState", 0)
-    # HP/stats: Appearance, HP, CurrentHP, Hardness, Fort. Default 0. K1/TSL LoadPlaceable. Optional.
     utp.appearance_id = root.acquire("Appearance", 0)
     utp.maximum_hp = root.acquire("HP", 0)
     utp.current_hp = root.acquire("CurrentHP", 0)
     utp.hardness = root.acquire("Hardness", 0)
     utp.fortitude = root.acquire("Fort", 0)
-    # Scripts: OnClosed/OnDamaged/OnDeath/OnHeartbeat/OnOpen/OnUsed etc. ResRef "". K1/TSL LoadPlaceable. Optional.
     utp.on_closed = root.acquire("OnClosed", ResRef.from_blank())
     utp.on_damaged = root.acquire("OnDamaged", ResRef.from_blank())
     utp.on_death = root.acquire("OnDeath", ResRef.from_blank())
@@ -167,7 +208,6 @@ def construct_utp(  # noqa: PLR0915
     utp.unlock_diff = root.acquire("OpenLockDiff", 0)
     utp.unlock_diff_mod = root.acquire("OpenLockDiffMod", 0)
 
-    # ItemList: InventoryRes "", Dropable 0. K1/TSL LoadPlaceable. Optional.
     item_list: GFFList = root.acquire("ItemList", GFFList())
     for item_struct in item_list:
         resref = item_struct.acquire("InventoryRes", ResRef.from_blank())
@@ -195,7 +235,7 @@ def construct_utp(  # noqa: PLR0915
     return utp
 
 
-def dismantle_utp(  # noqa: PLR0915
+def dismantle_utp(
     utp: UTP,
     game: Game = Game.K2,
     *,
@@ -203,8 +243,7 @@ def dismantle_utp(  # noqa: PLR0915
 ) -> GFF:
     gff = GFF(GFFContent.UTP)
 
-    root: GFFStruct = gff.root
-    # Write same defaults as engine read. K1 LoadPlaceable 0x00585670, SavePlaceable 0x00586a70; TSL same (addresses in UTP References). BYTE 0, DWORD 0, CResRef "".
+    root = gff.root
     root.set_string("Tag", utp.tag)
     root.set_locstring("LocName", utp.name)
     root.set_resref("TemplateResRef", utp.resref)

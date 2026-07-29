@@ -1,42 +1,18 @@
-"""ASCII LYT (layout) read/write: rooms, tracks, obstacles, door hooks."""
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import kaitaistruct
-
-from bioware_kaitai_formats.lyt import Lyt
-
-from pykotor.common.stream import BinaryReader
+from pykotor.common.geometry import Vector3, Vector4
 from pykotor.resource.formats.lyt.lyt_data import LYT, LYTDoorHook, LYTObstacle, LYTRoom, LYTTrack
 from pykotor.resource.type import ResourceReader, ResourceWriter, autoclose
-from utility.common.geometry import Vector3, Vector4
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
-
-    from typing_extensions import Literal  # pyright: ignore[reportMissingModuleSource]
 
     from pykotor.resource.type import SOURCE_TYPES, TARGET_TYPES
 
 
 class LYTAsciiReader(ResourceReader):
-    """Reads LYT (Layout) files.
-
-    LYT files define the layout of rooms, tracks, obstacles, and door hooks in KotOR modules.
-    Used for area loading and spatial organization.
-
-    Retail modules stream ASCII ``roomcount`` / ``trackcount`` / obstacle / door-hook stanzas
-    from ``.lyt`` resources.
-
-    """
-
-    ROOM_COUNT_KEY: str = "roomcount"
-    TRACK_COUNT_KEY: str = "trackcount"
-    OBSTACLE_COUNT_KEY: str = "obstaclecount"
-    DOORHOOK_COUNT_KEY: str = "doorhookcount"
-
     def __init__(
         self,
         source: SOURCE_TYPES,
@@ -44,32 +20,33 @@ class LYTAsciiReader(ResourceReader):
         size: int = 0,
     ):
         super().__init__(source, offset, size)
-        self._lyt: LYT = LYT()
+        self._lyt: LYT | None = None
         self._lines: list[str] = []
 
     @autoclose
-    def load(self, *, auto_close: bool = True) -> LYT:  # noqa: FBT001, FBT002, ARG002
+    def load(
+        self,
+        auto_close: bool = True,
+    ) -> LYT:
         self._lyt = LYT()
 
-        data = self._reader.read_all()
-        try:
-            raw = Lyt.from_bytes(data).raw_content
-        except (kaitaistruct.KaitaiStructError, UnicodeDecodeError):
-            raw = BinaryReader.from_bytes(data, 0).read_string(len(data))
-        self._lines = raw.splitlines()
+        self._lines = self._reader.read_string(self._reader.size()).splitlines()
 
-        iterator: Iterator[str] = iter(self._lines)
+        iterator = iter(self._lines)
         for line in iterator:
-            tokens: list[str] = line.split()
+            tokens = line.split()
 
-            if tokens[0] == self.ROOM_COUNT_KEY:
+            if tokens[0] == "roomcount":
                 self._load_rooms(iterator, int(tokens[1]))
-            if tokens[0] == self.TRACK_COUNT_KEY:
+            if tokens[0] == "trackcount":
                 self._load_tracks(iterator, int(tokens[1]))
-            if tokens[0] == self.OBSTACLE_COUNT_KEY:
+            if tokens[0] == "obstaclecount":
                 self._load_obstacles(iterator, int(tokens[1]))
-            if tokens[0] == self.DOORHOOK_COUNT_KEY:
+            if tokens[0] == "doorhookcount":
                 self._load_doorhooks(iterator, int(tokens[1]))
+
+        if auto_close:
+            self._reader.close()
 
         return self._lyt
 
@@ -79,11 +56,10 @@ class LYTAsciiReader(ResourceReader):
         count: int,
     ):
         for _ in range(count):
-            tokens: list[str] = next(iterator).split()
-            model: str = tokens[0]
-            position: Vector3 = Vector3(float(tokens[1]), float(tokens[2]), float(tokens[3]))
-            room = LYTRoom(model, position)
-            self._lyt.rooms.append(room)
+            tokens = next(iterator).split()
+            model = tokens[0]
+            position = Vector3(float(tokens[1]), float(tokens[2]), float(tokens[3]))
+            self._lyt.rooms.append(LYTRoom(model, position))
 
     def _load_tracks(
         self,
@@ -91,9 +67,9 @@ class LYTAsciiReader(ResourceReader):
         count: int,
     ):
         for _ in range(count):
-            tokens: list[str] = next(iterator).split()
-            model: str = tokens[0]
-            position: Vector3 = Vector3(float(tokens[1]), float(tokens[2]), float(tokens[3]))
+            tokens = next(iterator).split()
+            model = tokens[0]
+            position = Vector3(float(tokens[1]), float(tokens[2]), float(tokens[3]))
             self._lyt.tracks.append(LYTTrack(model, position))
 
     def _load_obstacles(
@@ -127,13 +103,6 @@ class LYTAsciiReader(ResourceReader):
 
 
 class LYTAsciiWriter(ResourceWriter):
-    LYT_LINE_SEP: Literal["\r\n"] = "\r\n"
-    LYT_INDENT: Literal["   "] = "   "
-    ROOM_COUNT_KEY: str = "roomcount"
-    TRACK_COUNT_KEY: str = "trackcount"
-    OBSTACLE_COUNT_KEY: str = "obstaclecount"
-    DOORHOOK_COUNT_KEY: str = "doorhookcount"
-
     def __init__(
         self,
         lyt: LYT,
@@ -143,44 +112,42 @@ class LYTAsciiWriter(ResourceWriter):
         self._lyt: LYT = lyt
 
     @autoclose
-    def write(self, *, auto_close: bool = True):  # noqa: FBT001, FBT002, ARG002  # pyright: ignore[reportUnusedParameters]
-        roomcount: int = len(self._lyt.rooms)
-        trackcount: int = len(self._lyt.tracks)
-        obstaclecount: int = len(self._lyt.obstacles)
-        doorhookcount: int = len(self._lyt.doorhooks)
+    def write(
+        self,
+        auto_close: bool = True,
+    ):
+        roomcount = len(self._lyt.rooms)
+        trackcount = len(self._lyt.tracks)
+        obstaclecount = len(self._lyt.obstacles)
+        doorhookcount = len(self._lyt.doorhooks)
 
-        self._writer.write_string(f"beginlayout{self.LYT_LINE_SEP}")
+        self._writer.write_string("beginlayout\r\n")
 
-        self._writer.write_string(
-            f"{self.LYT_INDENT}{self.ROOM_COUNT_KEY} {roomcount}{self.LYT_LINE_SEP}"
-        )
+        self._writer.write_string(f"   roomcount {roomcount}\r\n")
         for room in self._lyt.rooms:
             self._writer.write_string(
-                f"{self.LYT_INDENT * 2}{room.model} {room.position.x} {room.position.y} {room.position.z}{self.LYT_LINE_SEP}",
+                f"      {room.model} {room.position.x} {room.position.y} {room.position.z}\r\n",
             )
 
-        self._writer.write_string(
-            f"{self.LYT_INDENT}{self.TRACK_COUNT_KEY} {trackcount}{self.LYT_LINE_SEP}"
-        )
+        self._writer.write_string(f"   trackcount {trackcount}\r\n")
         for track in self._lyt.tracks:
             self._writer.write_string(
-                f"{self.LYT_INDENT * 2}{track.model} {track.position.x} {track.position.y} {track.position.z}{self.LYT_LINE_SEP}",
+                f"      {track.model} {track.position.x} {track.position.y} {track.position.z}\r\n",
             )
 
-        self._writer.write_string(
-            f"{self.LYT_INDENT}{self.OBSTACLE_COUNT_KEY} {obstaclecount}{self.LYT_LINE_SEP}"
-        )
+        self._writer.write_string(f"   obstaclecount {obstaclecount}\r\n")
         for obstacle in self._lyt.obstacles:
             self._writer.write_string(
-                f"{self.LYT_INDENT * 2}{obstacle.model} {obstacle.position.x} {obstacle.position.y} {obstacle.position.z}{self.LYT_LINE_SEP}",
+                f"      {obstacle.model} {obstacle.position.x} {obstacle.position.y} {obstacle.position.z}\r\n",
             )
 
-        self._writer.write_string(
-            f"{self.LYT_INDENT}{self.DOORHOOK_COUNT_KEY} {doorhookcount}{self.LYT_LINE_SEP}"
-        )
+        self._writer.write_string(f"   doorhookcount {doorhookcount}\r\n")
         for doorhook in self._lyt.doorhooks:
             self._writer.write_string(
-                f"{self.LYT_INDENT * 2}{doorhook.room} {doorhook.door} 0 {doorhook.position.x} {doorhook.position.y} {doorhook.position.z} {doorhook.orientation.x} {doorhook.orientation.y} {doorhook.orientation.z} {doorhook.orientation.w}{self.LYT_LINE_SEP}",
+                f"      {doorhook.room} {doorhook.door} 0 {doorhook.position.x} {doorhook.position.y} {doorhook.position.z} {doorhook.orientation.x} {doorhook.orientation.y} {doorhook.orientation.z} {doorhook.orientation.w}\r\n",
             )
 
         self._writer.write_string("donelayout")
+
+        if auto_close:
+            self._writer.close()
