@@ -314,7 +314,7 @@ class AddStructToListGFF(ModifyGFF):
         try:
             lookup: Any = self.value.value(memory, GFFFieldType.Struct)
             if lookup == "listindex":
-                new_struct = GFFStruct(len(list_container._structs)-1)
+                new_struct = GFFStruct(len(list_container._structs))
             elif isinstance(lookup, GFFStruct):
                 new_struct = lookup
             else:
