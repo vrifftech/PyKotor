@@ -1093,7 +1093,7 @@ class ConfigReader:
         """
         exclusive_column: str | None
         target: Target | None
-        row_label: str | None
+        row_label: RowValue | None
         cells: dict[str, RowValue]
         store_2da: dict[int, RowValue]
         store_tlk: dict[int, RowValue]
@@ -1312,7 +1312,7 @@ class ConfigReader:
         self,
         identifier: str,
         modifiers: CaseInsensitiveDict[str],
-    ) -> str | None:
+    ) -> RowValue | None:
         """Returns the row label for a 2D array based on modifiers.
 
         Args:
@@ -1330,10 +1330,21 @@ class ConfigReader:
             - If not present, check if 'NewRowLabel' exists as a key
             - Return the value of the key if present, else return None.
         """
-        return modifiers.pop(
+        raw_value = modifiers.pop(
             "RowLabel",
             modifiers.pop("NewRowLabel", None),
         )
+        if raw_value is None:
+            return None
+
+        lower_value = raw_value.lower().strip()
+        if lower_value == "high()":
+            return RowValueHigh(None)
+        if lower_value.startswith("2damemory") and raw_value[9:].isdigit():
+            return RowValue2DAMemory(int(raw_value[9:]))
+        if lower_value.startswith("strref") and raw_value[6:].isdigit():
+            return RowValueTLKMemory(int(raw_value[6:]))
+        return RowValueConstant(raw_value)
 
     def column_inserts_2da(
         self,

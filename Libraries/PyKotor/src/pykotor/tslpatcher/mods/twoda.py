@@ -285,14 +285,14 @@ class AddRow2DA(Modify2DA):
         self,
         identifier: str,
         exclusive_column: str | None,
-        row_label: str | None,
+        row_label: RowValue | None,
         cells: dict[str, RowValue],
         store_2da: dict[int, RowValue] | None = None,
         store_tlk: dict[int, RowValue] | None = None,
     ):
         self.identifier: str = identifier
         self.exclusive_column: str | None = exclusive_column
-        self.row_label: str | None = row_label
+        self.row_label: RowValue | None = row_label
         self.cells: dict[str, RowValue] = cells
         self.store_2da: dict[int, RowValue] = {} if store_2da is None else store_2da
         self.store_tlk: dict[int, RowValue] = {} if store_tlk is None else store_tlk
@@ -340,7 +340,11 @@ class AddRow2DA(Modify2DA):
                 target_row = row
 
         if target_row is None:
-            row_label: str = str(twoda.get_height()) if self.row_label is None else self.row_label
+            row_label = (
+                str(twoda.get_height())
+                if self.row_label is None
+                else self.row_label.value(memory, twoda, None)
+            )
             index: int = twoda.add_row(row_label, {})
             self._row = target_row = twoda.get_row(index)
             target_row.update_values(self._unpack(self.cells, memory, twoda, target_row))
@@ -371,7 +375,7 @@ class CopyRow2DA(Modify2DA):
         identifier: str,
         target: Target,
         exclusive_column: str | None,
-        row_label: str | None,
+        row_label: RowValue | None,
         cells: dict[str, RowValue],
         store_2da: dict[int, RowValue] | None = None,
         store_tlk: dict[int, RowValue] | None = None,
@@ -379,7 +383,7 @@ class CopyRow2DA(Modify2DA):
         self.identifier: str = identifier
         self.target: Target = target
         self.exclusive_column: str | None = exclusive_column or None
-        self.row_label: str | None = row_label
+        self.row_label: RowValue | None = row_label
         self.cells: dict[str, RowValue] = cells
         self.store_2da: dict[int, RowValue] = {} if store_2da is None else store_2da
         self.store_tlk: dict[int, RowValue] = {} if store_tlk is None else store_tlk
@@ -411,7 +415,11 @@ class CopyRow2DA(Modify2DA):
         """
         source_row: TwoDARow | None = self.target.search(twoda, memory)
         target_row: TwoDARow | None = None
-        row_label = str(twoda.get_height()) if self.row_label is None else self.row_label
+        row_label = (
+            str(twoda.get_height())
+            if self.row_label is None
+            else self.row_label.value(memory, twoda, None)
+        )
 
         if source_row is None:
             msg = f"Source row cannot be None. row_label was '{row_label}'"
