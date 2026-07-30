@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import struct
+
 from itertools import zip_longest
 from typing import TYPE_CHECKING
 
@@ -78,24 +80,42 @@ class TLK:
         sound_resref: str = "",
     ) -> int:
         entry = TLKEntry(text, ResRef(sound_resref))
+        return self.add_entry(entry)
+
+    def add_entry(
+        self,
+        entry: TLKEntry,
+    ) -> int:
+        """Appends a complete TLK entry, preserving all of its metadata."""
+        entry = entry.copy()
         self.entries.append(entry)
         return len(self.entries) - 1
 
-    def replace(self, stringref: int, text: str, sound_resref: str = ""):
-        """Replaces an entry at the specified stringref with the provided text and sound resref.
+    def replace(
+        self,
+        stringref: int,
+        text: str | None = None,
+        sound_resref: str | ResRef | None = None,
+    ):
+        """Replaces selected fields of an entry while preserving its other metadata.
 
         Args:
         ----
             stringref: The stringref of the entry to be replaced.
-            text: The new text for the entry.
-            sound_resref: The new sound resref for the entry.
+            text: The new text for the entry, or ``None`` to leave it unchanged.
+            sound_resref: The new sound resref, or ``None`` to leave it unchanged.
         """
         if not 0 <= stringref < len(self.entries):
             msg = f"Cannot replace nonexistent stringref in dialog.tlk: '{stringref}'"
             raise IndexError(msg)
-        old_text: str = self.entries[stringref].text
-        old_sound: ResRef = self.entries[stringref].voiceover
-        self.entries[stringref] = TLKEntry(text or old_text, ResRef(sound_resref) if sound_resref else old_sound)
+
+        entry: TLKEntry = self.entries[stringref]
+        if text is not None:
+            entry.text = text
+            entry.text_present = bool(text)
+        if sound_resref is not None:
+            entry.voiceover = ResRef(str(sound_resref))
+            entry.sound_present = bool(entry.voiceover)
 
     def resize(
         self,
@@ -158,16 +178,76 @@ class TLKEntry:
         self,
         text: str,
         voiceover: ResRef,
+        *,
+        flags: int = 0x0007,
+        volume_variance: int = 0,
+        pitch_variance: int = 0,
+        sound_length: float = 0.0,
+        sound_length_bits: int | None = None,
     ):
         self.text: str = text
         self.voiceover: ResRef = voiceover
 
         # The following fields exist in TLK format, but do not perform any function in KOTOR. The game ignores these.
-        # entry flags. These are set in both game's TLKs
-        self.text_present: bool = True
-        self.sound_present: bool = True
-        self.soundlength_present: bool = True
-        self.sound_length: int = 0
+        self.flags: int = flags
+        self.volume_variance: int = volume_variance
+        self.pitch_variance: int = pitch_variance
+        self._sound_length_bits: int = (
+            sound_length_bits
+            if sound_length_bits is not None
+            else struct.unpack("<I", struct.pack("<f", sound_length))[0]
+        )
+
+    def copy(self) -> TLKEntry:
+        """Returns an independent copy containing the complete TLK entry."""
+        return TLKEntry(
+            self.text,
+            ResRef(str(self.voiceover)),
+            flags=self.flags,
+            volume_variance=self.volume_variance,
+            pitch_variance=self.pitch_variance,
+            sound_length_bits=self.sound_length_bits,
+        )
+
+    @property
+    def sound_length(self) -> float:
+        return struct.unpack("<f", struct.pack("<I", self._sound_length_bits))[0]
+
+    @sound_length.setter
+    def sound_length(self, value: float):
+        self._sound_length_bits = struct.unpack("<I", struct.pack("<f", value))[0]
+
+    @property
+    def sound_length_bits(self) -> int:
+        return self._sound_length_bits
+
+    @sound_length_bits.setter
+    def sound_length_bits(self, value: int):
+        self._sound_length_bits = value
+
+    @property
+    def text_present(self) -> bool:
+        return bool(self.flags & 0x0001)
+
+    @text_present.setter
+    def text_present(self, value: bool):
+        self.flags = self.flags | 0x0001 if value else self.flags & ~0x0001
+
+    @property
+    def sound_present(self) -> bool:
+        return bool(self.flags & 0x0002)
+
+    @sound_present.setter
+    def sound_present(self, value: bool):
+        self.flags = self.flags | 0x0002 if value else self.flags & ~0x0002
+
+    @property
+    def soundlength_present(self) -> bool:
+        return bool(self.flags & 0x0004)
+
+    @soundlength_present.setter
+    def soundlength_present(self, value: bool):
+        self.flags = self.flags | 0x0004 if value else self.flags & ~0x0004
 
     def __eq__(
         self,

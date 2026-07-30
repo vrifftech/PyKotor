@@ -334,16 +334,29 @@ class ConfigReader:
         modifier_dict: dict[int, dict[str, str]] = {}
         syntax_error_caught = False
 
+        def parse_tlk_index(raw_value: str | None, description: str) -> int:
+            if (
+                not isinstance(raw_value, str)
+                or not raw_value
+                or not raw_value.isascii()
+                or not raw_value.isdigit()
+            ):
+                msg = f"Invalid {description} '{raw_value}': expected non-negative ASCII decimal digits"
+                raise ValueError(msg)
+            return int(raw_value)
+
         def process_tlk_entries(
             tlk_filename: str,
             dialog_tlk_index: int,
             mod_tlk_index: int,
             *,
             is_replacement: bool,
+            uses_main_source: bool = False,
         ):
             modifier = ModifyTLK(dialog_tlk_index, is_replacement)
             modifier.mod_index = mod_tlk_index
             modifier.tlk_filepath = self.mod_path / self.config.patches_tlk.sourcefolder / tlk_filename
+            modifier.uses_main_source = uses_main_source
             self.config.patches_tlk.modifiers.append(modifier)
 
         for key, value in tlk_list_edits.items():
@@ -354,9 +367,10 @@ class ConfigReader:
                 if lower_key.startswith("strref"):
                     process_tlk_entries(
                         tlk_filename=self.config.patches_tlk.sourcefile,
-                        dialog_tlk_index=int(lower_key[6:]),
-                        mod_tlk_index=int(value),
+                        dialog_tlk_index=parse_tlk_index(key[6:], "StrRef token"),
+                        mod_tlk_index=parse_tlk_index(value, "source TLK index"),
                         is_replacement=False,
+                        uses_main_source=True,
                     )
                 elif replace_file or append_file:
                     next_section_name = self.get_section_name(value)
@@ -371,8 +385,18 @@ class ConfigReader:
                         self.ini[next_section_name].keys(),
                         self.ini[next_section_name].values(),
                     ):
-                        dialog_tlk_index = int(raw_dialog_tlk_index[6:]) if raw_dialog_tlk_index.lower().startswith("strref") else int(raw_dialog_tlk_index)
-                        mod_tlk_index = int(raw_mod_tlk_index[6:]) if raw_mod_tlk_index.lower().startswith("strref") else int(raw_mod_tlk_index)
+                        dialog_index_text = (
+                            raw_dialog_tlk_index[6:]
+                            if raw_dialog_tlk_index.lower().startswith("strref")
+                            else raw_dialog_tlk_index
+                        )
+                        mod_index_text = (
+                            raw_mod_tlk_index[6:]
+                            if isinstance(raw_mod_tlk_index, str) and raw_mod_tlk_index.lower().startswith("strref")
+                            else raw_mod_tlk_index
+                        )
+                        dialog_tlk_index = parse_tlk_index(dialog_index_text, "destination TLK index")
+                        mod_tlk_index = parse_tlk_index(mod_index_text, "source TLK index")
                         process_tlk_entries(
                             tlk_filename=next_section_name,
                             dialog_tlk_index=dialog_tlk_index,
@@ -382,7 +406,7 @@ class ConfigReader:
                 elif "\\" in lower_key or "/" in lower_key:
                     delimiter: Literal["\\", "/"] = "\\" if "\\" in lower_key else "/"
                     token_id_str, property_name = lower_key.split(delimiter)
-                    token_id = int(token_id_str)
+                    token_id = parse_tlk_index(token_id_str, "destination TLK index")
 
                     if token_id not in modifier_dict:
                         modifier_dict[token_id] = {"text": "", "voiceover": ""}

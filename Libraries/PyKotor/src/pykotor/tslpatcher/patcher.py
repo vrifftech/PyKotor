@@ -513,8 +513,27 @@ class ModInstaller:
 
         if female_dialog_file.is_file():
             female_tlk_patches: ModificationsTLK = deepcopy(patches_tlk)
-            female_tlk_patches.sourcefile = female_tlk_patches.sourcefile_f if (self.mod_path / female_tlk_patches.sourcefile_f).is_file() else patches_tlk.sourcefile
             female_tlk_patches.saveas = female_dialog_filename
-            tlk_patches.append(female_tlk_patches)
+            female_tlk_patches.store_memory = False
+
+            female_source_file: CaseAwarePath = (
+                self.mod_path
+                / female_tlk_patches.sourcefolder
+                / female_tlk_patches.sourcefile_f
+            )
+            if female_source_file.safe_isfile():
+                female_tlk_patches.sourcefile = female_tlk_patches.sourcefile_f
+                for modifier in female_tlk_patches.modifiers:
+                    if modifier.uses_main_source:
+                        modifier.tlk_filepath = female_source_file
+            else:
+                female_tlk_patches.modifiers = [
+                    modifier
+                    for modifier in female_tlk_patches.modifiers
+                    if not modifier.uses_main_source
+                ]
+
+            if female_tlk_patches.modifiers:
+                tlk_patches.append(female_tlk_patches)
 
         return tlk_patches

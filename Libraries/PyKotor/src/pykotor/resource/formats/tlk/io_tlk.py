@@ -78,14 +78,14 @@ class TLKBinaryReader(ResourceReader):
 
         entry_flags = self._reader.read_uint32()
         sound_resref = self._reader.read_string(16)
-        _volume_variance = self._reader.read_uint32()  # unused
-        _pitch_variance = self._reader.read_uint32()  # unused
+        volume_variance = self._reader.read_uint32()
+        pitch_variance = self._reader.read_uint32()
         text_offset = self._reader.read_uint32()
         text_length = self._reader.read_uint32()
-        entry.sound_length = self._reader.read_single()  # unused
-        entry.text_present = (entry_flags & 0x0001) != 0  # Check if the TEXT_PRESENT flag is set
-        entry.sound_present = (entry_flags & 0x0002) != 0  # Check if the SND_PRESENT flag is set
-        entry.soundlength_present = (entry_flags & 0x0004) != 0  # Check if the SND_LENGTH flag is set
+        entry.sound_length_bits = self._reader.read_uint32()
+        entry.flags = entry_flags
+        entry.volume_variance = volume_variance
+        entry.pitch_variance = pitch_variance
         entry.voiceover = ResRef(sound_resref)
         self._text_headers.append(ArrayHead(text_offset, text_length))
 
@@ -152,20 +152,12 @@ class TLKBinaryWriter(ResourceWriter):
         text_offset = previous_offset.get()
         text_length = len(entry.text)
 
-        entry_flags = 0  # Initialize entry_flags as zero
-        if entry.text_present:
-            entry_flags |= 0x0001  # TEXT_PRESENT: As we're writing text, let's assume it's always present
-        if entry.sound_present:
-            entry_flags |= 0x0002  # SND_PRESENT: If sound_resref is defined in this entry.
-        if entry.soundlength_present:
-            entry_flags |= 0x0004  # SND_LENGTH: Unused by KOTOR1 and 2. Determines whether the sound length field is utilized.
-
-        self._writer.write_uint32(entry_flags)
+        self._writer.write_uint32(entry.flags)
         self._writer.write_string(sound_resref, string_length=16)
-        self._writer.write_uint32(0)  # unused - volume variance
-        self._writer.write_uint32(0)  # unused - pitch variance
+        self._writer.write_uint32(entry.volume_variance)
+        self._writer.write_uint32(entry.pitch_variance)
         self._writer.write_uint32(text_offset)
         self._writer.write_uint32(text_length)
-        self._writer.write_uint32(0)  # unused - sound length
+        self._writer.write_uint32(entry.sound_length_bits)
 
         previous_offset += text_length
