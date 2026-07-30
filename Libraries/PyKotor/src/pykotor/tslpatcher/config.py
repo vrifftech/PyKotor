@@ -162,7 +162,7 @@ class PatcherConfig:
         num_2da_patches: int = sum(len(twoda_patch.modifiers) for twoda_patch in self.patches_2da)
         num_gff_patches: int = len(self.flatten_gff_patches())
         num_ssf_patches: int = sum(len(ssf_patch.modifiers) for ssf_patch in self.patches_ssf)
-        num_tlk_patches: int = len(self.patches_tlk.modifiers)
+        num_tlk_patches: int = sum(modifier.patch_count for modifier in self.patches_tlk.modifiers)
         num_install_list_patches: int = len(self.install_list)
         num_nss_patches: int = len(self.patches_nss)
         num_ncs_patches: int = len(self.patches_ncs)

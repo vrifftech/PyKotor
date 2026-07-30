@@ -32,7 +32,7 @@ from pykotor.tslpatcher.mods.install import InstallFile
 from pykotor.tslpatcher.mods.ncs import ModificationsNCS
 from pykotor.tslpatcher.mods.nss import ModificationsNSS
 from pykotor.tslpatcher.mods.ssf import ModificationsSSF, ModifySSF
-from pykotor.tslpatcher.mods.tlk import ModificationsTLK, ModifyTLK
+from pykotor.tslpatcher.mods.tlk import MergeTLK, ModificationsTLK, ModifyTLK
 from pykotor.tslpatcher.mods.twoda import (
     AddColumn2DA,
     AddRow2DA,
@@ -316,7 +316,7 @@ class ConfigReader:
         ----------------
             - Parses the [TLKList] section to get TLK patch entries
             - Handles different patch syntaxes like file replacements, string references etc
-            - Builds ModifyTLK objects for each patch and adds to the patch list
+            - Builds TLK merge and modification operations and adds them to the patch list
             - Raises errors for invalid syntax or missing files
         """
         tlk_list_section: str | None = self.get_section_name("tlklist")
@@ -332,6 +332,7 @@ class ConfigReader:
         self.config.patches_tlk.pop_tslpatcher_vars(tlk_list_edits, default_destination, default_sourcefolder)
 
         modifier_dict: dict[int, dict[str, str]] = {}
+        source_tlk_merge: MergeTLK | None = None
         syntax_error_caught = False
 
         def parse_tlk_index(raw_value: str | None, description: str) -> int:
@@ -351,12 +352,10 @@ class ConfigReader:
             mod_tlk_index: int,
             *,
             is_replacement: bool,
-            uses_main_source: bool = False,
         ):
             modifier = ModifyTLK(dialog_tlk_index, is_replacement)
             modifier.mod_index = mod_tlk_index
             modifier.tlk_filepath = self.mod_path / self.config.patches_tlk.sourcefolder / tlk_filename
-            modifier.uses_main_source = uses_main_source
             self.config.patches_tlk.modifiers.append(modifier)
 
         for key, value in tlk_list_edits.items():
@@ -365,13 +364,16 @@ class ConfigReader:
             append_file: bool = lower_key.startswith("append")
             try:
                 if lower_key.startswith("strref"):
-                    process_tlk_entries(
-                        tlk_filename=self.config.patches_tlk.sourcefile,
-                        dialog_tlk_index=parse_tlk_index(key[6:], "StrRef token"),
-                        mod_tlk_index=parse_tlk_index(value, "source TLK index"),
-                        is_replacement=False,
-                        uses_main_source=True,
-                    )
+                    token_id = parse_tlk_index(key[6:], "StrRef token")
+                    source_stringref = parse_tlk_index(value, "source TLK index")
+                    if source_tlk_merge is None:
+                        source_tlk_merge = MergeTLK(
+                            self.mod_path
+                            / self.config.patches_tlk.sourcefolder
+                            / self.config.patches_tlk.sourcefile
+                        )
+                        self.config.patches_tlk.modifiers.append(source_tlk_merge)
+                    source_tlk_merge.add_mapping(token_id, source_stringref)
                 elif replace_file or append_file:
                     next_section_name = self.get_section_name(value)
                     if next_section_name is None:

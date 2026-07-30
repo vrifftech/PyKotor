@@ -22,6 +22,7 @@ from pykotor.tslpatcher.memory import PatcherMemory
 from pykotor.tslpatcher.mods.install import InstallFile, create_backup
 from pykotor.tslpatcher.mods.nss import ModificationsNSS, MutableString
 from pykotor.tslpatcher.mods.template import OverrideType
+from pykotor.tslpatcher.mods.tlk import MergeTLK
 from utility.error_handling import universal_simplify_exception
 from utility.logger_util import RobustRootLogger
 from utility.system.path import PurePath
@@ -524,13 +525,13 @@ class ModInstaller:
             if female_source_file.safe_isfile():
                 female_tlk_patches.sourcefile = female_tlk_patches.sourcefile_f
                 for modifier in female_tlk_patches.modifiers:
-                    if modifier.uses_main_source:
+                    if isinstance(modifier, MergeTLK):
                         modifier.tlk_filepath = female_source_file
             else:
                 female_tlk_patches.modifiers = [
                     modifier
                     for modifier in female_tlk_patches.modifiers
-                    if not modifier.uses_main_source
+                    if not isinstance(modifier, MergeTLK)
                 ]
 
             if female_tlk_patches.modifiers:
