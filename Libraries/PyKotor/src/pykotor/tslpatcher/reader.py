@@ -1100,31 +1100,28 @@ class ConfigReader:
 
         modification: Modify2DA | None = None
         lowercase_key: str = key.lower()
+        ordered_entries = [(modifier, "" if value is None else value) for modifier, value in modifiers.items()]
 
         if lowercase_key.startswith("changerow"):
             target = self.target_2da(identifier, modifiers)
-            if target is None:
-                return None
             cells, store_2da, store_tlk = self.cells_2da(identifier, modifiers)
-            modification = ChangeRow2DA(identifier, target, cells, store_2da, store_tlk)
+            modification = ChangeRow2DA(identifier, target, cells, store_2da, store_tlk, ordered_entries)
 
         elif lowercase_key.startswith("addrow"):
             exclusive_column = modifiers.pop("ExclusiveColumn", None)
             row_label = self.row_label_2da(identifier, modifiers)
             cells, store_2da, store_tlk = self.cells_2da(identifier, modifiers)
-            modification = AddRow2DA(identifier, exclusive_column, row_label, cells, store_2da, store_tlk)
+            modification = AddRow2DA(identifier, exclusive_column, row_label, cells, store_2da, store_tlk, ordered_entries)
 
         elif lowercase_key.startswith("copyrow"):
             target = self.target_2da(identifier, modifiers)
-            if not target:
-                return None
             exclusive_column = modifiers.pop("ExclusiveColumn", None)
             row_label = self.row_label_2da(identifier, modifiers)
             cells, store_2da, store_tlk = self.cells_2da(identifier, modifiers)
-            modification = CopyRow2DA(identifier, target, exclusive_column, row_label, cells, store_2da, store_tlk)
+            modification = CopyRow2DA(identifier, target, exclusive_column, row_label, cells, store_2da, store_tlk, ordered_entries)
 
         elif lowercase_key.startswith("addcolumn"):
-            modification = self._read_add_column(modifiers, identifier)
+            modification = self._read_add_column(modifiers, identifier, ordered_entries)
 
         else:
             msg = f"Could not parse key '{key}={identifier}', expecting one of ['ChangeRow=', 'AddColumn=', 'AddRow=', 'CopyRow=']"
@@ -1136,6 +1133,7 @@ class ConfigReader:
         self,
         modifiers: CaseInsensitiveDict[str],
         identifier: str,
+        entries: list[tuple[str, str]] | None = None,
     ) -> AddColumn2DA:
         """Loads the add new column to be added to the 2D array.
 
@@ -1150,19 +1148,13 @@ class ConfigReader:
 
         Processing Logic:
         ----------------
-            - Pop 'ColumnLabel' and 'DefaultValue' from modifiers dict
-            - Raise error if 'ColumnLabel' or 'DefaultValue' is missing
-            - Call column_inserts_2da() to get insert details
+            - Read optional 'ColumnLabel' and 'DefaultValue' values
+            - Preserve the original section entries for ordered execution
+            - Call column_inserts_2da() to retain the existing parsed fields
             - Return AddColumn2DA object
         """
-        header: str | None = modifiers.pop("ColumnLabel", None)
-        if header is None:
-            msg = f"Missing 'ColumnLabel' in [{identifier}]"
-            raise KeyError(msg)
-        default: str | None = modifiers.pop("DefaultValue", None)
-        if default is None:
-            msg = f"Missing 'DefaultValue' in [{identifier}]"
-            raise KeyError(msg)
+        header = modifiers.pop("ColumnLabel", "")
+        default = modifiers.pop("DefaultValue", "")
         default = default if default != "****" else ""
 
         index_insert: dict[int, RowValue]
@@ -1180,6 +1172,7 @@ class ConfigReader:
             index_insert,
             label_insert,
             store_2da,
+            entries,
         )
 
     def target_2da(

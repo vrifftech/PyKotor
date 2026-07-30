@@ -399,15 +399,10 @@ class TwoDA:
         self,
         header: str,
     ) -> int:
-        """Returns the highest numerical value underneath the specified column.
-
-        Returns:
-        -------
-            Highest numerical value underneath the column.
-        """
-        max_found = -1
+        """Returns the next value after the highest unsigned decimal in a column."""
+        max_found = 0
         for cell in self.get_column(header):
-            with suppress(ValueError):
+            if cell.isascii() and cell.isdigit():
                 max_found = max(int(cell), max_found)
 
         return max_found + 1
@@ -415,26 +410,10 @@ class TwoDA:
     def label_max(
         self,
     ) -> int:
-        """Finds the maximum label and returns the next integer.
-
-        Args:
-        ----
-            self: The object containing labels.
-
-        Returns:
-        -------
-            int: The next integer label.
-
-        Processes labels:
-        ----------------
-            - Initialize max_found to -1
-            - Iterate through labels
-            - Try converting each label to int and update max_found
-            - Return max_found + 1 to get the next integer label.
-        """
-        max_found = -1
+        """Returns the next value after the highest unsigned decimal row label."""
+        max_found = 0
         for label in self.get_labels():
-            with suppress(ValueError):
+            if label.isascii() and label.isdigit():
                 max_found = max(int(label), max_found)
 
         return max_found + 1

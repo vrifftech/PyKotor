@@ -209,6 +209,238 @@ class Modify2DA(ABC):
     @abstractmethod
     def __init__(self): ...
 
+    @staticmethod
+    def _normalize_entries(entries: list[tuple[str, str]] | None) -> list[tuple[str, str]]:
+        return [] if entries is None else [(str(key), "" if value is None else str(value)) for key, value in entries]
+
+    @staticmethod
+    def _is_unsigned_decimal(value: str) -> bool:
+        return bool(value) and value.isascii() and value.isdigit()
+
+    @staticmethod
+    def _row_value_to_raw(value: RowValue | str | int) -> str:
+        if isinstance(value, RowValueConstant):
+            return value.string
+        if isinstance(value, RowValue2DAMemory):
+            return f"2DAMEMORY{value.token_id}"
+        if isinstance(value, RowValueTLKMemory):
+            return f"StrRef{value.token_id}"
+        if isinstance(value, RowValueHigh):
+            return "high()"
+        if isinstance(value, RowValueRowIndex):
+            return "RowIndex"
+        if isinstance(value, RowValueRowLabel):
+            return "RowLabel"
+        if isinstance(value, RowValueRowCell):
+            return value.column
+        return str(value)
+
+    @classmethod
+    def _target_to_entry(cls, target: Target) -> tuple[str, str]:
+        key = {
+            TargetType.ROW_INDEX: "RowIndex",
+            TargetType.ROW_LABEL: "RowLabel",
+            TargetType.LABEL_COLUMN: "LabelIndex",
+        }[target.target_type]
+        return key, cls._row_value_to_raw(target.value)
+
+    @staticmethod
+    def _find_header(twoda: TwoDA, header: str) -> str | None:
+        lowered = header.lower()
+        return next((existing for existing in twoda.get_headers() if existing.lower() == lowered), None)
+
+    @staticmethod
+    def _find_row_index(twoda: TwoDA, row_label: str) -> int | None:
+        lowered = row_label.lower()
+        return next((index for index, label in enumerate(twoda.get_labels()) if label.lower() == lowered), None)
+
+    @classmethod
+    def _resolve_2da_memory(cls, value: str, memory: PatcherMemory) -> str:
+        if not value.startswith("2DAMEMORY"):
+            return value
+
+        suffix = value[9:]
+        slots = memory.memory_2da
+        if not slots:
+            return value
+
+        highest_slot = max((token_id for token_id in slots if token_id > 0), default=0)
+        if cls._is_unsigned_decimal(suffix):
+            token_id = int(suffix)
+            if token_id < 1:
+                token_id = 1
+            elif token_id > highest_slot:
+                token_id = 1
+        else:
+            token_id = 1
+
+        resolved = slots.get(token_id, "")
+        if isinstance(resolved, PureWindowsPath):
+            msg = f"!FieldPath cannot be used in 2DAList patches, got '{resolved}'"
+            raise TypeError(msg)
+        return resolved
+
+    @classmethod
+    def _resolve_strref(cls, value: str, memory: PatcherMemory) -> str:
+        if len(value) > 6 and value[:6].lower() == "strref" and cls._is_unsigned_decimal(value[6:]):
+            return str(memory.memory_str.get(int(value[6:]), 0))
+        return value
+
+    @classmethod
+    def _resolve_tokens(cls, value: str, memory: PatcherMemory) -> str:
+        return cls._resolve_2da_memory(cls._resolve_strref(value, memory), memory)
+
+    @staticmethod
+    def _to_internal(value: str) -> str:
+        return "" if value == "****" else value
+
+    @staticmethod
+    def _to_memory(value: str) -> str:
+        return "****" if value == "" else value
+
+    @classmethod
+    def _set_cell(cls, twoda: TwoDA, row_index: int, column: str, value: str) -> bool:
+        header = cls._find_header(twoda, column)
+        if header is None or not 0 <= row_index < twoda.get_height():
+            return False
+        twoda.get_row(row_index).set_string(header, cls._to_internal(value))
+        return True
+
+    @classmethod
+    def _capture_2da(
+        cls,
+        key: str,
+        selector: str,
+        twoda: TwoDA,
+        memory: PatcherMemory,
+        *,
+        row_index: int | None = None,
+        column_header: str | None = None,
+    ) -> bool:
+        if not key.startswith("2DAMEMORY"):
+            return False
+
+        suffix = key[9:]
+        if cls._is_unsigned_decimal(suffix):
+            token_id = int(suffix)
+            if token_id < 1:
+                return False
+        else:
+            token_id = 1
+
+        captured: str | None = None
+        if row_index is not None:
+            if selector == "RowIndex":
+                captured = str(row_index)
+            elif selector == "RowLabel":
+                if 0 <= row_index < twoda.get_height():
+                    captured = twoda.get_label(row_index)
+            elif 0 <= row_index < twoda.get_height():
+                header = cls._find_header(twoda, selector)
+                if header is not None:
+                    captured = twoda.get_row(row_index).get_string(header)
+        elif column_header is not None:
+            if selector == "ColumnLabel":
+                captured = column_header
+            elif selector:
+                row_selector = selector[1:]
+                selected_row: int | None = None
+                if selector[0].lower() == "i" and cls._is_unsigned_decimal(row_selector):
+                    index = int(row_selector)
+                    if 0 <= index < twoda.get_height():
+                        selected_row = index
+                elif selector[0].lower() == "l" and row_selector:
+                    selected_row = cls._find_row_index(twoda, row_selector)
+
+                if selected_row is not None:
+                    captured = twoda.get_row(selected_row).get_string(column_header)
+
+        if captured is not None:
+            memory.memory_2da[token_id] = cls._to_memory(captured)
+        return True
+
+    @classmethod
+    def _capture_tlk(
+        cls,
+        key: str,
+        selector: str,
+        twoda: TwoDA,
+        memory: PatcherMemory,
+        row_index: int,
+    ) -> bool:
+        lower_key = key.lower()
+        if not lower_key.startswith("strref") or not cls._is_unsigned_decimal(key[6:]):
+            return False
+
+        captured: str | None = None
+        if selector == "RowIndex":
+            captured = str(row_index)
+        elif selector == "RowLabel" and 0 <= row_index < twoda.get_height():
+            captured = twoda.get_label(row_index)
+        elif 0 <= row_index < twoda.get_height():
+            header = cls._find_header(twoda, selector)
+            if header is not None:
+                captured = twoda.get_row(row_index).get_string(header)
+
+        if captured is not None:
+            try:
+                memory.memory_str[int(key[6:])] = int(captured)
+            except ValueError:
+                pass
+        return True
+
+    @classmethod
+    def _exclusive_match(
+        cls,
+        twoda: TwoDA,
+        entries: list[tuple[str, str]],
+        exclusive_column: str,
+    ) -> tuple[bool, int | None]:
+        header = cls._find_header(twoda, exclusive_column)
+        if header is None:
+            return True, None
+
+        exclusive_value = next(
+            (value for key, value in entries if key.lower() == exclusive_column.lower()),
+            "",
+        )
+        if exclusive_value == "":
+            return False, None
+
+        for row_index in range(twoda.get_height()):
+            if twoda.get_row(row_index).get_string(header) == exclusive_value:
+                return False, row_index
+        return True, None
+
+    @classmethod
+    def _modify_row_fallback(
+        cls,
+        twoda: TwoDA,
+        memory: PatcherMemory,
+        entries: list[tuple[str, str]],
+        row_index: int | None,
+    ):
+        if row_index is None or not 0 <= row_index < twoda.get_height():
+            return
+
+        for key, raw_value in entries:
+            lower_key = key.lower()
+            lower_value = raw_value.lower()
+            if lower_key in {"rowindex", "rowlabel", "newrowlabel", "exclusivecolumn"}:
+                continue
+            if lower_value.startswith("high()") or lower_value.startswith("inc("):
+                continue
+            if cls._capture_2da(key, raw_value, twoda, memory, row_index=row_index):
+                continue
+            if cls._capture_tlk(key, raw_value, twoda, memory, row_index):
+                continue
+            if not key:
+                continue
+
+            value = raw_value or "****"
+            value = cls._resolve_tokens(value, memory)
+            cls._set_cell(twoda, row_index, key, value)
+
     def _unpack(
         self,
         cells: dict[str, RowValue],
@@ -227,341 +459,409 @@ class Modify2DA(ABC):
 
 
 class ChangeRow2DA(Modify2DA):
-    """Changes an existing row.
-
-    Target row can either be the Row Index, Row Label, or value under the "label" column where applicable.
-
-    Attributes:
-    ----------
-        target: The row to change.
-        modifiers: For the row, sets a cell under column KEY to have the text VALUE.
-    """
+    """Changes an existing row using the modifier section's original entry order."""
 
     def __init__(
         self,
         identifier: str,
-        target: Target,
-        cells: dict[str, RowValue],
+        target: Target | None = None,
+        cells: dict[str, RowValue] | None = None,
         store_2da: dict[int, RowValue] | None = None,
         store_tlk: dict[int, RowValue] | None = None,
+        entries: list[tuple[str, str]] | None = None,
     ):
         self.identifier: str = identifier
-        self.target: Target = target
-        self.cells: CaseInsensitiveDict[RowValue] = CaseInsensitiveDict(cells)
+        self.target: Target | None = target
+        self.cells: CaseInsensitiveDict[RowValue] = CaseInsensitiveDict({} if cells is None else cells)
         self.store_2da: dict[int, RowValue] = {} if store_2da is None else store_2da
         self.store_tlk: dict[int, RowValue] = {} if store_tlk is None else store_tlk
-
         self._row: TwoDARow | None = None
+
+        if entries is None:
+            generated: list[tuple[str, str]] = []
+            if target is not None:
+                generated.append(self._target_to_entry(target))
+            generated.extend((column, self._row_value_to_raw(value)) for column, value in self.cells.items())
+            generated.extend((f"2DAMEMORY{token_id}", self._row_value_to_raw(value)) for token_id, value in self.store_2da.items())
+            generated.extend((f"StrRef{token_id}", self._row_value_to_raw(value)) for token_id, value in self.store_tlk.items())
+            entries = generated
+        self.entries = self._normalize_entries(entries)
 
     def __repr__(self):
         return (
             f"{self.__class__.__name__}(identifier={self.identifier!r}, "
             f"target={self.target!r}, cells={self.cells!r}, "
-            f"store_2da={self.store_2da!r}, store_tlk={self.store_tlk!r})"
+            f"store_2da={self.store_2da!r}, store_tlk={self.store_tlk!r}, "
+            f"entries={self.entries!r})"
         )
 
     def apply(self, twoda: TwoDA, memory: PatcherMemory):
-        source_row: TwoDARow | None = self.target.search(twoda, memory)
+        row_index: int | None = None
 
-        if source_row is None:
-            msg = f"The source row was not found during the search: ({self.target.target_type.name}, {self.target.value})"
-            raise WarningError(msg)
+        for key, raw_value in self.entries:
+            lower_key = key.lower()
 
-        cells: dict[str, str] = self._unpack(self.cells, memory, twoda, source_row)
-        source_row.update_values(cells)
+            if lower_key == "rowindex" and row_index is None and raw_value != "":
+                resolved = self._resolve_2da_memory(raw_value, memory)
+                try:
+                    candidate = int(resolved)
+                except ValueError:
+                    candidate = -1
+                row_index = candidate if 0 <= candidate < twoda.get_height() else None
+                continue
 
-        for token_id, value in self.store_2da.items():
-            memory.memory_2da[token_id] = value.value(memory, twoda, source_row)
+            if lower_key == "rowlabel" and row_index is None and raw_value != "":
+                resolved = self._resolve_2da_memory(raw_value, memory)
+                row_index = self._find_row_index(twoda, resolved)
+                continue
 
-        for token_id, value in self.store_tlk.items():
-            memory.memory_str[token_id] = int(value.value(memory, twoda, source_row))
+            if row_index is None and key == "LabelIndex" and raw_value != "":
+                label_header = next((header for header in twoda.get_headers() if header == "label"), None)
+                if label_header is None:
+                    return
+                matching = [
+                    index
+                    for index in range(twoda.get_height())
+                    if twoda.get_row(index).get_string(label_header) == raw_value
+                ]
+                if matching:
+                    row_index = matching[-1]
+                    continue
+                return
+
+            if row_index is None:
+                if lower_key not in {"rowindex", "rowlabel"}:
+                    return
+                continue
+
+            if self._capture_2da(key, raw_value, twoda, memory, row_index=row_index):
+                continue
+            if self._capture_tlk(key, raw_value, twoda, memory, row_index):
+                continue
+            if not key:
+                continue
+
+            header = self._find_header(twoda, key)
+            if header is None:
+                continue
+
+            value = raw_value or "****"
+            value = self._resolve_strref(value, memory)
+            if value.lower().startswith("high()"):
+                value = str(twoda.column_max(header))
+            value = self._resolve_2da_memory(value, memory)
+            self._set_cell(twoda, row_index, header, value)
+
+        if row_index is not None:
+            self._row = twoda.get_row(row_index)
 
 
 class AddRow2DA(Modify2DA):
-    """Adds a new row.
-
-    Attributes:
-    ----------
-        modifiers: For the row, sets a cell under column KEY to have the text VALUE.
-    """
+    """Adds a row lazily while processing the modifier section in order."""
 
     def __init__(
         self,
         identifier: str,
-        exclusive_column: str | None,
-        row_label: RowValue | None,
-        cells: dict[str, RowValue],
+        exclusive_column: str | None = None,
+        row_label: RowValue | str | None = None,
+        cells: dict[str, RowValue] | None = None,
         store_2da: dict[int, RowValue] | None = None,
         store_tlk: dict[int, RowValue] | None = None,
+        entries: list[tuple[str, str]] | None = None,
     ):
         self.identifier: str = identifier
-        self.exclusive_column: str | None = exclusive_column
-        self.row_label: RowValue | None = row_label
-        self.cells: CaseInsensitiveDict[RowValue] = CaseInsensitiveDict(cells)
+        self.exclusive_column: str | None = exclusive_column or None
+        self.row_label: RowValue | str | None = row_label
+        self.cells: CaseInsensitiveDict[RowValue] = CaseInsensitiveDict({} if cells is None else cells)
         self.store_2da: dict[int, RowValue] = {} if store_2da is None else store_2da
         self.store_tlk: dict[int, RowValue] = {} if store_tlk is None else store_tlk
-
         self._row: TwoDARow | None = None
+
+        if entries is None:
+            generated: list[tuple[str, str]] = []
+            if self.exclusive_column is not None:
+                generated.append(("ExclusiveColumn", self.exclusive_column))
+            if row_label is not None:
+                generated.append(("RowLabel", self._row_value_to_raw(row_label)))
+            generated.extend((column, self._row_value_to_raw(value)) for column, value in self.cells.items())
+            generated.extend((f"2DAMEMORY{token_id}", self._row_value_to_raw(value)) for token_id, value in self.store_2da.items())
+            generated.extend((f"StrRef{token_id}", self._row_value_to_raw(value)) for token_id, value in self.store_tlk.items())
+            entries = generated
+        self.entries = self._normalize_entries(entries)
 
     def __repr__(self):
         return (
             f"{self.__class__.__name__}(identifier={self.identifier!r}, "
             f"exclusive_column={self.exclusive_column!r}, row_label={self.row_label!r}, "
             f"cells={self.cells!r}, store_2da={self.store_2da!r}, "
-            f"store_tlk={self.store_tlk!r})"
+            f"store_tlk={self.store_tlk!r}, entries={self.entries!r})"
         )
 
     def apply(self, twoda: TwoDA, memory: PatcherMemory):
-        """Applies an AddRow patch to a TwoDA.
+        exclusive_column = next(
+            (value for key, value in self.entries if key.lower() == "exclusivecolumn" and value != ""),
+            None,
+        )
+        if exclusive_column is not None:
+            should_add, existing_row = self._exclusive_match(twoda, self.entries, exclusive_column)
+            if not should_add:
+                self._modify_row_fallback(twoda, memory, self.entries, existing_row)
+                if existing_row is not None:
+                    self._row = twoda.get_row(existing_row)
+                return
 
-        Args:
-        ----
-            twoda: TwoDA - The Two Dimensional Array to apply the patch to.
-            memory: PatcherMemory - The memory context.
+        row_index: int | None = None
+        for key, raw_value in self.entries:
+            lower_key = key.lower()
+            if lower_key == "exclusivecolumn":
+                continue
 
-        Processing Logic:
-        ----------------
-            - Finds the target row to apply the patch to based on an optional exclusive column
-            - If no target row is found, a new row is added
-            - The cells are unpacked and applied to the target row
-            - Any stored values are updated in the memory context.
-        """
-        target_row: TwoDARow | None = None
+            if lower_key == "rowlabel":
+                value = raw_value
+                if value.lower().startswith("high()"):
+                    value = str(twoda.label_max())
+                value = self._resolve_2da_memory(value, memory)
+                if value != "":
+                    if row_index is None:
+                        row_index = twoda.add_row(str(twoda.get_height()), {})
+                    twoda.set_label(row_index, value)
+                continue
 
-        if self.exclusive_column:
-            if self.exclusive_column not in self.cells:
-                msg = f"Exclusive column {self.exclusive_column} does not exists"
-                raise WarningError(msg)
+            if row_index is not None and self._capture_2da(key, raw_value, twoda, memory, row_index=row_index):
+                continue
+            if row_index is not None and self._capture_tlk(key, raw_value, twoda, memory, row_index):
+                continue
 
-            exclusive_value = self.cells[self.exclusive_column].value(
-                memory,
-                twoda,
-                None,
-            )
-            for row in twoda:
-                if row.get_string(self.exclusive_column) != exclusive_value:
-                    continue
-                target_row = row
+            if row_index is None:
+                row_index = twoda.add_row(str(twoda.get_height()), {})
 
-        if target_row is None:
-            row_label = (
-                str(twoda.get_height())
-                if self.row_label is None
-                else self.row_label.value(memory, twoda, None)
-            )
-            index: int = twoda.add_row(row_label, {})
-            self._row = target_row = twoda.get_row(index)
-            target_row.update_values(self._unpack(self.cells, memory, twoda, target_row))
-        else:
-            cells: dict[str, str] = self._unpack(self.cells, memory, twoda, target_row)
-            target_row.update_values(cells)
+            header = self._find_header(twoda, key)
+            if header is None:
+                continue
 
-        for token_id, value in self.store_2da.items():
-            memory.memory_2da[token_id] = value.value(memory, twoda, target_row)
+            value = raw_value or "****"
+            value = self._resolve_strref(value, memory)
+            if value.lower().startswith("high()"):
+                value = str(twoda.column_max(header))
+            value = self._resolve_2da_memory(value, memory)
+            self._set_cell(twoda, row_index, header, value)
 
-        for token_id, value in self.store_tlk.items():
-            memory.memory_str[token_id] = int(value.value(memory, twoda, target_row))
+        if row_index is not None:
+            self._row = twoda.get_row(row_index)
 
 
 class CopyRow2DA(Modify2DA):
-    """Copies the the row if the exclusive_column value doesn't already exist. If the row already exists, it simply modifies the existing line.
-
-    Attributes:
-    ----------
-        identifier:
-        target: Which row to copy.
-        exclusive_column: Modify existing line if the same value already exists at this column.
-        modifiers: For the row, sets a cell under column KEY to have the text VALUE.
-    """
+    """Copies a row lazily while processing the modifier section in order."""
 
     def __init__(
         self,
         identifier: str,
-        target: Target,
-        exclusive_column: str | None,
-        row_label: RowValue | None,
-        cells: dict[str, RowValue],
+        target: Target | None = None,
+        exclusive_column: str | None = None,
+        row_label: RowValue | str | None = None,
+        cells: dict[str, RowValue] | None = None,
         store_2da: dict[int, RowValue] | None = None,
         store_tlk: dict[int, RowValue] | None = None,
+        entries: list[tuple[str, str]] | None = None,
     ):
         self.identifier: str = identifier
-        self.target: Target = target
+        self.target: Target | None = target
         self.exclusive_column: str | None = exclusive_column or None
-        self.row_label: RowValue | None = row_label
-        self.cells: CaseInsensitiveDict[RowValue] = CaseInsensitiveDict(cells)
+        self.row_label: RowValue | str | None = row_label
+        self.cells: CaseInsensitiveDict[RowValue] = CaseInsensitiveDict({} if cells is None else cells)
         self.store_2da: dict[int, RowValue] = {} if store_2da is None else store_2da
         self.store_tlk: dict[int, RowValue] = {} if store_tlk is None else store_tlk
-
         self._row: TwoDARow | None = None
+
+        if entries is None:
+            generated: list[tuple[str, str]] = []
+            if target is not None:
+                generated.append(self._target_to_entry(target))
+            if self.exclusive_column is not None:
+                generated.append(("ExclusiveColumn", self.exclusive_column))
+            if row_label is not None:
+                generated.append(("NewRowLabel", self._row_value_to_raw(row_label)))
+            generated.extend((column, self._row_value_to_raw(value)) for column, value in self.cells.items())
+            generated.extend((f"2DAMEMORY{token_id}", self._row_value_to_raw(value)) for token_id, value in self.store_2da.items())
+            generated.extend((f"StrRef{token_id}", self._row_value_to_raw(value)) for token_id, value in self.store_tlk.items())
+            entries = generated
+        self.entries = self._normalize_entries(entries)
 
     def __repr__(self):
         return (
             f"{self.__class__.__name__}(identifier={self.identifier!r}, "
             f"target={self.target!r}, exclusive_column={self.exclusive_column!r}, "
             f"row_label={self.row_label!r}, cells={self.cells!r}, "
-            f"store_2da={self.store_2da!r}, store_tlk={self.store_tlk!r})"
+            f"store_2da={self.store_2da!r}, store_tlk={self.store_tlk!r}, "
+            f"entries={self.entries!r})"
         )
-
-    def _unpack(
-        self,
-        cells: dict[str, RowValue],
-        memory: PatcherMemory,
-        twoda: TwoDA,
-        row: TwoDARow,
-    ) -> dict[str, str]:
-        unpacked = super()._unpack(cells, memory, twoda, row)
-        for column, row_value in cells.items():
-            if isinstance(row_value, RowValueConstant):
-                expression = row_value.string
-                if expression.lower().startswith("inc(") and expression.endswith(")") and expression[4:-1].isdigit():
-                    unpacked[column] = str(int(row.get_string(column)) + int(expression[4:-1]))
-        return unpacked
 
     def apply(self, twoda: TwoDA, memory: PatcherMemory):
-        """Applies a CopyRow patch to a TwoDA.
-
-        Args:
-        ----
-            twoda: TwoDA - The TwoDA to apply the patch to
-            memory: PatcherMemory - The memory context
-
-        Processing Logic:
-        ----------------
-            1. Searches for the source row in the TwoDA
-            2. Determines if an existing target row should be used or a new row added
-            3. Unpacks the cell values and updates/adds the target row
-            4. Stores any 2DA or TLK values in the memory context.
-        """
-        source_row: TwoDARow | None = self.target.search(twoda, memory)
-        target_row: TwoDARow | None = None
-        row_label = (
-            str(twoda.get_height())
-            if self.row_label is None
-            else self.row_label.value(memory, twoda, None)
+        exclusive_column = next(
+            (value for key, value in self.entries if key.lower() == "exclusivecolumn" and value != ""),
+            None,
         )
+        if exclusive_column is not None:
+            should_copy, existing_row = self._exclusive_match(twoda, self.entries, exclusive_column)
+            if not should_copy:
+                self._modify_row_fallback(twoda, memory, self.entries, existing_row)
+                if existing_row is not None:
+                    self._row = twoda.get_row(existing_row)
+                return
 
-        if source_row is None:
-            msg = f"Source row cannot be None. row_label was '{row_label}'"
-            raise WarningError(msg)
+        row_index: int | None = None
+        cloned = False
+        new_row_label = ""
 
-        if self.exclusive_column is not None:
-            if self.exclusive_column not in self.cells:
-                msg = f"Exclusive column {self.exclusive_column} does not exists"
-                raise WarningError(msg)
+        for key, raw_value in self.entries:
+            lower_key = key.lower()
 
-            exclusive_value = self.cells[self.exclusive_column].value(
-                memory,
-                twoda,
-                None,
-            )
-            for row in twoda:
-                if row.get_string(self.exclusive_column) != exclusive_value:
-                    continue
-                target_row = row
+            if lower_key == "rowindex" and row_index is None and self._is_unsigned_decimal(raw_value):
+                resolved = self._resolve_2da_memory(raw_value, memory)
+                candidate = int(resolved)
+                row_index = candidate if 0 <= candidate < twoda.get_height() else None
+                continue
 
-        if target_row is not None:
-            # If the row already exists (based on exclusive_column) then we update the cells
-            cells = self._unpack(self.cells, memory, twoda, target_row)
-            target_row.update_values(cells)
-            self._row = target_row
-        else:
-            # Otherwise, we add the new row instead.
-            index: int = twoda.copy_row(source_row, row_label, {})
-            self._row = target_row = twoda.get_row(index)
-            cells = self._unpack(self.cells, memory, twoda, target_row)
-            target_row.update_values(cells)
+            if lower_key == "rowlabel" and row_index is None and raw_value != "":
+                resolved = self._resolve_2da_memory(raw_value, memory)
+                row_index = self._find_row_index(twoda, resolved)
+                continue
 
-        for token_id, value in self.store_2da.items():
-            memory.memory_2da[token_id] = value.value(memory, twoda, target_row)
+            if lower_key == "exclusivecolumn":
+                continue
 
-        for token_id, value in self.store_tlk.items():
-            memory.memory_str[token_id] = int(value.value(memory, twoda, target_row))
+            if row_index is not None and self._capture_2da(key, raw_value, twoda, memory, row_index=row_index):
+                continue
+            if row_index is not None and self._capture_tlk(key, raw_value, twoda, memory, row_index):
+                continue
+
+            if lower_key == "newrowlabel" and raw_value != "":
+                value = raw_value
+                if value.lower().startswith("high()"):
+                    value = str(twoda.label_max())
+                new_row_label = self._resolve_2da_memory(value, memory)
+                continue
+
+            if row_index is None or not key:
+                continue
+
+            value = raw_value or "****"
+            value = self._resolve_strref(value, memory)
+
+            if not cloned:
+                source_row = twoda.get_row(row_index)
+                label = new_row_label if new_row_label != "" else str(twoda.get_height())
+                row_index = twoda.copy_row(source_row, label, {})
+                cloned = True
+
+            header = self._find_header(twoda, key)
+            if header is None:
+                continue
+
+            current_value = twoda.get_row(row_index).get_string(header)
+            lower_value = value.lower()
+            if lower_value.startswith("inc(") and value.endswith(")"):
+                closing = value.find(")")
+                increment = value[4:closing]
+                if self._is_unsigned_decimal(current_value) and self._is_unsigned_decimal(increment):
+                    value = str(int(current_value) + int(increment))
+                else:
+                    value = current_value
+            elif lower_value.startswith("high()"):
+                value = str(twoda.column_max(header))
+
+            value = self._resolve_2da_memory(value, memory)
+            self._set_cell(twoda, row_index, header, value)
+
+        if cloned and row_index is not None:
+            self._row = twoda.get_row(row_index)
 
 
 class AddColumn2DA(Modify2DA):
-    """Adds a column. The new cells are either given a default value or can be given a value based on what the row index or row label is.
-
-    Attributes:
-    ----------
-        identifier:
-        header: Label for the name column.
-        default: Default value of cells if no specific value was specified.
-        index_insert: For the new column, if the row index is KEY then set cell to VALUE.
-        label_insert: For the new column, if the row label is KEY then set cell to VALUE.
-    """
+    """Adds a column and applies its modifier entries in their original order."""
 
     def __init__(
         self,
         identifier: str,
-        header: str,
-        default: str,
-        index_insert: dict[int, RowValue],
-        label_insert: dict[str, RowValue],
+        header: str = "",
+        default: str = "",
+        index_insert: dict[int, RowValue] | None = None,
+        label_insert: dict[str, RowValue] | None = None,
         store_2da: dict[int, str] | None = None,
+        entries: list[tuple[str, str]] | None = None,
     ):
         self.identifier: str = identifier
         self.header: str = header
         self.default: str = default
-        self.index_insert: dict[int, RowValue] = index_insert
-        self.label_insert: dict[str, RowValue] = label_insert
+        self.index_insert: dict[int, RowValue] = {} if index_insert is None else index_insert
+        self.label_insert: dict[str, RowValue] = {} if label_insert is None else label_insert
         self.store_2da: dict[int, str] = {} if store_2da is None else store_2da
+
+        if entries is None:
+            generated: list[tuple[str, str]] = [("ColumnLabel", header), ("DefaultValue", "****" if default == "" else default)]
+            generated.extend((f"I{row_index}", self._row_value_to_raw(value)) for row_index, value in self.index_insert.items())
+            generated.extend((f"L{row_label}", self._row_value_to_raw(value)) for row_label, value in self.label_insert.items())
+            generated.extend((f"2DAMEMORY{token_id}", selector) for token_id, selector in self.store_2da.items())
+            entries = generated
+        self.entries = self._normalize_entries(entries)
 
     def __repr__(self):
         return (
             f"{self.__class__.__name__}(identifier={self.identifier!r}, "
             f"header={self.header!r}, default={self.default!r}, "
             f"index_insert={self.index_insert}, label_insert={self.label_insert}, "
-            f"store_2da={self.store_2da})"
+            f"store_2da={self.store_2da}, entries={self.entries!r})"
         )
 
     def apply(self, twoda: TwoDA, memory: PatcherMemory):
-        """Applies a AddColumn patch to a TwoDA.
+        added = False
+        header = ""
+        default = ""
 
-        Args:
-        ----
-            twoda: TwoDA - The TwoDA to apply the patcher to
-            memory: PatcherMemory - The memory object to store values
+        for key, raw_value in self.entries:
+            lower_key = key.lower()
 
-        Processing Logic:
-        ----------------
-            - Adds a column to the TwoDA with the patcher header
-            - Sets the default value for all rows in the new column
-            - Sets values in the new column based on index/label lookups
-            - Stores values from the TwoDA in the memory based on token IDs.
-        """
-        twoda.add_column(self.header)
-        for row in twoda:
-            row.set_string(self.header, self.default)
+            if lower_key == "columnlabel" and not added:
+                if raw_value == "":
+                    continue
+                resolved_header = self._resolve_2da_memory(raw_value, memory)
+                if resolved_header in twoda.get_headers():
+                    return
+                twoda.add_column(resolved_header)
+                header = resolved_header
+                added = True
+                continue
 
-        for row_index, row_value in self.index_insert.items():
-            index_str: str = row_value.value(memory, twoda, None)
-            this_row = twoda.get_row(row_index)
-            if this_row:
-                this_row.set_string(self.header, index_str)
-            else:
-                msg = f"Could not find row {row_index} in {self.header}"
-                raise WarningError(msg)
+            if added and self._capture_2da(key, raw_value, twoda, memory, column_header=header):
+                continue
 
-        for row_label, row_value in self.label_insert.items():
-            label_str: str = row_value.value(memory, twoda, None)
-            this_row: TwoDARow | None = twoda.find_row(row_label)
-            if this_row:
-                this_row.set_string(self.header, label_str)
-            else:
-                msg = f"Could not find row {row_label} in {self.header}"
-                raise WarningError(msg)
+            if lower_key == "defaultvalue" and added:
+                if raw_value == "":
+                    continue
+                value = self._resolve_tokens(raw_value, memory)
+                value = self._to_internal(value)
+                old_default = default
+                default = value
+                for row_index in range(twoda.get_height()):
+                    row = twoda.get_row(row_index)
+                    if row.get_string(header) == old_default:
+                        row.set_string(header, default)
+                continue
 
-        for token_id, value in self.store_2da.items():
-            # TODO: Exception handling
-            if value.startswith("I"):
-                cell = twoda.get_row(int(value[1:])).get_string(self.header)
-                memory.memory_2da[token_id] = cell
-            elif value.startswith("L"):
-                cell = twoda.find_row(value[1:]).get_string(self.header)
-                memory.memory_2da[token_id] = cell
-            else:
-                msg = f"store_2da dict has an invalid value at {token_id}: '{value}'"
-                raise WarningError(msg)
+            if not added or not key:
+                continue
+
+            value = default if raw_value == "" else self._resolve_strref(raw_value, memory)
+            row_selector = key[1:]
+            if key[0].lower() == "i" and self._is_unsigned_decimal(row_selector):
+                row_index = int(row_selector)
+                if 0 <= row_index < twoda.get_height():
+                    self._set_cell(twoda, row_index, header, value)
+            elif key[0].lower() == "l" and row_selector:
+                row_index = self._find_row_index(twoda, row_selector)
+                if row_index is not None:
+                    value = self._resolve_2da_memory(value, memory)
+                    self._set_cell(twoda, row_index, header, value)
 
 
 # endregion
