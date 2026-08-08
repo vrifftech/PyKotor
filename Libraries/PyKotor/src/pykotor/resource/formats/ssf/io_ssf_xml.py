@@ -44,9 +44,9 @@ class SSFXMLReader(ResourceReader):
         xml_root = ElementTree.fromstring(data)  # noqa: S314
 
         for child in xml_root:
-            with suppress(ValueError):
+            with suppress(KeyError, ValueError):
                 sound = SSFSound(int(child.attrib["id"]))
-                stringref = int(child.attrib["strref"])
+                stringref = int(child.attrib.get("strref", "-1"))
                 self._ssf.set_data(sound, stringref)
 
         return self._ssf

@@ -22,6 +22,7 @@ from pykotor.tslpatcher.mods.gff import (
     FieldValue2DAMemory,
     FieldValueConstant,
     FieldValueListIndex,
+    FieldValueRaw,
     FieldValueTLKMemory,
     LocalizedStringDelta,
     Memory2DAModifierGFF,
@@ -487,128 +488,95 @@ class ConfigReader:
                 modifications.modifiers.append(manipulation)
 
     def load_ssf_list(self):
-        """Loads SSF patches from the ini file into memory.
-
-        Processing Logic:
-        ----------------
-            - Gets the [SSFList] section name from the ini file
-            - Checks for [SSFList] section, logs warning if missing
-            - Maps sound names to enum values
-            - Loops through [SSFList] parsing patches
-                - Gets section for each SSF file
-                - Creates ModificationsSSF object
-                - Parses file section into modifiers
-            - Adds ModificationsSSF objects to config patches
-        """
-        ssf_list_section: str | None = self.get_section_name("SSFList")
+        """Load SSF patches without allowing one invalid entry to abort the file."""
+        ssf_list_section = self.get_section_name("SSFList")
         if ssf_list_section is None:
             self.log.add_note("[SSFList] section missing from ini.")
             return
 
         self.log.add_note("Loading [SSFList] patches from ini...")
-
         ssf_section_dict = CaseInsensitiveDict(self.ini[ssf_list_section])
-        default_destination: str = ssf_section_dict.pop("!DefaultDestination", ModificationsSSF.DEFAULT_DESTINATION)
+        default_destination = ssf_section_dict.pop("!DefaultDestination", ModificationsSSF.DEFAULT_DESTINATION)
         default_source_folder = ssf_section_dict.pop("!DefaultSourceFolder", ".")
 
         for identifier, file in ssf_section_dict.items():
-            ssf_file_section: str | None = self.get_section_name(file)
+            ssf_file_section = self.get_section_name(file)
             if ssf_file_section is None:
                 raise KeyError(SECTION_NOT_FOUND_ERROR.format(file) + REFERENCES_TRACEBACK_MSG.format(identifier, file, ssf_list_section))
 
-            replace: bool = identifier.lower().startswith("replace")
-            modifications = ModificationsSSF(file, replace)
+            modifications = ModificationsSSF(file, identifier.lower().startswith("replace"))
             self.config.patches_ssf.append(modifications)
 
             file_section_dict = CaseInsensitiveDict(self.ini[ssf_file_section])
             modifications.pop_tslpatcher_vars(file_section_dict, default_destination, default_source_folder)
 
             for name, value in file_section_dict.items():
-                new_value: TokenUsage
-                lower_value: str = value.lower()
-                if lower_value.startswith("2damemory"):
-                    token_id = int(value[9:])
-                    new_value = TokenUsage2DA(token_id)
-                elif lower_value.startswith("strref"):
-                    token_id = int(value[6:])
-                    new_value = TokenUsageTLK(token_id)
+                try:
+                    sound = self.resolve_tslpatcher_ssf_sound(name)
+                except KeyError:
+                    self.log.add_error(f"Unknown SSF sound label '{name}' in [{ssf_file_section}]; skipping entry.")
+                    continue
+                raw_value = value or ""
+                suffix = raw_value[6:]
+                if raw_value[:6].lower() == "strref" and suffix.isascii() and suffix.isdigit():
+                    stringref = TokenUsageTLK(int(suffix))
                 else:
-                    new_value = NoTokenUsage(int(value))
-
-                sound: SSFSound = self.resolve_tslpatcher_ssf_sound(name)
-                modifier = ModifySSF(sound, new_value)
-                modifications.modifiers.append(modifier)
+                    suffix = raw_value[9:]
+                    if raw_value.startswith("2DAMEMORY") and suffix.isascii() and suffix.isdigit():
+                        stringref = TokenUsage2DA(int(suffix))
+                    else:
+                        stringref = NoTokenUsage(raw_value)
+                modifications.modifiers.append(ModifySSF(sound, stringref))
 
     def load_gff_list(self):
-        """Loads GFF patches from the ini file into memory.
-
-        Processing Logic:
-        ----------------
-            - Gets the "[GFFList]" section from the ini file
-            - Loops through each GFF patch defined
-                - Gets the section for the individual GFF file
-                - Creates a ModificationsGFF object for it
-                - Populates variables from the GFF section
-                - Loops through each modifier
-                    - Creates the appropriate modifier object
-                    - Adds it to the modifications object
-            - Adds the fully configured modifications object to the config.
-        """
-        gff_list_section: str | None = self.get_section_name("GFFList")
+        """Load GFF patches while keeping each field operation independent."""
+        gff_list_section = self.get_section_name("GFFList")
         if gff_list_section is None:
             self.log.add_note("[GFFList] section missing from ini.")
             return
 
         self.log.add_note("Loading [GFFList] patches from ini...")
         gff_section_dict = CaseInsensitiveDict(self.ini[gff_list_section])
-        default_destination: str = gff_section_dict.pop("!DefaultDestination", ModificationsGFF.DEFAULT_DESTINATION)
+        default_destination = gff_section_dict.pop("!DefaultDestination", ModificationsGFF.DEFAULT_DESTINATION)
         default_source_folder = gff_section_dict.pop("!DefaultSourceFolder", ".")
 
         for identifier, file in gff_section_dict.items():
-            file_section_name: str | None = self.get_section_name(file)
+            file_section_name = self.get_section_name(file)
             if file_section_name is None:
                 raise KeyError(SECTION_NOT_FOUND_ERROR.format(file) + REFERENCES_TRACEBACK_MSG.format(identifier, file, gff_list_section))
 
-            replace: bool = identifier.lower().startswith("replace")
-            modifications = ModificationsGFF(file, replace)
+            modifications = ModificationsGFF(file, identifier.lower().startswith("replace"))
             self.config.patches_gff.append(modifications)
 
             file_section_dict = CaseInsensitiveDict(self.ini[file_section_name])
             modifications.pop_tslpatcher_vars(file_section_dict, default_destination, default_source_folder)
 
             for key, value in file_section_dict.items():
-                modifier: ModifyGFF | None
+                try:
+                    modifier: ModifyGFF | None = None
+                    raw_value = value or ""
+                    if key.startswith("AddField") and len(key) > len("AddField"):
+                        next_gff_section = self.get_section_name(raw_value)
+                        if next_gff_section is None:
+                            self.log.add_error(SECTION_NOT_FOUND_ERROR.format(raw_value) + REFERENCES_TRACEBACK_MSG.format(key, raw_value, file_section_name))
+                            continue
+                        modifier = self.add_field_gff(next_gff_section, CaseInsensitiveDict(self.ini[next_gff_section]))
 
-                lowercase_key: str = key.lower()
-                if lowercase_key.startswith("addfield"):
-                    next_gff_section: str | None = self.get_section_name(value)
-                    if next_gff_section is None:
-                        raise KeyError(SECTION_NOT_FOUND_ERROR.format(value) + REFERENCES_TRACEBACK_MSG.format(key, value, file_section_name))
-
-                    next_section_dict = CaseInsensitiveDict(self.ini[next_gff_section])
-                    modifier = self.add_field_gff(next_gff_section, next_section_dict)
-
-                elif lowercase_key.startswith("2damemory"):
-                    if value.lower() == "!fieldpath":
-                        modifier = Memory2DAModifierGFF(
-                            file,
-                            PureWindowsPath(""),
-                            dst_token_id=int(key[9:]),
-                        )
-                    elif value.lower().startswith("2damemory"):
-                        modifier = Memory2DAModifierGFF(
-                            file,
-                            PureWindowsPath(""),
-                            dst_token_id=int(key[9:]),
-                            src_token_id=int(value[9:]),
-                        )
+                    elif key.startswith("2DAMEMORY") and key[9:].isascii() and key[9:].isdigit():
+                        token_id = int(key[9:])
+                        if raw_value == "!FieldPath":
+                            modifier = Memory2DAModifierGFF(file_section_name, PureWindowsPath(""), token_id)
+                        elif raw_value.startswith("2DAMEMORY") and raw_value[9:].isascii() and raw_value[9:].isdigit():
+                            modifier = Memory2DAModifierGFF(file_section_name, PureWindowsPath(""), token_id, int(raw_value[9:]))
+                        else:
+                            modifier = self.modify_field_gff(file_section_name, key, raw_value)
                     else:
-                        msg = f"Cannot parse '{key}={value}' in [{identifier}]. GFFList only supports 2DAMEMORY#=!FieldPath and 2DAMEMORY#=2DAMEMORY# assignments"
-                        raise ValueError(msg)
-                else:
-                    modifier = self.modify_field_gff(file_section_name, key, value)
+                        modifier = self.modify_field_gff(file_section_name, key, raw_value)
 
-                modifications.modifiers.append(modifier)
+                    if modifier is not None:
+                        modifications.modifiers.append(modifier)
+                except (KeyError, TypeError, ValueError) as exc:
+                    self.log.add_error(f"Unable to parse GFF operation '{key}={value}' in [{file_section_name}]: {exc}")
 
     def load_compile_list(self):
         """Loads patches from the [CompileList] section of the ini file.
@@ -703,133 +671,157 @@ class ConfigReader:
         key: str,
         str_value: str,
     ) -> ModifyFieldGFF:
-        """Modifies a field in a GFF based on the key(path) and string value.
+        """Create a direct GFF field operation without committing to a destination type."""
+        value: FieldValue = cls._deferred_gff_value(str_value)
+        lower_key = key.lower()
+        path_token_id: int | None = None
 
-        Args:
-        ----
-            identifier: str - The section name (for logging purposes)
-            key: str - The key of the field to modify
-            string_value: str - The string value to set the field to.
-
-        Returns:
-        -------
-            ModifyFieldGFF - A ModifyFieldGFF object representing the modification
-
-        Processing Logic:
-        ----------------
-            1. Parses the string value into a FieldValue
-            2. Handles special cases for keys containing "(strref)", "(lang)" or starting with "2damemory"
-            3. Returns a ModifyFieldGFF object representing the modification.
-        """
-        value: FieldValue = cls.field_value_from_unknown(str_value)
-        lower_key: str = key.lower()
         if "(strref)" in lower_key:
-            value = FieldValueConstant(LocalizedStringDelta(value))
-            key = key[: lower_key.index("(strref)")]
+            selector = lower_key.index("(strref)")
+            value = FieldValueConstant(LocalizedStringDelta(cls._deferred_gff_value(str_value, GFFFieldType.Int32)))
+            key = key[:selector]
 
-        elif "(lang" in lower_key:
-            substring_id = int(key[lower_key.index("(lang") + 5 : -1])
-            language, gender = LocalizedString.substring_pair(substring_id)
-            locstring = LocalizedStringDelta()
-            locstring.set_data(language, gender, str_value)
-            value = FieldValueConstant(locstring)
-            key = key[: lower_key.index("(lang")]
+        else:
+            selector = key.find("(lang")
+            if selector != -1 and key.endswith(")"):
+                substring = key[selector + 5 : -1]
+                if substring.isascii() and substring.isdigit():
+                    substring_id = int(substring)
+                    locstring = LocalizedStringDelta()
+                    field_value = cls._deferred_gff_value(str_value, GFFFieldType.String)
+                    if cls._requires_runtime_gff_resolution(str_value):
+                        locstring.set_field_value(substring_id, field_value)
+                    else:
+                        language, gender = locstring.substring_pair(substring_id)
+                        locstring.set_data(language, gender, cls.normalize_tslpatcher_crlf(str_value))
+                    value = FieldValueConstant(locstring)
+                    key = key[:selector]
 
-        elif lower_key.startswith("2damemory"):
-            lower_str_value: str = str_value.lower()
-            if lower_str_value != "!fieldpath" and not lower_str_value.startswith("2damemory"):
-                msg = f"Cannot parse '{key}={value}' in [{identifier}]. GFFList only supports 2DAMEMORY#=!FieldPath assignments"
-                raise ValueError(msg)
-            value = FieldValueConstant(PureWindowsPath(""))  # no path at the root
+        if key.startswith("2DAMEMORY") and key[9:].isascii() and key[9:].isdigit():
+            path_token_id = int(key[9:])
+            key = ""
 
-        return ModifyFieldGFF(PureWindowsPath(key), value, identifier)
+        return ModifyFieldGFF(PureWindowsPath(key), value, identifier, path_token_id=path_token_id)
+
+    @classmethod
+    def _deferred_gff_value(
+        cls,
+        raw_value: str,
+        field_type: GFFFieldType | None = None,
+    ) -> FieldValue:
+        memory_value = cls.field_value_from_memory(raw_value)
+        if memory_value is not None:
+            return memory_value
+
+        parsed_value: FieldValue | None = None
+        try:
+            parsed_value = cls.field_value_from_type(raw_value, field_type) if field_type is not None else cls.field_value_from_unknown(raw_value)
+        except (TypeError, ValueError):
+            pass
+
+        preview = parsed_value.stored if isinstance(parsed_value, FieldValueConstant) else raw_value
+        return FieldValueRaw(raw_value, preview)
+
+    @staticmethod
+    def _requires_runtime_gff_resolution(raw_value: str) -> bool:
+        return raw_value.startswith("2DAMEMORY") or (
+            raw_value[:6].lower() == "strref"
+            and raw_value[6:].isascii()
+            and raw_value[6:].isdigit()
+        )
 
     def add_field_gff(
         self,
         identifier: str,
         ini_data: CaseInsensitiveDict[str],
         current_path: PureWindowsPath | None = None,
-    ) -> ModifyGFF:  # sourcery skip: extract-method, remove-unreachable-code
-        """Parse GFFList's AddField syntax from the ini to determine what fields/structs/lists to add.
+    ) -> ModifyGFF:
+        """Parse one AddField section while preserving nested operation order."""
+        raw_field_type = ini_data.get("FieldType")
+        if raw_field_type is None:
+            raise ValueError(f"FieldType must be set in [{identifier}].")
+        field_type = self.resolve_tslpatcher_gff_field_type(raw_field_type)
 
-        Args:
-        ----
-            identifier: str - Identifier of the section in the current recursion from the ini file
-            ini_data: CaseInsensitiveDict - Data from the ini section
-            current_path: PureWindowsPath or None - Current path in the GFF
+        label_value = ini_data.get("Label", "")
+        label = "" if label_value is None else label_value.strip()
+        has_explicit_path = "Path" in ini_data
+        raw_path = ini_data.get("Path", "") or ""
+        path = PureWindowsPath(raw_path.strip())
+        relative_path = current_path is not None and not has_explicit_path
 
-        Returns:
-        -------
-            ModifyGFF - Object containing the field modification
-
-        Processing Logic:
-        ----------------
-            1. Determines the field type from the field type string
-            2. Gets the label and optional value, path from the ini data
-            3. Construct a current path from the gff root struct based on recursion level and path key.
-            3. Handles nested modifiers and structs in lists
-            4. Returns an AddFieldGFF or AddStructToListGFF object based on whether a label is provided.
-        """
-        # Parse required values
-        raw_field_type: str = ini_data.pop("FieldType")
-        label: str = ini_data.pop("Label").strip()
-
-        # Resolve TSLPatcher -> PyKotor GFFFieldType
-        field_type: GFFFieldType = self.resolve_tslpatcher_gff_field_type(raw_field_type)
-
-        # Handle current GFF path
-        raw_path: str = ini_data.pop("Path", "").strip()
-        path: PureWindowsPath = PureWindowsPath(raw_path)
-        if not path.name and current_path and current_path.name:  # use current recursion path if section doesn't override with Path=
-            path = current_path
-        if field_type == GFFFieldType.Struct:
-            path /= ">>##INDEXINLIST##<<"
-
+        value = self._get_addfield_value(ini_data, field_type, identifier)
         modifiers: list[ModifyGFF] = []
-        index_in_list_token = None
 
         for key, iterated_value in ini_data.items():
-            lower_key: str = key.lower()
-            if lower_key.startswith("2damemory"):
-                lower_iterated_value: str = iterated_value.lower()
-                if lower_iterated_value == "listindex":
-                    index_in_list_token = int(key[9:])
-                elif lower_iterated_value == "!fieldpath":
-                    modifier = Memory2DAModifierGFF(identifier, dst_token_id=int(key[9:]), path=path/label)  # Assign current path to 2damemory.
-                    modifiers.insert(0, modifier)
-                elif lower_iterated_value.startswith("2damemory"):
-                    modifier = Memory2DAModifierGFF(identifier, dst_token_id=int(key[9:]), src_token_id=int(iterated_value[9:]), path=path) # Assign field at path to a value or (path to field's value)
-                    modifiers.insert(0, modifier)
+            raw_iterated_value = iterated_value or ""
+            if key.startswith("2DAMEMORY") and key[9:].isascii() and key[9:].isdigit():
+                token_id = int(key[9:])
+                if raw_iterated_value == "ListIndex":
+                    modifiers.append(
+                        Memory2DAModifierGFF(
+                            identifier,
+                            PureWindowsPath(""),
+                            token_id,
+                            relative_path=True,
+                            store_list_index=True,
+                        )
+                    )
+                elif raw_iterated_value == "!FieldPath":
+                    modifiers.append(
+                        Memory2DAModifierGFF(
+                            identifier,
+                            PureWindowsPath(""),
+                            token_id,
+                            relative_path=True,
+                        )
+                    )
+                elif raw_iterated_value.startswith("2DAMEMORY") and raw_iterated_value[9:].isascii() and raw_iterated_value[9:].isdigit():
+                    modifiers.append(
+                        Memory2DAModifierGFF(
+                            identifier,
+                            PureWindowsPath(""),
+                            token_id,
+                            int(raw_iterated_value[9:]),
+                            relative_path=True,
+                        )
+                    )
+                continue
 
-            # Handle nested AddField's and recurse
-            if lower_key.startswith("addfield"):
-                next_section_name: str | None = self.get_section_name(iterated_value)
+            if key.startswith("AddField") and len(key) > len("AddField"):
+                next_section_name = self.get_section_name(raw_iterated_value)
                 if next_section_name is None:
-                    raise KeyError(SECTION_NOT_FOUND_ERROR.format(iterated_value) + REFERENCES_TRACEBACK_MSG.format(key, iterated_value, identifier))
-
-                next_nested_section = CaseInsensitiveDict(self.ini[next_section_name])
-                nested_modifier: ModifyGFF = self.add_field_gff(
-                    identifier=next_section_name,
-                    ini_data=next_nested_section,
-                    current_path=path / label,
-                )
-
+                    self.log.add_error(SECTION_NOT_FOUND_ERROR.format(raw_iterated_value) + REFERENCES_TRACEBACK_MSG.format(key, raw_iterated_value, identifier))
+                    continue
+                try:
+                    nested_modifier = self.add_field_gff(
+                        next_section_name,
+                        CaseInsensitiveDict(self.ini[next_section_name]),
+                        current_path=PureWindowsPath(""),
+                    )
+                except (KeyError, TypeError, ValueError) as exc:
+                    self.log.add_error(f"Unable to parse nested AddField section [{next_section_name}]: {exc}")
+                    continue
                 modifiers.append(nested_modifier)
 
-        # get AddField value based on this recursion level
-        value: FieldValue = self._get_addfield_value(ini_data, field_type, identifier)
-
-        # Check if label unset to determine if current ini section is a struct inside a list.
-        if not label and field_type == GFFFieldType.Struct:
-            return AddStructToListGFF(identifier, value, path, index_in_list_token, modifiers)
-
-        # if field_type == GFFFieldType.Struct:  # not sure if this is invalid syntax or not.
-        #     msg = f"Label={label} cannot be used when FieldType={GFFFieldType.Struct.value}. Error happened in [{identifier}] section in ini."
-        #     raise ValueError(msg)
+        if field_type is GFFFieldType.Struct and not label:
+            return AddStructToListGFF(
+                identifier,
+                value,
+                path,
+                modifiers=modifiers,
+                relative_path=relative_path,
+            )
         if not label:
-            msg = f"Label must be set for {field_type!r} (FieldType={field_type.value}). Error happened in [{identifier}] section in ini."
-            raise ValueError(msg)
-        return AddFieldGFF(identifier, label, field_type, value, path, modifiers)
+            raise ValueError(f"Label must be set for FieldType={field_type.name} in [{identifier}].")
+        return AddFieldGFF(
+            identifier,
+            label,
+            field_type,
+            value,
+            path,
+            modifiers,
+            relative_path=relative_path,
+        )
 
     @classmethod
     def _get_addfield_value(
@@ -838,121 +830,60 @@ class ConfigReader:
         field_type: GFFFieldType,
         identifier: str,
     ) -> FieldValue:
-        """Gets the value for an addfield from an ini section dictionary.
-
-        Args:
-        ----
-            ini_section_dict: {CaseInsensitiveDict}: The section of the ini, as a dict.
-            field_type: {GFFFieldType}: The field type of this addfield section.
-            identifier: {str}: The name identifier for the section
-
-        Returns:
-        -------
-            value: {FieldValue | None}: The parsed field value or None
-
-        Processing Logic:
-        ----------------
-            - Parses the "Value" key to get a raw value and parses it based on field type
-            - For LocalizedString, see field_value_from_localized_string
-            - For GFFList and GFFStruct, constructs empty instances to be filled in later - see pykotor/tslpatcher/mods/gff.py
-            - Returns None if value cannot be parsed or field type not supported (config err)
-        """
-        value: FieldValue | None = None
-
-        raw_value: str | None = ini_section_dict.pop("Value", None)
-        if raw_value is not None:
-            ret_value: FieldValue | None = cls.field_value_from_type(raw_value, field_type)
-            if ret_value is None:
-                msg = f"Could not parse fieldtype '{field_type.name}' in GFFList section [{identifier}]"
-                raise ValueError(msg)
-            value = ret_value
-
-        elif field_type == GFFFieldType.LocalizedString:
-            value = cls.field_value_from_localized_string(ini_section_dict)
-
-        elif field_type == GFFFieldType.List:
-            value = FieldValueConstant(GFFList())
-
-        elif field_type == GFFFieldType.Struct:
-            raw_struct_id: str = ini_section_dict.pop("TypeId", "0").strip()  # 0 is the default struct id.
-            if not is_int(raw_struct_id):
-                if raw_struct_id.lower() == "listindex":
-                    return FieldValueListIndex(raw_struct_id.lower())
-                msg = f"Invalid TypeId: expected int (or 'listindex' literal) but got '{raw_struct_id}' in [{identifier}]"
-                raise ValueError(msg)
-            struct_id = int(raw_struct_id)
-            value = FieldValueConstant(GFFStruct(struct_id))
-
-        if value is None:
-            msg = f"Could not find valid field return type in [{identifier}] matching field type '{field_type.name}'"
-            raise ValueError(msg)
-
-        return value
+        """Return an AddField value that retains the original INI text for apply-time validation."""
+        if field_type is GFFFieldType.LocalizedString:
+            return cls.field_value_from_localized_string(ini_section_dict)
+        if field_type is GFFFieldType.List:
+            return FieldValueConstant(GFFList())
+        if field_type is GFFFieldType.Struct:
+            raw_type_id = ini_section_dict.get("TypeId", "0") or "0"
+            if raw_type_id.lower() == "listindex":
+                return FieldValueListIndex("listindex")
+            type_id = int(raw_type_id) if raw_type_id.isascii() and raw_type_id.isdigit() else 0
+            return FieldValueRaw(raw_type_id, GFFStruct(type_id))
+        if "Value" in ini_section_dict:
+            return cls._deferred_gff_value(ini_section_dict.get("Value", "") or "", field_type)
+        if field_type is GFFFieldType.ResRef:
+            return FieldValueRaw("", ResRef.from_blank())
+        if field_type is GFFFieldType.String:
+            return FieldValueRaw("", "")
+        if field_type is GFFFieldType.Binary:
+            return FieldValueRaw("", b"")
+        return FieldValueRaw("")
 
     @classmethod
     def field_value_from_localized_string(cls, ini_section_dict: CaseInsensitiveDict) -> FieldValueConstant:
-        """Parses a localized string from an INI section dictionary (usually a GFF section).
-
-        Args:
-        ----
-            ini_section_dict: CaseInsensitiveDict containing localized string data
-
-        Returns:
-        -------
-            FieldValueConstant: Parsed TSLPatcher localized string
-
-        Processing Logic:
-        ----------------
-            1. Pop the "StrRef" key to get the base string reference
-            2. Lookup the string reference from memory or use it as-is if not found
-            3. Iterate the keys, filtering for language codes
-            4. Extract the language, gender and text from each key/value
-            5. Normalize the text and set it in the string delta
-            6. Return a FieldValueConstant containing the parsed string delta.
-        """
-        raw_stringref: str = ini_section_dict.pop("StrRef")
-        stringref: FieldValue = cls.field_value_from_memory(raw_stringref) or FieldValueConstant(int(raw_stringref))
-        l_string_delta = LocalizedStringDelta(stringref)
+        """Parse a localized-string delta while deferring token substitution until apply time."""
+        raw_stringref = ini_section_dict.get("StrRef", "-1") or "-1"
+        delta = LocalizedStringDelta(cls._deferred_gff_value(raw_stringref, GFFFieldType.Int32))
 
         for substring, text in ini_section_dict.items():
-            if not substring.lower().startswith("lang"):
+            if not substring.startswith("lang"):
+                continue
+            suffix = substring[4:]
+            if not suffix.isascii() or not suffix.isdigit():
                 continue
 
-            substring_id = int(substring[4:])
-            language, gender = l_string_delta.substring_pair(substring_id)
-            formatted_text: str = cls.normalize_tslpatcher_crlf(text)
-            l_string_delta.set_data(language, gender, formatted_text)
+            raw_text = text or ""
+            substring_id = int(suffix)
+            if cls._requires_runtime_gff_resolution(raw_text):
+                delta.set_field_value(substring_id, cls._deferred_gff_value(raw_text, GFFFieldType.String))
+            else:
+                language, gender = delta.substring_pair(substring_id)
+                delta.set_data(language, gender, cls.normalize_tslpatcher_crlf(raw_text))
 
-        return FieldValueConstant(l_string_delta)
+        return FieldValueConstant(delta)
 
     @staticmethod
     def field_value_from_memory(raw_value: str) -> FieldValue | None:
-        """Extract field value from memory reference string.
+        """Return a GFF memory token only when the token grammar is valid."""
+        suffix = raw_value[6:]
+        if raw_value[:6].lower() == "strref" and suffix.isascii() and suffix.isdigit():
+            return FieldValueTLKMemory(int(suffix))
 
-        Args:
-        ----
-            raw_value: String value to parse
-
-        Returns:
-        -------
-            FieldValue | None: FieldValue object or None
-
-        Processing Logic:
-        ----------------
-            - Lowercase the raw value string
-            - Check if it starts with "strref" and extract token ID
-            - Check if it starts with "2damemory" and extract token ID
-            - Return FieldValue memory object with token ID, or None if no match
-        """
-        lower_value: str = raw_value.lower()
-
-        if lower_value.startswith("strref"):
-            token_id = int(raw_value[6:])
-            return FieldValueTLKMemory(token_id)
-
-        if lower_value.startswith("2damemory"):
-            token_id = int(raw_value[9:])
-            return FieldValue2DAMemory(token_id)
+        suffix = raw_value[9:]
+        if raw_value.startswith("2DAMEMORY") and suffix.isascii() and suffix.isdigit():
+            return FieldValue2DAMemory(int(suffix))
 
         return None
 
@@ -1503,6 +1434,18 @@ class ConfigReader:
                 "Leave party": SSFSound.SEPARATED_FROM_PARTY,
                 "Rejoin party": SSFSound.REJOINED_PARTY,
                 "Poisoned": SSFSound.POISONED,
+                "Unknown(29)": SSFSound.UNKNOWN_29,
+                "Unknown(30)": SSFSound.UNKNOWN_30,
+                "Unknown(31)": SSFSound.UNKNOWN_31,
+                "Unknown(32)": SSFSound.UNKNOWN_32,
+                "Unknown(33)": SSFSound.UNKNOWN_33,
+                "Unknown(34)": SSFSound.UNKNOWN_34,
+                "Unknown(35)": SSFSound.UNKNOWN_35,
+                "Unknown(36)": SSFSound.UNKNOWN_36,
+                "Unknown(37)": SSFSound.UNKNOWN_37,
+                "Unknown(38)": SSFSound.UNKNOWN_38,
+                "Unknown(39)": SSFSound.UNKNOWN_39,
+                "Unknown(40)": SSFSound.UNKNOWN_40,
             }.items(),
         )
         return configstr_to_ssfsound[name]

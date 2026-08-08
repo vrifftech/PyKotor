@@ -15,7 +15,7 @@ class SSF:
     def __init__(
         self,
     ):
-        self._sounds: list[int] = [-1] * 28
+        self._sounds: list[int] = [-1] * len(SSFSound)
 
     def __getitem__(
         self,
@@ -30,7 +30,7 @@ class SSF:
         self,
     ):
         """Sets all the sound stringrefs to -1."""
-        for i in range(28):
+        for i in range(len(self._sounds)):
             self._sounds[i] = -1
 
     def set_data(
@@ -93,3 +93,15 @@ class SSFSound(IntEnum):
     SEPARATED_FROM_PARTY = 25
     REJOINED_PARTY = 26
     POISONED = 27
+    UNKNOWN_29 = 28
+    UNKNOWN_30 = 29
+    UNKNOWN_31 = 30
+    UNKNOWN_32 = 31
+    UNKNOWN_33 = 32
+    UNKNOWN_34 = 33
+    UNKNOWN_35 = 34
+    UNKNOWN_36 = 35
+    UNKNOWN_37 = 36
+    UNKNOWN_38 = 37
+    UNKNOWN_39 = 38
+    UNKNOWN_40 = 39
