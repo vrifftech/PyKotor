@@ -11,6 +11,7 @@ from utility.event_util import Observable
 if TYPE_CHECKING:
     from typing_extensions import LiteralString
 
+
 class LogType(IntEnum):
     VERBOSE = 0
     NOTE = 1
@@ -30,7 +31,10 @@ class PatchLogger:
         self.warning_observable: Observable = Observable()
         self.error_observable: Observable = Observable()
 
+        self.patches_configured: int = 0
         self.patches_completed: int = 0
+        self.patches_skipped: int = 0
+        self.patches_failed: int = 0
 
     @property
     def verbose_logs(self) -> list[PatchLog]:
@@ -48,8 +52,20 @@ class PatchLogger:
     def errors(self) -> list[PatchLog]:
         return [pl for pl in self.all_logs if pl.log_type == LogType.ERROR]
 
-    def complete_patch(self):
-        self.patches_completed += 1
+    def reset_patch_counts(self, configured: int = 0):
+        self.patches_configured = configured
+        self.patches_completed = 0
+        self.patches_skipped = 0
+        self.patches_failed = 0
+
+    def complete_patch(self, count: int = 1):
+        self.patches_completed += count
+
+    def skip_patch(self, count: int = 1):
+        self.patches_skipped += count
+
+    def fail_patch(self, count: int = 1):
+        self.patches_failed += count
 
     def add_verbose(self, message: str):
         log_obj = PatchLog(message, LogType.VERBOSE)

@@ -178,7 +178,7 @@ class ExternalNCSCompiler(NCSCompiler):
         return KnownExternalCompilers.from_sha256(self.filehash)
 
     def change_nwnnsscomp_path(self, nwnnsscomp_path: os.PathLike | str):
-        self.nwnnsscomp_path: Path = Path.pathify(nwnnsscomp_path)
+        self.nwnnsscomp_path = Path(nwnnsscomp_path)
         self.filehash: str = generate_hash(self.nwnnsscomp_path, hash_algo="sha256").upper()
 
     def config(
@@ -208,7 +208,8 @@ class ExternalNCSCompiler(NCSCompiler):
             - Converts game arg to Game enum if integer
             - Returns NwnnsscompConfig object configured with args useable with the compile_script and decompile_script functions.
         """
-        source_filepath, output_filepath = map(Path.pathify, (source_file, output_file))
+        source_filepath = Path(source_file).absolute()
+        output_filepath = Path(output_file).absolute()
         if not isinstance(game, Game):
             game = Game(game)
         return NwnnsscompConfig(self.filehash, source_filepath, output_filepath, game)
@@ -218,7 +219,7 @@ class ExternalNCSCompiler(NCSCompiler):
         source_file: os.PathLike | str,
         output_file: os.PathLike | str,
         game: Game | int,
-        timeout: int = 5,
+        timeout: int = 60,
         *,
         extra_args: Sequence[str] = (),
         debug: bool = False,
@@ -258,12 +259,23 @@ class ExternalNCSCompiler(NCSCompiler):
             text=True,
             timeout=timeout,
             check=False,
+            cwd=self.nwnnsscomp_path.parent,
         )
 
         stdout, stderr = self._get_output(result)
         if "File is an include file, ignored" in stdout:
             msg = "This file has no entry point and cannot be compiled (Most likely an include file)."
             raise EntryPointError(msg)
+
+        if result.returncode != 0:
+            diagnostics = stderr.strip() or stdout.strip() or f"return code {result.returncode}"
+            raise RuntimeError(f"External script compiler failed: {diagnostics}")
+
+        output_filepath = config.output_file
+        if not output_filepath.safe_isfile():
+            raise FileNotFoundError(f"External script compiler did not create '{output_filepath}'.")
+        if output_filepath.stat().st_size == 0:
+            raise ValueError(f"External script compiler created an empty output file at '{output_filepath}'.")
 
         return stdout, stderr
 
@@ -272,7 +284,7 @@ class ExternalNCSCompiler(NCSCompiler):
         source_file: os.PathLike | str,
         output_file: os.PathLike | str,
         game: Game | int,
-        timeout: int = 5,
+        timeout: int = 60,
     ) -> tuple[str, str]:
         """Decompiles a script file into C# source code.
 
@@ -281,7 +293,7 @@ class ExternalNCSCompiler(NCSCompiler):
             source_file: (os.PathLike | str) - Path to the script file to decompile.
             output_file: (os.PathLike | str) - Path to output the decompiled C# source code.
             game: (Game) - The Game object containing configuration.
-            timeout: (int) - How long to wait for decompiling to finish before aborting. Defaults to 5 seconds.
+            timeout: (int) - How long to wait for decompiling to finish before aborting. Defaults to 60 seconds.
 
         Processing Logic:
         ----------------
@@ -297,9 +309,19 @@ class ExternalNCSCompiler(NCSCompiler):
             text=True,
             timeout=timeout,
             check=False,
+            cwd=self.nwnnsscomp_path.parent,
         )
+        stdout, stderr = self._get_output(result)
+        if result.returncode != 0:
+            diagnostics = stderr.strip() or stdout.strip() or f"return code {result.returncode}"
+            raise RuntimeError(f"External script decompiler failed: {diagnostics}")
 
-        return self._get_output(result)
+        output_filepath = config.output_file
+        if not output_filepath.safe_isfile():
+            raise FileNotFoundError(f"External script decompiler did not create '{output_filepath}'.")
+        if output_filepath.stat().st_size == 0:
+            raise ValueError(f"External script decompiler created an empty output file at '{output_filepath}'.")
+        return stdout, stderr
 
     def _get_output(self, result: CompletedProcess[str]) -> tuple[str, str]:
         stdout: str = result.stdout

@@ -138,8 +138,12 @@ class ConfigReader:
     ):
         self.previously_parsed_sections = set()
         self.ini: ConfigParser = ini
-        self.mod_path: CaseAwarePath = CaseAwarePath.pathify(mod_path)
-        self.tslpatchdata_path: CaseAwarePath | None = tslpatchdata_path  # path to the tslpatchdata, optional but we'll use it here for the nwnnsscomp.exe if it exists.
+        self.mod_path = CaseAwarePath.get_case_sensitive_path(mod_path)
+        self.tslpatchdata_path = (
+            None
+            if tslpatchdata_path is None
+            else CaseAwarePath.get_case_sensitive_path(tslpatchdata_path)
+        )  # path to the tslpatchdata, optional but we'll use it here for the nwnnsscomp.exe if it exists.
         self.config: PatcherConfig
         self.log: PatchLogger = logger or PatchLogger()
 
@@ -296,6 +300,7 @@ class ConfigReader:
 
             folder_section_dict = CaseInsensitiveDict(self.ini[foldername_section])
             sourcefolder: str = folder_section_dict.pop("!SourceFolder", ".")
+            folder_section_dict.pop("!OverrideType", None)
             for file_key, filename in folder_section_dict.items():
                 file_install = InstallFile(
                     filename,
@@ -357,7 +362,9 @@ class ConfigReader:
         ):
             modifier = ModifyTLK(dialog_tlk_index, is_replacement)
             modifier.mod_index = mod_tlk_index
-            modifier.tlk_filepath = self.mod_path / self.config.patches_tlk.sourcefolder / tlk_filename
+            modifier.tlk_filepath = CaseAwarePath.get_case_sensitive_path(
+                self.mod_path / self.config.patches_tlk.sourcefolder / tlk_filename,
+            )
             self.config.patches_tlk.modifiers.append(modifier)
 
         for key, value in tlk_list_edits.items():
@@ -370,9 +377,11 @@ class ConfigReader:
                     source_stringref = parse_tlk_index(value, "source TLK index")
                     if source_tlk_merge is None:
                         source_tlk_merge = MergeTLK(
-                            self.mod_path
-                            / self.config.patches_tlk.sourcefolder
-                            / self.config.patches_tlk.sourcefile
+                            CaseAwarePath.get_case_sensitive_path(
+                                self.mod_path
+                                / self.config.patches_tlk.sourcefolder
+                                / self.config.patches_tlk.sourcefile,
+                            ),
                         )
                         self.config.patches_tlk.modifiers.append(source_tlk_merge)
                     source_tlk_merge.add_mapping(token_id, source_stringref)
@@ -602,9 +611,15 @@ class ConfigReader:
         default_destination: str = compilelist_section_dict.pop("!DefaultDestination", ModificationsNSS.DEFAULT_DESTINATION)
         default_source_folder = compilelist_section_dict.pop("!DefaultSourceFolder", ".")
 
-        nwnnsscomp_exepath = self.mod_path / default_source_folder / "nwnnsscomp.exe"
+        nwnnsscomp_exepath = CaseAwarePath.get_case_sensitive_path(
+            self.mod_path / default_source_folder / "nwnnsscomp.exe",
+        )
         if not nwnnsscomp_exepath.safe_isfile():
-            nwnnsscomp_exepath = None if self.tslpatchdata_path is None else self.tslpatchdata_path / "nwnnsscomp.exe"  # TSLPatcher default
+            nwnnsscomp_exepath = (
+                None
+                if self.tslpatchdata_path is None
+                else CaseAwarePath.get_case_sensitive_path(self.tslpatchdata_path / "nwnnsscomp.exe")
+            )  # TSLPatcher default
 
         for identifier, file in compilelist_section_dict.items():
             replace: bool = identifier.lower().startswith("replace")

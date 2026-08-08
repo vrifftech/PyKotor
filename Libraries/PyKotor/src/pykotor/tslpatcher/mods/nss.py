@@ -89,7 +89,7 @@ class ModificationsNSS(PatcherModifications):
         self.apply(source, memory, logger, game)
         if self.temp_script_folder is None:
             raise RuntimeError("CompileList working directory was not prepared before compilation.")
-        temp_script_file = self.temp_script_folder / PureWindowsPath(self.sourcefile).name
+        temp_script_file = self.temp_script_folder / PureWindowsPath(self.sourcefile).name.lower()
 
         BinaryWriter.dump(temp_script_file, source.value.encode(encoding="windows-1252", errors="ignore"))
 

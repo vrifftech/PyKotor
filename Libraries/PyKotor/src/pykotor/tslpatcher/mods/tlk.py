@@ -90,8 +90,6 @@ class ModificationsTLK(PatcherModifications):
         source_cache: dict[str, TLK] = {}
         for modifier in self.modifiers:
             modifier.apply(dialog, memory, source_cache, store_memory=self.store_memory)
-            for _ in range(modifier.patch_count):
-                log.complete_patch()
 
 
 class MergeTLK:

@@ -331,19 +331,19 @@ def rim_to_mod(
     module_root = Installation.get_module_root(module_root or filepath)
     r_rim_folderpath = CaseAwarePath.pathify(rim_folderpath) if rim_folderpath else r_outpath.parent
 
-    filepath_rim: CaseAwarePath = r_rim_folderpath / f"{module_root}.rim"
-    filepath_rim_s: CaseAwarePath = r_rim_folderpath / f"{module_root}_s.rim"
-    filepath_dlg_erf: CaseAwarePath = r_rim_folderpath / f"{module_root}_dlg.erf"
+    filepath_rim = CaseAwarePath.get_case_sensitive_path(r_rim_folderpath / f"{module_root}.rim")
+    filepath_rim_s = CaseAwarePath.get_case_sensitive_path(r_rim_folderpath / f"{module_root}_s.rim")
+    filepath_dlg_erf = CaseAwarePath.get_case_sensitive_path(r_rim_folderpath / f"{module_root}_dlg.erf")
 
     mod = ERF(ERFType.MOD)
     for res in read_rim(filepath_rim):
         mod.set_data(str(res.resref), res.restype, res.data)
 
-    if filepath_rim_s.is_file():
+    if filepath_rim_s.safe_isfile():
         for res in read_rim(filepath_rim_s):
             mod.set_data(str(res.resref), res.restype, res.data)
 
-    if (game is None or game.is_k2()) and filepath_dlg_erf.is_file():
+    if (game is None or game.is_k2()) and filepath_dlg_erf.safe_isfile():
         for res in read_erf(filepath_dlg_erf):
             mod.set_data(str(res.resref), res.restype, res.data)
 

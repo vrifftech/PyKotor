@@ -5,6 +5,7 @@ import shutil
 from typing import TYPE_CHECKING
 
 from pykotor.common.stream import BinaryReader
+from pykotor.tools.path import CaseAwarePath
 from pykotor.tslpatcher.mods.template import PatcherModifications
 from utility.error_handling import universal_simplify_exception
 from utility.system.path import PurePath
@@ -16,7 +17,6 @@ if TYPE_CHECKING:
 
     from pykotor.common.misc import Game
     from pykotor.resource.type import SOURCE_TYPES
-    from pykotor.tools.path import CaseAwarePath
     from pykotor.tslpatcher.logger import PatchLogger
     from pykotor.tslpatcher.memory import PatcherMemory
 
@@ -27,6 +27,8 @@ def create_backup(
     backup_folderpath: CaseAwarePath,
     processed_files: set,
     subdirectory_path: os.PathLike | str | None = None,
+    *,
+    is_new_file: bool = False,
 ):
     """Creates a backup of the provided file.
 
@@ -37,6 +39,7 @@ def create_backup(
         backup_folderpath: CaseAwarePath - Folder to store backups
         processed_files: set - Set of already backed up files
         subdirectory_path: os.PathLike/str/None - Optional subdirectory path
+        is_new_file: bool - Register the destination for removal instead of backing it up
 
     Processing Logic:
     ----------------
@@ -51,14 +54,14 @@ def create_backup(
     subdirectory_backup_path: CaseAwarePath | None = None
     backup_filepath: CaseAwarePath
     if subdirectory_path:
-        subdirectory_backup_path = backup_folderpath / subdirectory_path
-        backup_filepath = subdirectory_backup_path / destination_filepath.name
+        subdirectory_backup_path = CaseAwarePath.get_case_sensitive_path(backup_folderpath / subdirectory_path)
+        backup_filepath = subdirectory_backup_path / destination_filepath.name.lower()
     else:
-        backup_filepath = backup_folderpath / destination_filepath.name
+        backup_filepath = backup_folderpath / destination_filepath.name.lower()
 
     if destination_file_str_lower not in processed_files:
         # Write a list of files that should be removed in order to uninstall the mod
-        uninstall_folder: CaseAwarePath = backup_folderpath.parent.parent.joinpath("uninstall")
+        uninstall_folder = CaseAwarePath.get_case_sensitive_path(backup_folderpath.parent.parent / "uninstall")
         uninstall_str_lower: str = str(uninstall_folder).lower()
         if uninstall_str_lower not in processed_files:
             uninstall_folder.mkdir(exist_ok=True)
@@ -69,7 +72,7 @@ def create_backup(
             create_uninstall_scripts(backup_folderpath, uninstall_folder, game_folder)
             processed_files.add(uninstall_str_lower)
 
-        if destination_filepath.is_file():
+        if destination_filepath.is_file() and not is_new_file:
             # Check if the backup path exists and generate a new one if necessary
             i = 2
             filestem: str = backup_filepath.stem
@@ -83,7 +86,8 @@ def create_backup(
             try:  # sourcery skip: remove-redundant-exception
                 shutil.copy(destination_filepath, backup_filepath)
             except (OSError, PermissionError) as e:
-                log.add_warning(f"Failed to create backup of '{destination_file_str}': {universal_simplify_exception(e)}")
+                log.add_error(f"Failed to create backup of '{destination_file_str}': {universal_simplify_exception(e)}")
+                raise
         else:
             # Write the file path to remove these files.txt in backup directory
             removal_files_txt: CaseAwarePath = backup_folderpath.joinpath("remove these files.txt")
@@ -302,6 +306,8 @@ read -rp "Press enter to continue..."
 
 
 class InstallFile(PatcherModifications):
+    PROTECTED_REPLACE_EXTENSIONS = frozenset({".exe", ".tlk", ".key", ".bif"})
+
     def __init__(
         self,
         filename: str,
@@ -315,6 +321,9 @@ class InstallFile(PatcherModifications):
 
     def __hash__(self):  # HACK: organize this into PatcherModifications class later, this is only used for nwscript.nss currently.
         return hash((self.destination, self.saveas, self.replace_file))
+
+    def is_protected_replacement(self) -> bool:
+        return self.replace_file and PurePath(self.saveas).suffix.casefold() in self.PROTECTED_REPLACE_EXTENSIONS
 
     def patch_resource(
         self,

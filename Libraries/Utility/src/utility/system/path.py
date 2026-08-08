@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import ntpath
 import os
 import pathlib
+import posixpath
 import re
 import shlex
 import subprocess
@@ -113,6 +115,17 @@ class _PartialFlavourTypeHint:
     sep: Literal["\\", "/"]
 
 
+class _PathFlavour:
+    """Minimal pathlib flavour used after Python 3.13 removed the private flavour objects."""
+
+    def __init__(self, separator: Literal["\\", "/"]):
+        self.sep = separator
+
+
+_POSIX_FLAVOUR = getattr(pathlib.PurePosixPath, "_flavour", _PathFlavour("/"))
+_WINDOWS_FLAVOUR = getattr(pathlib.PureWindowsPath, "_flavour", _PathFlavour("\\"))
+
+
 class PurePath(pathlib.PurePath, metaclass=PurePathType):  # type: ignore[misc]
     _flavour: _PartialFlavourTypeHint
     _path: Self
@@ -173,12 +186,16 @@ class PurePath(pathlib.PurePath, metaclass=PurePathType):  # type: ignore[misc]
         args: tuple[PathElem, ...],
     ) -> list[str]:
         args_list: list[str] = []
+        path_module = ntpath if cls._flavour.sep == "\\" else posixpath
 
-        # Find the last absolute path index using os.path.isabs and os.path.normpath
+        # Find the last absolute path using the syntax of the path class rather
+        # than the host operating system. PureWindowsPath must continue to
+        # recognize rooted Windows paths when running on POSIX.
         # joining an absolute path with another absolute path prioritizes the last one.
         last_absolute_index = -1
         for i, arg in enumerate(args):
-            if cached_isabs(cached_normpath(arg)):  # noqa: PTH117
+            normalized_arg = cls.str_norm(os.fspath(arg), slash=cls._flavour.sep)
+            if path_module.isabs(normalized_arg):
                 last_absolute_index = i
 
         # If there is an absolute path, splice the args
@@ -187,12 +204,8 @@ class PurePath(pathlib.PurePath, metaclass=PurePathType):  # type: ignore[misc]
 
         for arg in args:
             normpath_str: str = cls.str_norm(os.fspath(arg), slash=cls._flavour.sep)
-            if cached_isabs(normpath_str):
-                drive_or_root, splitpathpart = cached_splitdrive(normpath_str) if cls._flavour.sep == "\\" else cached_splitroot(normpath_str)
-                if drive_or_root:
-                    args_list.append(drive_or_root)
-                if splitpathpart and splitpathpart.strip():
-                    args_list.append(splitpathpart)
+            if path_module.isabs(normpath_str):
+                args_list.append(normpath_str)
             else:
                 parts = normpath_str.split(cls._flavour.sep)
                 args_list.extend(parts)
@@ -494,11 +507,13 @@ class PurePath(pathlib.PurePath, metaclass=PurePathType):  # type: ignore[misc]
 
 
 class PurePosixPath(PurePath, pathlib.PurePosixPath):  # type: ignore[misc]
-    ...
+    _flavour = _POSIX_FLAVOUR
+    parser = posixpath
 
 
 class PureWindowsPath(PurePath, pathlib.PureWindowsPath):  # type: ignore[misc]
-    ...
+    _flavour = _WINDOWS_FLAVOUR
+    parser = ntpath
 
 
 class Path(PurePath, pathlib.Path):  # type: ignore[misc]
@@ -980,11 +995,13 @@ class Path(PurePath, pathlib.Path):  # type: ignore[misc]
 
 
 class PosixPath(Path):  # type: ignore[misc]
-    _flavour = pathlib.PurePosixPath._flavour  # noqa: SLF001  # pyright: ignore[reportAttributeAccessIssue]
+    _flavour = _POSIX_FLAVOUR
+    parser = posixpath
 
 
 class WindowsPath(Path):  # type: ignore[misc]
-    _flavour = pathlib.PureWindowsPath._flavour  # noqa: SLF001  # pyright: ignore[reportAttributeAccessIssue]
+    _flavour = _WINDOWS_FLAVOUR
+    parser = ntpath
 
 
 

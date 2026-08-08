@@ -134,7 +134,10 @@ def create_case_insensitive_pathlib_class(cls: type[CaseAwarePath]):
     parent_classes: list[type] = mro[1:-1]  # Exclude the current class itself and the object class
 
     # Store already wrapped methods to avoid wrapping multiple times
-    wrapped_methods = set()
+    # Preserve methods explicitly implemented by CaseAwarePath. Replacing
+    # those overrides with inherited pathlib methods breaks case resolution,
+    # particularly on Python 3.13 where pathlib's class layout changed.
+    wrapped_methods = set(cls.__dict__)
 
     # ignore these methods
     ignored_methods: set[str] = {
