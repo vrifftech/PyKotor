@@ -125,6 +125,11 @@ class KnownExternalCompilers(Enum):
 class NwnnsscompConfig:
     """Unifies the arguments passed to each different version of nwnnsscomp, since no versions offer backwards-compatibility with each other."""
 
+    DEFAULT_COMMANDLINE = {
+        "compile": ["-c", "{source}", "-o", "{output}"],
+        "decompile": ["-d", "{source}", "-o", "{output}"],
+    }
+
     def __init__(
         self,
         sha256_hash: str,
@@ -139,19 +144,29 @@ class NwnnsscompConfig:
         self.output_name: str = outputfile.name
         self.game: Game = game
 
-        self.chosen_compiler: KnownExternalCompilers = KnownExternalCompilers.from_sha256(self.sha256_hash)
+        try:
+            self.chosen_compiler: KnownExternalCompilers | None = KnownExternalCompilers.from_sha256(self.sha256_hash)
+        except ValueError:
+            self.chosen_compiler = None
 
     def get_compile_args(
         self,
         executable: str,
         extra_args: Sequence[str] = (),
     ) -> list[str]:
-        args = self._format_args(self.chosen_compiler.value.commandline["compile"], executable)
+        args = self._format_args(self._commandline("compile"), executable)
         args[1:1] = extra_args
         return args
 
     def get_decompile_args(self, executable: str) -> list[str]:
-        return self._format_args(self.chosen_compiler.value.commandline["decompile"], executable)
+        return self._format_args(self._commandline("decompile"), executable)
+
+    def _commandline(self, operation: str) -> list[str]:
+        if self.chosen_compiler is not None:
+            commandline = self.chosen_compiler.value.commandline.get(operation)
+            if commandline:
+                return commandline
+        return self.DEFAULT_COMMANDLINE[operation]
 
     def _format_args(self, args_list: list[str], executable: str) -> list[str]:
         formatted_args: list[str] = [

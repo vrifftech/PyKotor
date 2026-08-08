@@ -79,6 +79,7 @@ class ModInstaller:
         self.mod_path: CaseAwarePath = self._resolve_folder(mod_path)
         self.changes_ini_path: CaseAwarePath = CaseAwarePath.pathify(changes_ini_path)
         self.tslpatchdata_path: CaseAwarePath | None = None
+        self.patch_data_path: CaseAwarePath = self.mod_path
         self.log: PatchLogger = logger or PatchLogger()
         self.game: Game | None = Installation.determine_game(self.game_path)
         resolved_changes_ini = self._find_case_insensitive_file(self.changes_ini_path)
@@ -100,6 +101,11 @@ class ModInstaller:
                 msg = "Could not find the changes ini file on disk."
                 raise FileNotFoundError(errno.ENOENT, msg, str(self.changes_ini_path))
             self.changes_ini_path = resolved_changes_ini
+
+        changes_ini_folder = self._resolve_folder(self.changes_ini_path.parent)
+        if changes_ini_folder.name.casefold() == "tslpatchdata":
+            self.tslpatchdata_path = changes_ini_folder
+            self.patch_data_path = changes_ini_folder
 
         self._config: PatcherConfig | None = None
         self._backup: CaseAwarePath | None = None
@@ -256,9 +262,9 @@ class ModInstaller:
         filepath: os.PathLike | str,
         description: str,
     ) -> CaseAwarePath:
-        source_roots = [self.mod_path]
-        if self.tslpatchdata_path is not None:
-            source_roots.append(self.tslpatchdata_path)
+        source_roots = [self.patch_data_path]
+        if self.mod_path != self.patch_data_path:
+            source_roots.append(self.mod_path)
 
         for source_root in source_roots:
             try:
@@ -304,7 +310,7 @@ class ModInstaller:
             self._resolve_patch_output_paths(patch)
 
             source_folder = self._resolve_relative_folder_within(
-                self.mod_path,
+                self.patch_data_path,
                 patch.sourcefolder,
                 "patch source folder",
             )
@@ -415,7 +421,10 @@ class ModInstaller:
                     if not requiredfile_path.safe_isfile():
                         requiredfile_path = None
                     if requiredfile_path is None:
-                        raise ImportError(self._config.required_messages[i].strip() or "cannot install - missing a required mod")
+                        required_message = self._config.required_messages[i].strip()
+                        if not required_message:
+                            required_message = f"Cannot locate required file {file}, unable to continue with install!"
+                        raise ImportError(required_message)
         return self._config
 
     def backup(self) -> tuple[CaseAwarePath, set]:
@@ -621,7 +630,7 @@ class ModInstaller:
         try:
             if patch.replace_file or not exists_at_output_location:
                 source_folder = self._resolve_relative_folder_within(
-                    self.mod_path,
+                    self.patch_data_path,
                     patch.sourcefolder,
                     "patch source folder",
                 )
@@ -630,7 +639,7 @@ class ModInstaller:
                     patch.sourcefile,
                     "patch source file",
                 )
-                self._ensure_within_root(source_path, self.mod_path, "patch source file")
+                self._ensure_within_root(source_path, self.patch_data_path, "patch source file")
                 return self.load_resource_file(source_path)
             if capsule is None:
                 return self.load_resource_file(output_container_path / patch.saveas)
@@ -995,7 +1004,7 @@ class ModInstaller:
         checked_folders: set[str] = set()
         for source_folder in source_folders:
             source_path = self._resolve_relative_folder_within(
-                self.mod_path,
+                self.patch_data_path,
                 source_folder,
                 "CompileList source folder",
             )
@@ -1039,7 +1048,7 @@ class ModInstaller:
         seen_include_folders: set[str] = set()
         for source_folder in [".", *(patch.sourcefolder for patch in config.patches_nss)]:
             source_path = self._resolve_relative_folder_within(
-                self.mod_path,
+                self.patch_data_path,
                 source_folder,
                 "CompileList source folder",
             )
@@ -1053,7 +1062,7 @@ class ModInstaller:
         seen_patch_source_folders: set[str] = set()
         for patch in config.patches_nss:
             source_path = self._resolve_relative_folder_within(
-                self.mod_path,
+                self.patch_data_path,
                 patch.sourcefolder,
                 "CompileList source folder",
             )
@@ -1085,7 +1094,7 @@ class ModInstaller:
                     if source_file.suffix.lower() != ".nss" or not source_file.safe_isfile():
                         continue
                     safe_source_file = self._resolve_file_path_within(
-                        self.mod_path,
+                        self.patch_data_path,
                         source_file,
                         "CompileList source file",
                     )
@@ -1110,7 +1119,7 @@ class ModInstaller:
         log.add_verbose(f"Preprocessed #StrRef# and #2DAMEMORY# tokens in {script_count} CompileList source and include files.")
         for nss_patch in config.patches_nss:
             source_path = self._resolve_relative_folder_within(
-                self.mod_path,
+                self.patch_data_path,
                 nss_patch.sourcefolder,
                 "CompileList source folder",
             )
@@ -1154,7 +1163,7 @@ class ModInstaller:
             female_tlk_patches.store_memory = False
 
             female_source_folder = self._resolve_relative_folder_within(
-                self.mod_path,
+                self.patch_data_path,
                 female_tlk_patches.sourcefolder,
                 "female TLK source folder",
             )

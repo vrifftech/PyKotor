@@ -144,6 +144,7 @@ class ConfigReader:
             if tslpatchdata_path is None
             else CaseAwarePath.get_case_sensitive_path(tslpatchdata_path)
         )  # path to the tslpatchdata, optional but we'll use it here for the nwnnsscomp.exe if it exists.
+        self.patch_data_path = self.tslpatchdata_path or self.mod_path
         self.config: PatcherConfig
         self.log: PatchLogger = logger or PatchLogger()
 
@@ -238,26 +239,30 @@ class ConfigReader:
 
         self.config.window_title = settings_ini.get("WindowCaption", "")
         self.config.confirm_message = settings_ini.get("ConfirmMessage", "")
+        required_files: dict[str, tuple[str, ...]] = {}
+        required_messages: dict[str, str] = {}
+        required_order: list[str] = []
         for key, value in settings_ini.items():
             lower_key = key.lower()
-            if (
-                lower_key == "required"
-                or lower_key.startswith("required") and len(key) > len("required") and not key[len("required"):].lower().startswith("msg")
-            ):
-                if lower_key != "required" and not key[len("required"):].isdigit():
+            if lower_key.startswith("requiredmsg"):
+                suffix = key[len("requiredmsg"):]
+                if suffix and (not suffix.isascii() or not suffix.isdigit()):
                     raise ValueError(f"Key '{key}' improperly defined in settings ini. Expected (Required) or (RequiredMsg)")
-                these_files = tuple(filename.strip() for filename in value.split(","))
-                self.config.required_files.append(these_files)
+                required_messages[suffix] = (value or "").strip()
 
-            if (
-                lower_key == "requiredmsg"
-                or lower_key.startswith("requiredmsg") and len(key) > len("requiredmsg")
-            ):
-                if lower_key != "requiredmsg" and not key[len("requiredmsg"):].isdigit():
+            elif lower_key.startswith("required"):
+                suffix = key[len("required"):]
+                if suffix and (not suffix.isascii() or not suffix.isdigit()):
                     raise ValueError(f"Key '{key}' improperly defined in settings ini. Expected (Required) or (RequiredMsg)")
-                self.config.required_messages.append(value.strip())
-        if len(self.config.required_files) != len(self.config.required_messages):
-            raise ValueError(f"Required files definitions must match required msg count ({len(self.config.required_files)}/{len(self.config.required_messages)})")
+                filenames = tuple(filename.strip() for filename in (value or "").split(",") if filename.strip())
+                if not filenames:
+                    continue
+                required_files[suffix] = filenames
+                required_order.append(suffix)
+
+        for suffix in required_order:
+            self.config.required_files.append(required_files[suffix])
+            self.config.required_messages.append(required_messages.get(suffix, ""))
         self.config.save_processed_scripts = int(settings_ini.get("SaveProcessedScripts", 0))
         self.config.script_compiler_flags = settings_ini.get("ScriptCompilerFlags", "") or ""
         self.config.log_level = LogLevel(int(settings_ini.get("LogLevel", LogLevel.WARNINGS.value)))
@@ -363,7 +368,7 @@ class ConfigReader:
             modifier = ModifyTLK(dialog_tlk_index, is_replacement)
             modifier.mod_index = mod_tlk_index
             modifier.tlk_filepath = CaseAwarePath.get_case_sensitive_path(
-                self.mod_path / self.config.patches_tlk.sourcefolder / tlk_filename,
+                self.patch_data_path / self.config.patches_tlk.sourcefolder / tlk_filename,
             )
             self.config.patches_tlk.modifiers.append(modifier)
 
@@ -378,7 +383,7 @@ class ConfigReader:
                     if source_tlk_merge is None:
                         source_tlk_merge = MergeTLK(
                             CaseAwarePath.get_case_sensitive_path(
-                                self.mod_path
+                                self.patch_data_path
                                 / self.config.patches_tlk.sourcefolder
                                 / self.config.patches_tlk.sourcefile,
                             ),
@@ -487,13 +492,17 @@ class ConfigReader:
             self.config.patches_2da.append(modifications)
 
             for key, modification_id in file_section_dict.items():
-                next_section_name: str | None = self.get_section_name(modification_id)
-                if next_section_name is None:
-                    raise KeyError(SECTION_NOT_FOUND_ERROR.format(modification_id) + REFERENCES_TRACEBACK_MSG.format(key, modification_id, file_section))
+                if not key or not modification_id:
+                    continue
 
-                modification_ids_dict = CaseInsensitiveDict(self.ini[modification_id])
+                next_section_name: str | None = self.get_section_name(modification_id)
+                modification_ids_dict = (
+                    CaseInsensitiveDict()
+                    if next_section_name is None
+                    else CaseInsensitiveDict(self.ini[next_section_name])
+                )
                 manipulation: Modify2DA | None = self.discern_2da(key, modification_id, modification_ids_dict)
-                if not manipulation:  # TODO: Does this denote an error occurred? If so we should raise.
+                if not manipulation:
                     continue
                 modifications.modifiers.append(manipulation)
 
@@ -612,7 +621,7 @@ class ConfigReader:
         default_source_folder = compilelist_section_dict.pop("!DefaultSourceFolder", ".")
 
         nwnnsscomp_exepath = CaseAwarePath.get_case_sensitive_path(
-            self.mod_path / default_source_folder / "nwnnsscomp.exe",
+            self.patch_data_path / default_source_folder / "nwnnsscomp.exe",
         )
         if not nwnnsscomp_exepath.safe_isfile():
             nwnnsscomp_exepath = (
@@ -1099,48 +1108,26 @@ class ConfigReader:
 
         Processing Logic:
         ----------------
+            - Preserves the modifier section's original entries
             - Parses the key to determine modification type
-            - Checks for required parameters
-            - Constructs the appropriate modification object
+            - Constructs the modifier without eagerly normalizing its entries
             - Returns the modification object or None.
         """
-        exclusive_column: str | None
-        target: Target | None
-        row_label: RowValue | None
-        cells: dict[str, RowValue]
-        store_2da: dict[int, RowValue]
-        store_tlk: dict[int, RowValue]
-
-        modification: Modify2DA | None = None
-        lowercase_key: str = key.lower()
         ordered_entries = [(modifier, "" if value is None else value) for modifier, value in modifiers.items()]
 
-        if lowercase_key.startswith("changerow"):
-            target = self.target_2da(identifier, modifiers)
-            cells, store_2da, store_tlk = self.cells_2da(identifier, modifiers)
-            modification = ChangeRow2DA(identifier, target, cells, store_2da, store_tlk, ordered_entries)
+        if "AddRow" in key:
+            return AddRow2DA(identifier, entries=ordered_entries)
+        if "ChangeRow" in key:
+            return ChangeRow2DA(identifier, entries=ordered_entries)
+        if "AddColumn" in key:
+            return AddColumn2DA(identifier, entries=ordered_entries)
+        if "CopyRow" in key:
+            return CopyRow2DA(identifier, entries=ordered_entries)
 
-        elif lowercase_key.startswith("addrow"):
-            exclusive_column = modifiers.pop("ExclusiveColumn", None)
-            row_label = self.row_label_2da(identifier, modifiers)
-            cells, store_2da, store_tlk = self.cells_2da(identifier, modifiers)
-            modification = AddRow2DA(identifier, exclusive_column, row_label, cells, store_2da, store_tlk, ordered_entries)
-
-        elif lowercase_key.startswith("copyrow"):
-            target = self.target_2da(identifier, modifiers)
-            exclusive_column = modifiers.pop("ExclusiveColumn", None)
-            row_label = self.row_label_2da(identifier, modifiers)
-            cells, store_2da, store_tlk = self.cells_2da(identifier, modifiers)
-            modification = CopyRow2DA(identifier, target, exclusive_column, row_label, cells, store_2da, store_tlk, ordered_entries)
-
-        elif lowercase_key.startswith("addcolumn"):
-            modification = self._read_add_column(modifiers, identifier, ordered_entries)
-
-        else:
-            msg = f"Could not parse key '{key}={identifier}', expecting one of ['ChangeRow=', 'AddColumn=', 'AddRow=', 'CopyRow=']"
-            raise KeyError(msg)
-
-        return modification
+        self.log.add_warning(
+            f"Could not parse key '{key}={identifier}', expecting one of ['AddRow', 'ChangeRow', 'AddColumn', 'CopyRow']",
+        )
+        return None
 
     def _read_add_column(
         self,
