@@ -383,13 +383,14 @@ class ModInstaller:
 
         memory = PatcherMemory()
         config: PatcherConfig = self.config()
+        self._add_compilelist_dependencies(config)
         patches_list: list[PatcherModifications] = [
-            *config.install_list,  # Note: TSLPatcher executes [InstallList] after [TLKList]
             *self.get_tlk_patches(config),
+            *config.install_list,
             *config.patches_2da,
             *config.patches_gff,
+            *config.patches_ncs,
             *config.patches_nss,
-            *config.patches_ncs,  # Note: TSLPatcher executes [CompileList] after [HACKList]
             *config.patches_ssf,
         ]
 
@@ -400,7 +401,7 @@ class ModInstaller:
                 print("ModInstaller.install() received termination request, cancelling...")
                 sys.exit()
 
-            # Must run preprocessed scripts directly before GFFList so we don't interfere with !FieldPath assignments to 2DAMEMORY.
+            # CompileList sources and includes must be preprocessed after all token-producing patches have run.
             if not finished_preprocessed_scripts and isinstance(patch, ModificationsNSS):
                 self._prepare_compilelist(config, self.log, memory, self.game)
                 finished_preprocessed_scripts = True
@@ -451,6 +452,39 @@ class ModInstaller:
         num_patches_completed: int = config.patch_count()
         self.log.add_note(f"Successfully completed {num_patches_completed} {'patch' if num_patches_completed == 1 else 'total patches'}.")  # noqa: E501
 
+    def _add_compilelist_dependencies(self, config: PatcherConfig):
+        if not config.patches_nss:
+            return
+
+        existing_install = next(
+            (
+                patch
+                for patch in config.install_list
+                if patch.saveas.casefold() == "nwscript.nss"
+                and patch.destination.strip("/\\").casefold() == "override"
+            ),
+            None,
+        )
+        if existing_install is not None:
+            return
+
+        source_folders = [".", *(patch.sourcefolder for patch in config.patches_nss)]
+        checked_folders: set[str] = set()
+        for source_folder in source_folders:
+            source_path = self.mod_path / source_folder
+            normalized_source_path = str(source_path).casefold()
+            if normalized_source_path in checked_folders:
+                continue
+            checked_folders.add(normalized_source_path)
+
+            if not (source_path / "nwscript.nss").safe_isfile():
+                continue
+
+            install = InstallFile("nwscript.nss", replace_existing=True)
+            install.sourcefolder = source_folder
+            config.install_list.append(install)
+            return
+
     def _prepare_compilelist(
         self,
         config: PatcherConfig,
@@ -462,42 +496,76 @@ class ModInstaller:
         if not config.patches_nss:
             return None
 
-        # Move nwscript.nss to Override if there are any nss patches to do
-        # This is required for any non-tslpatcher versions of nwnnsscomp.exe
-        # See Libraries\PyKotor\src\pykotor\resource\formats\ncs\compilers.py for more information.
-        if (self.mod_path / "nwscript.nss").safe_isfile():
-            file_install = InstallFile("nwscript.nss", replace_existing=True)
-            if file_install not in config.install_list:
-                config.install_list.append(file_install)
-
-        # Copy all .nss files in the mod path, to a temp working directory
-        # where we can change all the stringref/2damemory tokens without overwriting the original files.
-        # First delete the temp folder if it already exists.
+        # Copy NSS sources and includes to working directories where tokens can be
+        # replaced without modifying the original installation data.
         temp_script_folder: CaseAwarePath = self.mod_path / "temp_nss_working_dir"
         if temp_script_folder.safe_isdir():
             shutil.rmtree(temp_script_folder, ignore_errors=True)
         temp_script_folder.mkdir(exist_ok=True, parents=True)
-        for file in self.mod_path.safe_iterdir():
-            if file.suffix.lower() != ".nss" or not file.safe_isfile():
-                continue
-            shutil.copy(file, temp_script_folder)
 
-        # Next process the strref/2damemory in each. It's very important this function is called after 2dalist and tlklist are handled due to this.
-        scripts_list: list[CaseAwarePath] = [*set(temp_script_folder.iterdir())]
-        log.add_verbose(f"Preprocessing #StrRef# and #2DAMEMORY# tokens for all {len(scripts_list)} scripts, before running [CompileList]")
-        for script in temp_script_folder.iterdir():
-            if script.suffix.lower() != ".nss" or not file.safe_isfile():
+        include_folders: list[CaseAwarePath] = []
+        seen_include_folders: set[str] = set()
+        for source_folder in [".", *(patch.sourcefolder for patch in config.patches_nss)]:
+            source_path = self.mod_path / source_folder
+            normalized_source_path = str(source_path).casefold()
+            if normalized_source_path in seen_include_folders:
                 continue
-            log.add_verbose(f"Parsing tokens in '{script.name}'...")
-            with script.open(mode="rb") as f:
-                m_content = MutableString(decode_bytes_with_fallbacks(f.read()))
-            ModificationsNSS(script.name).apply(m_content, memory, log, game)
-            with script.open(mode="w", encoding="windows-1252") as f:
-                f.write(m_content.value)
+            seen_include_folders.add(normalized_source_path)
+            include_folders.append(source_path)
 
-        # Store the location of the temp folder in each nss patch.
+        patch_source_folders: list[CaseAwarePath] = []
+        seen_patch_source_folders: set[str] = set()
+        for patch in config.patches_nss:
+            source_path = self.mod_path / patch.sourcefolder
+            normalized_source_path = str(source_path).casefold()
+            if normalized_source_path in seen_patch_source_folders:
+                continue
+            seen_patch_source_folders.add(normalized_source_path)
+            patch_source_folders.append(source_path)
+
+        working_folders: dict[str, CaseAwarePath] = {}
+        script_count = 0
+        for index, source_path in enumerate(patch_source_folders):
+            working_folder = temp_script_folder / f"source_{index}"
+            working_folder.mkdir(exist_ok=True, parents=True)
+
+            # Make includes from every CompileList source directory available,
+            # while allowing the current source directory to take precedence.
+            normalized_source_path = str(source_path).casefold()
+            ordered_sources = [
+                path
+                for path in include_folders
+                if str(path).casefold() != normalized_source_path
+            ]
+            ordered_sources.append(source_path)
+            for include_source in ordered_sources:
+                if not include_source.safe_isdir():
+                    continue
+                for source_file in sorted(include_source.safe_iterdir(), key=lambda path: path.name.casefold()):
+                    if source_file.suffix.lower() != ".nss" or not source_file.safe_isfile():
+                        continue
+                    shutil.copy2(source_file, working_folder / source_file.name)
+
+            scripts = [
+                script
+                for script in sorted(working_folder.safe_iterdir(), key=lambda path: path.name.casefold())
+                if script.suffix.lower() == ".nss" and script.safe_isfile()
+            ]
+            script_count += len(scripts)
+            for script in scripts:
+                log.add_verbose(f"Parsing tokens in '{script.name}'...")
+                with script.open(mode="rb") as file:
+                    content = MutableString(decode_bytes_with_fallbacks(file.read()))
+                ModificationsNSS(script.name).apply(content, memory, log, game)
+                with script.open(mode="w", encoding="windows-1252") as file:
+                    file.write(content.value)
+
+            working_folders[str(source_path).casefold()] = working_folder
+
+        log.add_verbose(f"Preprocessed #StrRef# and #2DAMEMORY# tokens in {script_count} CompileList source and include files.")
         for nss_patch in config.patches_nss:
-            nss_patch.temp_script_folder = temp_script_folder
+            source_path = self.mod_path / nss_patch.sourcefolder
+            nss_patch.temp_script_folder = working_folders[str(source_path).casefold()]
         return temp_script_folder
 
     def get_tlk_patches(self, config: PatcherConfig) -> list[ModificationsTLK]:

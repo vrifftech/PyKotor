@@ -37,9 +37,10 @@ class RIMBinaryReader(ResourceReader):
             msg = "The RIM version that was loaded is not supported."
             raise ValueError(msg)
 
-        self._reader.skip(4)
+        self._rim.unknown = self._reader.read_uint32()
         entry_count = self._reader.read_uint32()
         offset_to_keys = self._reader.read_uint32()
+        self._rim.reserved = self._reader.read_bytes(100)
 
         resrefs: list[str] = []
         resids: list[int] = []
@@ -84,10 +85,10 @@ class RIMBinaryWriter(ResourceWriter):
 
         self._writer.write_string("RIM ")
         self._writer.write_string("V1.0")
-        self._writer.write_uint32(0)
+        self._writer.write_uint32(self._rim.unknown)
         self._writer.write_uint32(entry_count)
         self._writer.write_uint32(offset_to_keys)
-        self._writer.write_bytes(b"\0" * 100)
+        self._writer.write_bytes(self._rim.reserved[:100].ljust(100, b"\0"))
 
         data_offset = offset_to_keys + RIMBinaryWriter.KEY_ELEMENT_SIZE * entry_count
         for resid, resource in enumerate(self._rim):

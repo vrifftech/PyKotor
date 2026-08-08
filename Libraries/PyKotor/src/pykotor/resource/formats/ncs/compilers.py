@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import subprocess
-
+from collections.abc import Sequence
 from datetime import date
 from enum import Enum
 from typing import TYPE_CHECKING, NamedTuple
@@ -141,8 +141,14 @@ class NwnnsscompConfig:
 
         self.chosen_compiler: KnownExternalCompilers = KnownExternalCompilers.from_sha256(self.sha256_hash)
 
-    def get_compile_args(self, executable: str) -> list[str]:
-        return self._format_args(self.chosen_compiler.value.commandline["compile"], executable)
+    def get_compile_args(
+        self,
+        executable: str,
+        extra_args: Sequence[str] = (),
+    ) -> list[str]:
+        args = self._format_args(self.chosen_compiler.value.commandline["compile"], executable)
+        args[1:1] = extra_args
+        return args
 
     def get_decompile_args(self, executable: str) -> list[str]:
         return self._format_args(self.chosen_compiler.value.commandline["decompile"], executable)
@@ -214,6 +220,7 @@ class ExternalNCSCompiler(NCSCompiler):
         game: Game | int,
         timeout: int = 5,
         *,
+        extra_args: Sequence[str] = (),
         debug: bool = False,
     ) -> tuple[str, str]:
         """Compiles a NSS script into NCS using the external compiler.
@@ -226,6 +233,7 @@ class ExternalNCSCompiler(NCSCompiler):
             output_file: The path or name of the compiled module file to output.
             game: The Game object or game ID to configure the compiler for.
             timeout: The timeout in seconds to wait for compilation to finish before aborting.
+            extra_args: Additional command-line arguments inserted before the compile command.
             debug - bool (kwarg): (does nothing for external compilers)
 
         Returns:
@@ -245,7 +253,7 @@ class ExternalNCSCompiler(NCSCompiler):
         config: NwnnsscompConfig = self.config(source_file, output_file, game)
 
         result: CompletedProcess[str] = subprocess.run(
-            args=config.get_compile_args(str(self.nwnnsscomp_path)),
+            args=config.get_compile_args(str(self.nwnnsscomp_path), extra_args),
             capture_output=True,  # Capture stdout and stderr
             text=True,
             timeout=timeout,

@@ -4,8 +4,8 @@ from typing import TYPE_CHECKING
 
 from pykotor.common.stream import BinaryReader
 from pykotor.extract.file import FileResource, ResourceIdentifier, ResourceResult
-from pykotor.resource.formats.erf import ERF, ERFType, write_erf
-from pykotor.resource.formats.rim import RIM, write_rim
+from pykotor.resource.formats.erf import ERF, ERFType, read_erf, write_erf
+from pykotor.resource.formats.rim import RIM, read_rim, write_rim
 from pykotor.resource.type import ResourceType
 from pykotor.tools.misc import is_any_erf_type_file, is_capsule_file, is_rim_file
 from utility.system.path import Path
@@ -229,6 +229,24 @@ class LazyCapsule(FileResource):
         #get_root_logger().debug("%s.resources() call, found %s total resources inside %s", self.__class__.__name__, len(resources), self._filepath)
         return resources
 
+    def _load_container(self) -> ERF | RIM:
+        with BinaryReader.from_file(self._filepath) as reader:
+            file_type = reader.read_string(4)
+
+        if file_type == "RIM ":
+            return read_rim(self._filepath)
+        if file_type in (erf_type.value for erf_type in ERFType):
+            return read_erf(self._filepath)
+
+        msg = f"File '{self._filepath}' is not an ERF/MOD/SAV/RIM capsule."
+        raise NotImplementedError(msg)
+
+    def _write_container(self, container: ERF | RIM) -> None:
+        if isinstance(container, RIM):
+            write_rim(container, self._filepath)
+        else:
+            write_erf(container, self._filepath)
+
     def add(
         self,
         resname: str,
@@ -254,25 +272,13 @@ class LazyCapsule(FileResource):
             - Calls set_data to add the resource
             - Writes the container back to the file.
         """
-        def _add_to(container: RIM | ERF):
-            container.set_data(resname, restype, resdata)
-            for resource in self.resources():
-                container.set_data(resource.resname(), resource.restype(), resource.data())
-            self._hash_task_running = True
-            self._file_hash = ""
-            self._hash_task_running = False
+        container = self.as_cached()
+        container.set_data(resname, restype, resdata)
+        self._write_container(container)
 
-        if is_rim_file(self._filepath.name):
-            container = RIM()
-            _add_to(container)
-            write_rim(container, self._filepath)
-        elif is_any_erf_type_file(self._filepath.name):
-            container = ERF(ERFType.from_extension(self._filepath))
-            _add_to(container)
-            write_erf(container, self._filepath)
-        else:
-            msg = f"File '{self._filepath}' is not a ERF/MOD/SAV/RIM capsule."
-            raise NotImplementedError(msg)
+        self._hash_task_running = True
+        self._file_hash = ""
+        self._hash_task_running = False
 
     def delete(
         self,
@@ -297,45 +303,27 @@ class LazyCapsule(FileResource):
             - Calls ERF.remove or RIM.remove
             - Writes the container back to the file.
         """
-        def _remove_from(container: RIM | ERF):
-            for resource in self.resources():
-                if resource.resname().lower() == resname.lower() and resource.restype() is restype:
-                    continue
-                container.set_data(resource.resname(), resource.restype(), resource.data())
-            self._hash_task_running = True
-            self._file_hash = ""
-            self._hash_task_running = False
+        container = self.as_cached()
+        container.remove(resname, restype)
+        self._write_container(container)
 
-        if is_rim_file(self._filepath.name):
-            container = RIM()
-            _remove_from(container)
-            write_rim(container, self._filepath)
-        elif is_any_erf_type_file(self._filepath.name):
-            container = ERF(ERFType.from_extension(self._filepath))
-            _remove_from(container)
-            write_erf(container, self._filepath)
-        else:
-            msg = f"File '{self._filepath}' is not a ERF/MOD/SAV/RIM capsule."
-            raise NotImplementedError(msg)
+        self._hash_task_running = True
+        self._file_hash = ""
+        self._hash_task_running = False
 
     def as_cached_erf(self, erf_type: ERFType | None = None) -> ERF:
-        erf: ERF = ERF() if erf_type is None else ERF(ERFType(erf_type))
-        for resource in self.resources():
-            erf.set_data(resource.resname(), resource.restype(), resource.data())
+        container = self._load_container()
+        erf = container if isinstance(container, ERF) else container.to_erf()
+        if erf_type is not None:
+            erf.erf_type = ERFType(erf_type)
         return erf
 
     def as_cached_rim(self) -> RIM:
-        rim: RIM = RIM()
-        for resource in self.resources():
-            rim.set_data(resource.resname(), resource.restype(), resource.data())
-        return rim
+        container = self._load_container()
+        return container if isinstance(container, RIM) else container.to_rim()
 
     def as_cached(self) -> ERF | RIM:
-        return (
-            self.as_cached_erf()
-            if is_any_erf_type_file(self._filepath)
-            else self.as_cached_rim()
-        )
+        return self._load_container()
 
     def _load_erf(
         self,

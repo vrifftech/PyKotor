@@ -52,6 +52,11 @@ class ERF:
         self.erf_type: ERFType = erf_type
         self._resources: OrderedSet[ERFResource] = OrderedSet()
         self.is_save_erf: bool = is_save
+        self.localized_strings: list[ERFLocalizedString] = []
+        self.description_strref: int = 0 if is_save else 0xFFFFFFFF
+        self.build_year: int = 0
+        self.build_day: int = 0
+        self.reserved: bytes = bytes(116)
 
         # used for faster lookups
         self._resource_dict: dict[ResourceIdentifier, ERFResource] = {}
@@ -211,3 +216,23 @@ class ERFResource:
 
     def identifier(self) -> ResourceIdentifier:
         return ResourceIdentifier(str(self.resref), self.restype)
+
+
+class ERFLocalizedString:
+    """Raw localized archive-description data stored in an ERF header."""
+
+    def __init__(
+        self,
+        language_id: int,
+        data: bytes,
+    ):
+        self.language_id: int = language_id
+        self.data: bytes = bytes(data)
+
+    def __eq__(self, other):
+        if not isinstance(other, ERFLocalizedString):
+            return NotImplemented
+        return self.language_id == other.language_id and self.data == other.data
+
+    def __hash__(self):
+        return hash((self.language_id, self.data))

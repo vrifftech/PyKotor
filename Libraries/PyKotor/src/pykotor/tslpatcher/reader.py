@@ -200,8 +200,8 @@ class ConfigReader:
         self.load_install_list()
         self.load_2da_list()
         self.load_gff_list()
-        self.load_compile_list()
         self.load_hack_list()
+        self.load_compile_list()
         self.load_ssf_list()
         self.log.add_note("The ConfigReader finished loading the INI")
         all_sections_set = set(self.ini.sections())
@@ -255,6 +255,7 @@ class ConfigReader:
         if len(self.config.required_files) != len(self.config.required_messages):
             raise ValueError(f"Required files definitions must match required msg count ({len(self.config.required_files)}/{len(self.config.required_messages)})")
         self.config.save_processed_scripts = int(settings_ini.get("SaveProcessedScripts", 0))
+        self.config.script_compiler_flags = settings_ini.get("ScriptCompilerFlags", "") or ""
         self.config.log_level = LogLevel(int(settings_ini.get("LogLevel", LogLevel.WARNINGS.value)))
 
         # HoloPatcher optional
@@ -617,6 +618,7 @@ class ConfigReader:
                 modifications.pop_tslpatcher_vars(file_section_dict, default_destination, default_source_folder)
 
             modifications.nwnnsscomp_path = nwnnsscomp_exepath
+            modifications.compiler_flags = self.config.script_compiler_flags
             self.config.patches_nss.append(modifications)
 
     def load_hack_list(self):
@@ -646,19 +648,58 @@ class ConfigReader:
 
             file_section_name: str | None = self.get_section_name(file)
             if file_section_name is None:
-                raise KeyError(SECTION_NOT_FOUND_ERROR.format(file) + REFERENCES_TRACEBACK_MSG.format(identifier, file, hacklist_section))
+                self.log.add_error(
+                    SECTION_NOT_FOUND_ERROR.format(file)
+                    + REFERENCES_TRACEBACK_MSG.format(identifier, file, hacklist_section),
+                )
+                continue
 
             file_section_dict = CaseInsensitiveDict(self.ini[file_section_name])
             modifications.pop_tslpatcher_vars(file_section_dict, default_destination, default_source_folder)
 
             for offset_str, value_str in file_section_dict.items():
-                lower_value: str = value_str.lower()
+                raw_offset = offset_str.strip()
+                raw_value = (value_str or "").strip()
+                if not raw_offset.isascii() or not raw_offset.isdigit():
+                    self.log.add_warning(
+                        f"Ignoring invalid HACKList offset '{offset_str}' in [{file_section_name}].",
+                    )
+                    continue
+
+                offset = int(raw_offset)
+                if offset > 0x7FFFFFFF:
+                    self.log.add_warning(
+                        f"Ignoring out-of-range HACKList offset '{offset_str}' in [{file_section_name}].",
+                    )
+                    continue
+
+                lower_value = raw_value.lower()
                 if lower_value.startswith("strref"):
-                    modifications.hackdata.append(("StrRef", int(offset_str), int(value_str[6:])))
-                elif lower_value.startswith("2damemory"):
-                    modifications.hackdata.append(("2DAMEMORY", int(offset_str), int(value_str[9:])))
+                    token_id = raw_value[6:]
+                    if not token_id.isascii() or not token_id.isdigit() or int(token_id) > 0x7FFFFFFF:
+                        self.log.add_warning(
+                            f"Ignoring invalid HACKList value '{value_str}' at offset {offset_str} in [{file_section_name}].",
+                        )
+                        continue
+                    modifications.hackdata.append(("StrRef", offset, int(token_id)))
+                elif raw_value.startswith("2DAMEMORY"):
+                    token_id = raw_value[9:]
+                    if token_id.isascii() and token_id.isdigit():
+                        if int(token_id) > 0x7FFFFFFF:
+                            self.log.add_warning(
+                                f"Ignoring invalid HACKList value '{value_str}' at offset {offset_str} in [{file_section_name}].",
+                            )
+                            continue
+                        modifications.hackdata.append(("2DAMEMORY", offset, int(token_id)))
+                    else:
+                        modifications.hackdata.append(("2DAMEMORY", offset, 0))
                 else:
-                    modifications.hackdata.append(("VALUE", int(offset_str), int(value_str)))
+                    if not raw_value.isascii() or not raw_value.isdigit() or int(raw_value) > 0x7FFFFFFF:
+                        self.log.add_warning(
+                            f"Ignoring invalid HACKList value '{value_str}' at offset {offset_str} in [{file_section_name}].",
+                        )
+                        continue
+                    modifications.hackdata.append(("VALUE", offset, int(raw_value)))
 
             self.config.patches_ncs.append(modifications)
 

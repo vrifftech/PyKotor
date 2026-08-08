@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 
 from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, Any
@@ -44,9 +45,9 @@ class ModificationsNSS(PatcherModifications):
         super().__init__(filename, replace, modifiers)
         self.saveas = str(PurePath(filename).with_suffix(".ncs"))
         self.action: str = "Compile"
-        self.nwnnsscomp_path: Path  # TODO: fix type. Default None or Path?
-        self.backup_nwnnsscomp_path: Path
-        self.temp_script_folder: Path
+        self.nwnnsscomp_path: Path | None = None
+        self.temp_script_folder: Path | None = None
+        self.compiler_flags: str = ""
         self.skip_if_not_replace = True
 
     def patch_resource(
@@ -86,13 +87,15 @@ class ModificationsNSS(PatcherModifications):
         # Replace memory tokens in the script, and save to the file.
         source = MutableString(decode_bytes_with_fallbacks(nss_bytes))
         self.apply(source, memory, logger, game)
-        temp_script_file = self.temp_script_folder / self.sourcefile
+        if self.temp_script_folder is None:
+            raise RuntimeError("CompileList working directory was not prepared before compilation.")
+        temp_script_file = self.temp_script_folder / PureWindowsPath(self.sourcefile).name
 
         BinaryWriter.dump(temp_script_file, source.value.encode(encoding="windows-1252", errors="ignore"))
 
         # Compile with external on windows, fall back to built-in if mac/linux or if external fails.
         is_windows = os.name == "nt"
-        nwnnsscomp_exists: bool | None = self.nwnnsscomp_path.safe_isfile()
+        nwnnsscomp_exists = self.nwnnsscomp_path is not None and self.nwnnsscomp_path.safe_isfile()
         if is_windows and self.nwnnsscomp_path and nwnnsscomp_exists:
             nwnnsscompiler = ExternalNCSCompiler(self.nwnnsscomp_path)
             try:
@@ -149,34 +152,37 @@ class ModificationsNSS(PatcherModifications):
 
         Processing Logic:
         ----------------
-            - Searches string for #2DAMEMORY# patterns and replaces with 2DA value
-            - Searches string for #StrRef# patterns and replaces with string reference value
-            - Repeats searches until no matches remain.
+            - Replaces defined #2DAMEMORY# tokens with their stored values
+            - Replaces defined #StrRef# tokens with their stored string references
+            - Leaves undefined tokens unchanged and logs a warning
         """
-        def iterate_and_replace_tokens(token_name: str, memory_dict: dict[int, Any]):
-            search_pattern = rf"#{token_name}\d+#"
-            match = re.search(search_pattern, nss_source.value)
-            while match:
-                start, end = match.start(), match.end()
-                token_id = int(nss_source.value[start + len(token_name) + 1 : end - 1])  # -3 adjusts for '#', the first digit and '#'
-
-                if token_id not in memory_dict:
-                    msg = f"{token_name}{token_id} was not defined before use in '{self.sourcefile}'"
-                    raise KeyError(msg)
+        def replace_tokens(token_name: str, memory_dict: dict[int, Any]) -> None:
+            search_pattern = re.compile(rf"#{token_name}([0-9]+)#")
+            for token_id in sorted(memory_dict):
+                token = f"#{token_name}{token_id}#"
+                if token not in nss_source.value:
+                    continue
 
                 replacement_value = memory_dict[token_id]
                 if isinstance(replacement_value, PureWindowsPath):
-                    msg = str(TypeError(f"{token_name} cannot be !FieldPath for [CompileList] patches, got '{token_name}{token_id}={replacement_value!r}'"))
-                    logger.add_error(msg)
-                    match = re.search(search_pattern, nss_source.value)
-                    continue
+                    replacement_value = str(replacement_value)
 
-                logger.add_verbose(f"{self.sourcefile}: Replacing '#{token_name}{token_id}#' with '{replacement_value}'")
-                nss_source.value = nss_source.value[:start] + str(replacement_value) + nss_source.value[end:]
-                match = re.search(search_pattern, nss_source.value)
+                logger.add_verbose(f"{self.sourcefile}: Replacing '{token}' with '{replacement_value}'")
+                nss_source.value = nss_source.value.replace(token, str(replacement_value))
 
-        iterate_and_replace_tokens("2DAMEMORY", memory.memory_2da)
-        iterate_and_replace_tokens("StrRef", memory.memory_str)
+            undefined_tokens = {
+                int(match.group(1))
+                for match in search_pattern.finditer(nss_source.value)
+                if int(match.group(1)) not in memory_dict
+            }
+            for token_id in sorted(undefined_tokens):
+                logger.add_warning(
+                    f"{token_name}{token_id} was not defined before use in '{self.sourcefile}'; "
+                    "leaving token unchanged.",
+                )
+
+        replace_tokens("2DAMEMORY", memory.memory_2da)
+        replace_tokens("StrRef", memory.memory_str)
 
     def _compile_with_external(
         self,
@@ -187,7 +193,17 @@ class ModificationsNSS(PatcherModifications):
     ) -> bytes | Literal[True]:
         with TemporaryDirectory() as tempdir:
             tempcompiled_filepath: Path = Path(tempdir, "temp_script.ncs")
-            stdout, stderr = nwnnsscompiler.compile_script(temp_script_file, tempcompiled_filepath, game)
+            try:
+                compiler_flags = shlex.split(self.compiler_flags)
+            except (TypeError, ValueError) as exc:
+                logger.add_error(f"Invalid ScriptCompilerFlags value '{self.compiler_flags}': {exc}")
+                compiler_flags = []
+            stdout, stderr = nwnnsscompiler.compile_script(
+                temp_script_file,
+                tempcompiled_filepath,
+                game,
+                extra_args=compiler_flags,
+            )
             result: bool | bytes = "File is an include file, ignored" in stdout
             if not result:
                 # Return the compiled bytes

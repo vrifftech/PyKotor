@@ -53,6 +53,7 @@ class PatcherConfig:
         self.required_files: list[tuple[str, ...]] = []
         self.required_messages: list[str] = []
         self.save_processed_scripts: int = 0
+        self.script_compiler_flags: str = ""
         self.log_level: LogLevel = LogLevel.WARNINGS
 
         self.install_list: list[InstallFile] = []

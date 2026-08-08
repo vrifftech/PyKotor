@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from pykotor.resource.formats.erf.erf_data import ERF, ERFType
+from pykotor.resource.formats.erf.erf_data import ERF, ERFLocalizedString, ERFType
 from pykotor.resource.type import ResourceReader, ResourceType, ResourceWriter, autoclose
 from utility.logger_util import RobustRootLogger
 
@@ -61,16 +61,37 @@ class ERFBinaryReader(ResourceReader):
 
         self._erf = ERF(erf_type)
 
-        self._reader.skip(8)
+        localized_string_count = self._reader.read_uint32()
+        localized_string_size = self._reader.read_uint32()
         entry_count = self._reader.read_uint32()
-        self._reader.skip(4)
+        offset_to_localized_strings = self._reader.read_uint32()
         offset_to_keys = self._reader.read_uint32()
         offset_to_resources = self._reader.read_uint32()
-        self._reader.skip(8)
+        self._erf.build_year = self._reader.read_uint32()
+        self._erf.build_day = self._reader.read_uint32()
         description_strref = self._reader.read_uint32()
+        self._erf.description_strref = description_strref
+        self._erf.reserved = self._reader.read_bytes(116)
         if description_strref == 0 and file_type == ERFType.MOD.value:
             RobustRootLogger().debug("Assuming this is a SAV file")
             self._erf.is_save_erf = True
+
+        if localized_string_count:
+            self._reader.seek(offset_to_localized_strings)
+            localized_string_start = self._reader.position()
+            for _ in range(localized_string_count):
+                language_id = self._reader.read_uint32()
+                string_size = self._reader.read_uint32()
+                self._erf.localized_strings.append(
+                    ERFLocalizedString(language_id, self._reader.read_bytes(string_size)),
+                )
+            bytes_read = self._reader.position() - localized_string_start
+            if bytes_read != localized_string_size:
+                RobustRootLogger().warning(
+                    "ERF localized-string table size does not match the header: expected %s bytes, read %s bytes.",
+                    localized_string_size,
+                    bytes_read,
+                )
 
         resrefs: list[str] = []
         resids: list[int] = []
@@ -116,35 +137,28 @@ class ERFBinaryWriter(ResourceWriter):
         auto_close: bool = True,
     ):
         entry_count = len(self.erf)
-        offset_to_keys = ERFBinaryWriter.FILE_HEADER_SIZE
+        localized_string_size = sum(8 + len(localized_string.data) for localized_string in self.erf.localized_strings)
+        offset_to_localized_strings = ERFBinaryWriter.FILE_HEADER_SIZE
+        offset_to_keys = offset_to_localized_strings + localized_string_size
         offset_to_resources = offset_to_keys + ERFBinaryWriter.KEY_ELEMENT_SIZE * entry_count
-        offset_to_localized_strings = 0x0
-        description_strref_dword_value = 0xFFFFFFFF
-        if self.erf.is_save_erf:
-            # might matter.
-            offset_to_localized_strings = 0xA0
-            description_strref_dword_value = 0x00000000
-        elif self.erf.erf_type is ERFType.ERF:
-            # default, also doesn't matter
-            offset_to_localized_strings = 0x69
-            description_strref_dword_value = 0xCDCDCDCD
-        elif self.erf.erf_type is ERFType.MOD:
-            # mod's aren't in the vanilla game, doesn't matter
-            offset_to_localized_strings = 0x0
-            description_strref_dword_value = 0xFFFFFFFF
 
         self._writer.write_string(self.erf.erf_type.value)
         self._writer.write_string("V1.0")
-        self._writer.write_uint32(0)
-        self._writer.write_uint32(0)
+        self._writer.write_uint32(len(self.erf.localized_strings))
+        self._writer.write_uint32(localized_string_size)
         self._writer.write_uint32(entry_count)
         self._writer.write_uint32(offset_to_localized_strings)
         self._writer.write_uint32(offset_to_keys)
         self._writer.write_uint32(offset_to_resources)
-        self._writer.write_uint32(0)
-        self._writer.write_uint32(0)
-        self._writer.write_uint32(description_strref_dword_value)
-        self._writer.write_bytes(b"\0" * 116)
+        self._writer.write_uint32(self.erf.build_year)
+        self._writer.write_uint32(self.erf.build_day)
+        self._writer.write_uint32(self.erf.description_strref)
+        self._writer.write_bytes(self.erf.reserved[:116].ljust(116, b"\0"))
+
+        for localized_string in self.erf.localized_strings:
+            self._writer.write_uint32(localized_string.language_id)
+            self._writer.write_uint32(len(localized_string.data))
+            self._writer.write_bytes(localized_string.data)
 
         for resid, resource in enumerate(self.erf):
             self._writer.write_string(str(resource.resref), string_length=16)

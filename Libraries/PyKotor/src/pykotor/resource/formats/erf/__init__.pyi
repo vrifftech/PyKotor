@@ -5,6 +5,7 @@ from pykotor.resource.formats.erf.erf_auto import (
 )
 from pykotor.resource.formats.erf.erf_data import (
     ERF as ERF,
+    ERFLocalizedString as ERFLocalizedString,
     ERFResource as ERFResource,
     ERFType as ERFType,
 )

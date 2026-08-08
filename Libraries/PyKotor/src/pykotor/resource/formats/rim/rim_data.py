@@ -21,6 +21,8 @@ class RIM:
         self,
     ):
         self._resources: OrderedSet[RIMResource] = OrderedSet()
+        self.unknown: int = 0
+        self.reserved: bytes = bytes(100)
 
     def __iter__(
         self,
@@ -133,7 +135,12 @@ class RIM:
             resname: The resource reference filename.
             restype: The resource type.
         """
-        self._resources = [res for res in self._resources if res.resref != resname and res.restype != restype]
+        resource: RIMResource | None = next(
+            (resource for resource in self._resources if resource.resref == resname and resource.restype == restype),
+            None,
+        )
+        if resource is not None:
+            self._resources.remove(resource)
 
     def to_erf(
         self,
