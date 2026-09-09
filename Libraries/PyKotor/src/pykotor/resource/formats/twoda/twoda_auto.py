@@ -8,6 +8,7 @@ from pykotor.common.stream import BinaryReader
 from pykotor.resource.formats.twoda.io_twoda import TwoDABinaryReader, TwoDABinaryWriter
 from pykotor.resource.formats.twoda.io_twoda_csv import TwoDACSVReader, TwoDACSVWriter
 from pykotor.resource.formats.twoda.io_twoda_json import TwoDAJSONReader, TwoDAJSONWriter
+from pykotor.resource.formats.twoda.io_twoda_text import TwoDATextReader, TwoDATextWriter
 from pykotor.resource.type import ResourceType
 
 if TYPE_CHECKING:
@@ -57,7 +58,7 @@ def detect_2da(
             with BinaryReader.from_file(source, offset) as reader:
                 file_format = check(reader.read_string(4))
         elif isinstance(source, (memoryview, bytes, bytearray)):
-            file_format = check(bytes(source[:4]).decode("ascii", "ignore"))
+            file_format = check(bytes(source[offset:offset + 4]).decode("ascii", "ignore"))
         elif isinstance(source, BinaryReader):
             file_format = check(source.read_string(4))
             source.skip(-4)
@@ -78,7 +79,7 @@ def read_2da(
 ) -> TwoDA:
     """Returns an TwoDA instance from the source.
 
-    The file format (TwoDA, TwoDA_CSV, TwoDA_JSON) is automatically determined before parsing the data.
+    The file format (native binary/text TwoDA, TwoDA_CSV, TwoDA_JSON) is automatically determined before parsing the data.
 
     Args:
     ----
@@ -104,7 +105,13 @@ def read_2da(
         raise ValueError(msg)
 
     if file_format is ResourceType.TwoDA:
-        return TwoDABinaryReader(source, offset, size or 0).load()
+        with BinaryReader.from_auto(source, offset) as reader:
+            data = reader.read_bytes(size or reader.remaining())
+        if data[:8] == b"2DA V2.b":
+            return TwoDABinaryReader(data).load()
+        if data[:8] == b"2DA V2.0":
+            return TwoDATextReader(data).load()
+        raise ValueError("Unsupported 2DA version.")
     if file_format is ResourceType.TwoDA_CSV:
         return TwoDACSVReader(source, offset, size or 0).load()
     if file_format is ResourceType.TwoDA_JSON:
@@ -120,7 +127,8 @@ def write_2da(
 ):
     """Writes the TwoDA data to the target location with the specified format.
 
-    Currently, the supported formats are: TwoDA, TwoDA_CSV and TwoDA_JSON.
+    TwoDA output retains the table's native version (V2.b or V2.0).
+    CSV and JSON exports are also supported.
 
     Args:
     ----
@@ -135,7 +143,12 @@ def write_2da(
         ValueError: If the specified format was unsupported.
     """
     if file_format is ResourceType.TwoDA:
-        TwoDABinaryWriter(twoda, target).write()
+        if twoda.version == "V2.0":
+            TwoDATextWriter(twoda, target).write()
+        elif twoda.version == "V2.b":
+            TwoDABinaryWriter(twoda, target).write()
+        else:
+            raise ValueError(f"Unsupported 2DA version: {twoda.version}")
     elif file_format is ResourceType.TwoDA_CSV:
         TwoDACSVWriter(twoda, target).write()
     elif file_format is ResourceType.TwoDA_JSON:

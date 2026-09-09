@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from pykotor.resource.formats.gff.gff_data import GFFFieldType
+from pykotor.resource.generics._gff import (remember_gff, preserve_gff, remember_gff_struct, bind_gff_struct)
 from pykotor.common.language import LocalizedString
 from pykotor.common.misc import Game, ResRef
 from pykotor.resource.formats.gff import GFF, GFFContent, GFFList, read_gff, write_gff
@@ -104,7 +106,7 @@ def utd_version(
     gff: GFF,
 ) -> Game:
     for label in "GuaranteedCount":
-        for creature_struct in gff.root.acquire("CreatureList", GFFList()):
+        for creature_struct in gff.root.acquire("CreatureList", GFFList(), field_type=GFFFieldType.List):
             if creature_struct.exists(label):
                 return Game.K2
     return Game.K1
@@ -116,38 +118,40 @@ def construct_ute(
     ute = UTE()
 
     root = gff.root
-    ute.tag = root.acquire("Tag", "")
-    ute.resref = root.acquire("TemplateResRef", ResRef.from_blank())
-    ute.active = bool(root.acquire("Active", 0))
-    ute.difficulty_id = root.acquire("DifficultyIndex", 0)
-    ute.unused_difficulty = root.acquire("Difficulty", 0)
-    ute.faction_id = root.acquire("Faction", 0)
-    ute.max_creatures = root.acquire("MaxCreatures", 0)
-    ute.player_only = bool(root.acquire("PlayerOnly", 0))
-    ute.rec_creatures = root.acquire("RecCreatures", 0)
-    ute.reset = bool(root.acquire("Reset", 0))
-    ute.reset_time = root.acquire("ResetTime", 0)
-    ute.respawns = root.acquire("Respawns", 0)
-    ute.single_shot = bool(root.acquire("SpawnOption", 0))
-    ute.on_entered = root.acquire("OnEntered", ResRef.from_blank())
-    ute.on_exit = root.acquire("OnExit", ResRef.from_blank())
-    ute.on_exhausted = root.acquire("OnExhausted", ResRef.from_blank())
-    ute.on_heartbeat = root.acquire("OnHeartbeat", ResRef.from_blank())
-    ute.on_user_defined = root.acquire("OnUserDefined", ResRef.from_blank())
-    ute.comment = root.acquire("Comment", "")
-    ute.name = root.acquire("LocalizedName", LocalizedString.from_invalid())
-    ute.palette_id = root.acquire("PaletteID", 0)
+    ute.tag = root.acquire("Tag", "", field_type=GFFFieldType.String)
+    ute.resref = root.acquire("TemplateResRef", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+    ute.active = bool(root.acquire("Active", 0, field_type=GFFFieldType.UInt8))
+    ute.difficulty_id = root.acquire("DifficultyIndex", 0, field_type=GFFFieldType.Int32)
+    ute.unused_difficulty = root.acquire("Difficulty", 0, field_type=GFFFieldType.Int32)
+    ute.faction_id = root.acquire("Faction", 0, field_type=GFFFieldType.UInt32)
+    ute.max_creatures = root.acquire("MaxCreatures", 0, field_type=GFFFieldType.Int32)
+    ute.player_only = bool(root.acquire("PlayerOnly", 0, field_type=GFFFieldType.UInt8))
+    ute.rec_creatures = root.acquire("RecCreatures", 0, field_type=GFFFieldType.Int32)
+    ute.reset = bool(root.acquire("Reset", 0, field_type=GFFFieldType.UInt8))
+    ute.reset_time = root.acquire("ResetTime", 0, field_type=GFFFieldType.Int32)
+    ute.respawns = root.acquire("Respawns", 0, field_type=GFFFieldType.Int32)
+    ute.single_shot = bool(root.acquire("SpawnOption", 0, field_type=GFFFieldType.Int32))
+    ute.on_entered = root.acquire("OnEntered", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+    ute.on_exit = root.acquire("OnExit", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+    ute.on_exhausted = root.acquire("OnExhausted", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+    ute.on_heartbeat = root.acquire("OnHeartbeat", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+    ute.on_user_defined = root.acquire("OnUserDefined", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+    ute.comment = root.acquire("Comment", "", field_type=GFFFieldType.String)
+    ute.name = root.acquire("LocalizedName", LocalizedString.from_invalid(), field_type=GFFFieldType.LocalizedString)
+    ute.palette_id = root.acquire("PaletteID", 0, field_type=GFFFieldType.UInt8)
 
-    creature_list = root.get_list("CreatureList")
+    creature_list = root.acquire("CreatureList", GFFList(), field_type=GFFFieldType.List)
     for creature_struct in creature_list:
         creature = UTECreature()
+        remember_gff_struct(creature, creature_struct)
         ute.creatures.append(creature)
-        creature.appearance_id = creature_struct.acquire("Appearance", 0)
-        creature.challenge_rating = creature_struct.acquire("CR", 0.0)
-        creature.single_spawn = bool(creature_struct.acquire("SingleSpawn", 0))
-        creature.resref = creature_struct.acquire("ResRef", ResRef.from_blank())
-        creature.guaranteed_count = creature_struct.acquire("GuaranteedCount", 0)
+        creature.appearance_id = creature_struct.acquire("Appearance", 0, field_type=GFFFieldType.Int32)
+        creature.challenge_rating = creature_struct.acquire("CR", 0.0, field_type=GFFFieldType.Single)
+        creature.single_spawn = bool(creature_struct.acquire("SingleSpawn", 0, field_type=GFFFieldType.UInt8))
+        creature.resref = creature_struct.acquire("ResRef", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+        creature.guaranteed_count = creature_struct.acquire("GuaranteedCount", 0, field_type=GFFFieldType.Int32)
 
+    remember_gff(ute, gff)
     return ute
 
 
@@ -185,6 +189,7 @@ def dismantle_ute(
     creature_list = root.set_list("CreatureList", GFFList())
     for creature in ute.creatures:
         creature_struct = creature_list.add(0)
+        bind_gff_struct(creature_struct, creature)
         creature_struct.set_int32("Appearance", creature.appearance_id)
         creature_struct.set_single("CR", creature.challenge_rating)
         creature_struct.set_uint8("SingleSpawn", creature.single_spawn)
@@ -196,7 +201,7 @@ def dismantle_ute(
         root.set_locstring("LocalizedName", ute.name)
         root.set_int32("Difficulty", ute.unused_difficulty)
 
-    return gff
+    return preserve_gff(ute, gff, lambda original: dismantle_ute(original, game=game, use_deprecated=use_deprecated))
 
 
 def read_ute(

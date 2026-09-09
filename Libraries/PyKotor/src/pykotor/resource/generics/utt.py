@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from pykotor.resource.formats.gff.gff_data import GFFFieldType
+from pykotor.resource.generics._gff import (remember_gff, preserve_gff)
 from pykotor.common.language import LocalizedString
 from pykotor.common.misc import Game, ResRef
 from pykotor.resource.formats.gff import GFF, GFFContent, read_gff, write_gff
@@ -54,6 +56,10 @@ class UTT:
         self,
     ):
         self.resref: ResRef = ResRef.from_blank()
+        self.linked_to_module: ResRef = ResRef.from_blank()
+        self.linked_to_flags: int = 0
+        self.linked_to: str = ""
+        self.portrait: ResRef = ResRef.from_blank()
         self.comment: str = ""
         self.tag: str = ""
 
@@ -115,34 +121,43 @@ def construct_utt(
 
     root = gff.root
 
-    utt.tag = root.acquire("Tag", "")
-    utt.resref = root.acquire("TemplateResRef", ResRef.from_blank())
-    utt.auto_remove_key = bool(root.acquire("AutoRemoveKey", 0))
-    utt.faction_id = root.acquire("Faction", 0)
-    utt.cursor_id = root.acquire("Cursor", 0)
-    utt.highlight_height = root.acquire("HighlightHeight", 0.0)
-    utt.key_name = root.acquire("KeyName", "")
-    utt.type_id = root.acquire("Type", 0)
-    utt.trap_detectable = bool(root.acquire("TrapDetectable", 0))
-    utt.trap_detect_dc = root.acquire("TrapDetectDC", 0)
-    utt.trap_disarmable = bool(root.acquire("TrapDisarmable", 0))
-    utt.trap_disarm_dc = root.acquire("DisarmDC", 0)
-    utt.is_trap = bool(root.acquire("TrapFlag", 0))
-    utt.trap_once = bool(root.acquire("TrapOneShot", 0))
-    utt.trap_type = root.acquire("TrapType", 0)
-    utt.on_disarm = root.acquire("OnDisarm", ResRef.from_blank())
-    utt.on_trap_triggered = root.acquire("OnTrapTriggered", ResRef.from_blank())
-    utt.on_click = root.acquire("OnClick", ResRef.from_blank())
-    utt.on_heartbeat = root.acquire("ScriptHeartbeat", ResRef.from_blank())
-    utt.on_enter = root.acquire("ScriptOnEnter", ResRef.from_blank())
-    utt.on_exit = root.acquire("ScriptOnExit", ResRef.from_blank())
-    utt.on_user_defined = root.acquire("ScriptUserDefine", ResRef.from_blank())
-    utt.comment = root.acquire("Comment", "")
-    utt.name = root.acquire("LocalizedName", LocalizedString.from_invalid())
-    utt.loadscreen_id = root.acquire("LoadScreenID", 0)
-    utt.portrait_id = root.acquire("PortraitId", 0)
-    utt.palette_id = root.acquire("PaletteID", 0)
+    utt.tag = root.acquire("Tag", "", field_type=GFFFieldType.String)
+    utt.resref = root.acquire("TemplateResRef", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+    utt.auto_remove_key = bool(root.acquire("AutoRemoveKey", 0, field_type=GFFFieldType.UInt8))
+    utt.faction_id = root.acquire("Faction", 0, field_type=GFFFieldType.UInt32)
+    utt.cursor_id = root.acquire("Cursor", 0, field_type=GFFFieldType.UInt8)
+    utt.highlight_height = root.acquire("HighlightHeight", 0.0, field_type=GFFFieldType.Single)
+    utt.key_name = root.acquire("KeyName", "", field_type=GFFFieldType.String)
+    utt.type_id = root.acquire("Type", 0, field_type=GFFFieldType.Int32)
+    utt.trap_detectable = bool(root.acquire("TrapDetectable", 0, field_type=GFFFieldType.UInt8))
+    utt.trap_detect_dc = root.acquire("TrapDetectDC", 0, field_type=GFFFieldType.UInt8)
+    utt.trap_disarmable = bool(root.acquire("TrapDisarmable", 0, field_type=GFFFieldType.UInt8))
+    utt.trap_disarm_dc = root.acquire("DisarmDC", 0, field_type=GFFFieldType.UInt8)
+    utt.is_trap = bool(root.acquire("TrapFlag", 0, field_type=GFFFieldType.UInt8))
+    utt.trap_once = bool(root.acquire("TrapOneShot", 0, field_type=GFFFieldType.UInt8))
+    utt.trap_type = root.acquire("TrapType", 0, field_type=GFFFieldType.UInt8)
+    utt.on_disarm = root.acquire("OnDisarm", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+    utt.on_trap_triggered = root.acquire("OnTrapTriggered", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+    utt.on_click = root.acquire("OnClick", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+    utt.on_heartbeat = root.acquire("ScriptHeartbeat", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+    utt.on_enter = root.acquire("ScriptOnEnter", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+    utt.on_exit = root.acquire("ScriptOnExit", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+    utt.on_user_defined = root.acquire("ScriptUserDefine", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+    utt.comment = root.acquire("Comment", "", field_type=GFFFieldType.String)
+    utt.name = root.acquire("LocalizedName", LocalizedString.from_invalid(), field_type=GFFFieldType.LocalizedString)
+    utt.loadscreen_id = root.acquire("LoadScreenID", 0, field_type=GFFFieldType.UInt16)
+    utt.portrait_id = root.acquire("PortraitId", 0, field_type=GFFFieldType.UInt16)
+    utt.palette_id = root.acquire("PaletteID", 0, field_type=GFFFieldType.UInt8)
 
+    utt.portrait = root.acquire("Portrait", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+
+    utt.linked_to = root.acquire("LinkedTo", "", field_type=GFFFieldType.String)
+
+    utt.linked_to_flags = root.acquire("LinkedToFlags", 0, field_type=GFFFieldType.UInt8)
+
+    utt.linked_to_module = root.acquire("LinkedToModule", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+
+    remember_gff(utt, gff)
     return utt
 
 
@@ -203,7 +218,15 @@ def dismantle_utt(
         root.set_uint16("LoadScreenID", utt.loadscreen_id)
         root.set_uint16("PortraitId", utt.portrait_id)
 
-    return gff
+    root.set_resref("Portrait", utt.portrait)
+
+    root.set_string("LinkedTo", utt.linked_to)
+
+    root.set_uint8("LinkedToFlags", utt.linked_to_flags)
+
+    root.set_resref("LinkedToModule", utt.linked_to_module)
+
+    return preserve_gff(utt, gff, lambda original: dismantle_utt(original, game=game, use_deprecated=use_deprecated))
 
 
 def read_utt(

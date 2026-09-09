@@ -28,6 +28,8 @@ class TPCBMPWriter(ResourceWriter):
         tpc: TPC,
         target: TARGET_TYPES,
     ):
+        if tpc.image_count() != 1:
+            raise ValueError("Select an image explicitly with write_tpc(image=...) before raster export.")
         super().__init__(target)
         self._tpc: TPC = tpc
 
@@ -68,7 +70,9 @@ class TPCBMPWriter(ResourceWriter):
             mode = "RGB"
         img = Image.frombytes(mode, (width, height), data)
         img = img.transpose(Image.FLIP_TOP_BOTTOM)
-        img.save(self._writer._stream if isinstance(self._writer, BinaryWriterFile) else io.BytesIO(self._writer._ba), format="BMP")
+        encoded = io.BytesIO()
+        img.save(encoded, format="BMP")
+        self._writer.write_bytes(encoded.getvalue())
 
     def _write_with_custom_logic(
         self,

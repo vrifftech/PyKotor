@@ -313,12 +313,12 @@ class Mesh:
             glEnableVertexAttribArray(1)
             glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, block_size, ctypes.c_void_p(vertex_offset))
 
-        if data_bitflags & 0x0020 and texture and texture != "NULL":
+        if data_bitflags & 0x0002 and texture and texture.upper() != "NULL" and texture_offset not in (-1, 0xFFFFFFFF):
             glEnableVertexAttribArray(3)
             glVertexAttribPointer(3, 2, GL_FLOAT, GL_FALSE, block_size, ctypes.c_void_p(texture_offset))
             self.texture = texture
 
-        if data_bitflags & 0x0004 and lightmap and lightmap != "NULL":
+        if data_bitflags & 0x0004 and lightmap and lightmap.upper() != "NULL" and lightmap_offset not in (-1, 0xFFFFFFFF):
             glEnableVertexAttribArray(4)
             glVertexAttribPointer(4, 2, GL_FLOAT, GL_FALSE, block_size, ctypes.c_void_p(lightmap_offset))
             self.lightmap = lightmap

@@ -2,6 +2,10 @@ from pykotor.resource.formats.twoda.io_twoda import (
     TwoDABinaryReader as TwoDABinaryReader,
     TwoDABinaryWriter as TwoDABinaryWriter,
 )
+from pykotor.resource.formats.twoda.io_twoda_text import (
+    TwoDATextReader as TwoDATextReader,
+    TwoDATextWriter as TwoDATextWriter,
+)
 from pykotor.resource.formats.twoda.io_twoda_csv import (
     TwoDACSVReader as TwoDACSVReader,
     TwoDACSVWriter as TwoDACSVWriter,

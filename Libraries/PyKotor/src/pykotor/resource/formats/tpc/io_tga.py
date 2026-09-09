@@ -322,6 +322,8 @@ class TPCTGAWriter(ResourceWriter):
         tpc: TPC,
         target: TARGET_TYPES,
     ):
+        if tpc.image_count() != 1:
+            raise ValueError("Select an image explicitly with write_tpc(image=...) before raster export.")
         super().__init__(target)
         self._tpc: TPC = tpc
 
@@ -378,7 +380,7 @@ class TPCTGAWriter(ResourceWriter):
         self._writer.write_uint16(width)
         self._writer.write_uint16(height)
 
-        if self._tpc.format() in {TPCTextureFormat.RGB, TPCTextureFormat.DXT1}:
+        if self._tpc.format() == TPCTextureFormat.RGB:
             self._writer.write_uint8(32)  # bits_per_pixel, image_descriptor
             self._writer.write_uint8(0)
             data: bytearray = self._tpc.convert(TPCTextureFormat.RGB).data

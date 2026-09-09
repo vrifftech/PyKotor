@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import TYPE_CHECKING
 
 from pykotor.common.misc import ResRef
@@ -52,6 +53,7 @@ class ModificationsTLK(PatcherModifications):
         self.sourcefile_f: str = self.DEFAULT_SOURCEFILE_F  # Polish version of k1
         self.saveas = self.DEFAULT_SAVEAS_FILE
         self.store_memory: bool = True
+        self.female: ModificationsTLK | None = None
 
     def pop_tslpatcher_vars(
         self,
@@ -76,9 +78,28 @@ class ModificationsTLK(PatcherModifications):
         log: PatchLogger,
         game: Game,
     ) -> bytes | Literal[True]:
+        if self.female is not None:
+            raise ValueError("Paired dialog tables must be patched together with patch_pair().")
         dialog: TLK = TLKBinaryReader(source).load()
         self.apply(dialog, memory, log, game)
         return bytes_tlk(dialog)
+
+    def patch_pair(
+        self,
+        source: SOURCE_TYPES,
+        source_f: SOURCE_TYPES,
+        memory: PatcherMemory,
+        log: PatchLogger,
+        game: Game,
+    ) -> tuple[bytes, bytes]:
+        """Builds both dialog tables with one index map before publishing any tokens."""
+        dialog = TLKBinaryReader(source).load()
+        dialog_f = TLKBinaryReader(source_f).load()
+        pending_memory = deepcopy(memory)
+        self.apply(dialog, pending_memory, log, game, dialog_f=dialog_f)
+        output, output_f = bytes_tlk(dialog), bytes_tlk(dialog_f)
+        memory.memory_str.update(pending_memory.memory_str)
+        return output, output_f
 
     def apply(
         self,
@@ -86,10 +107,17 @@ class ModificationsTLK(PatcherModifications):
         memory: PatcherMemory,
         log: PatchLogger,
         game: Game,
+        *,
+        dialog_f: TLK | None = None,
     ):
         source_cache: dict[str, TLK] = {}
         for modifier in self.modifiers:
-            modifier.apply(dialog, memory, source_cache, store_memory=self.store_memory)
+            paired_dialog = dialog_f
+            if isinstance(modifier, MergeTLK) and modifier.tlk_filepath_f is None:
+                paired_dialog = None
+            modifier.apply(
+                dialog, memory, source_cache, store_memory=self.store_memory, dialog_f=paired_dialog,
+            )
 
 
 class MergeTLK:
@@ -100,6 +128,7 @@ class MergeTLK:
         tlk_filepath: Path,
     ):
         self.tlk_filepath: Path = tlk_filepath
+        self.tlk_filepath_f: Path | None = None
         self.strref_mappings: dict[int, int] = {}
 
     @property
@@ -120,41 +149,61 @@ class MergeTLK:
         source_cache: dict[str, TLK] | None = None,
         *,
         store_memory: bool = True,
+        dialog_f: TLK | None = None,
     ) -> None:
-        source_tlk = _load_tlk(self.tlk_filepath, source_cache)
-
+        source = _load_tlk(self.tlk_filepath, source_cache)
         for source_stringref in self.strref_mappings.values():
-            if source_tlk.get(source_stringref) is None:
-                msg = f"Cannot load nonexistent stringref '{source_stringref}' from source TLK '{self.tlk_filepath}'"
-                raise IndexError(msg)
+            if source.get(source_stringref) is None:
+                raise IndexError(
+                    f"Cannot load nonexistent stringref '{source_stringref}' from source TLK '{self.tlk_filepath}'",
+                )
+        sources = [source]
+        dialogs = [dialog]
+        if dialog_f is not None:
+            if self.tlk_filepath_f is None:
+                raise ValueError("A paired TLK merge requires a female source table.")
+            source_f = _load_tlk(self.tlk_filepath_f, source_cache)
+            if len(source) != len(source_f):
+                raise ValueError("Normal and female source TLKs must contain corresponding rows.")
+            sources.append(source_f)
+            dialogs.append(dialog_f)
 
-        destination_stringrefs: dict[tuple[str, int, str, int, int, float], int] = {}
-        for stringref, entry in dialog:
-            destination_stringrefs.setdefault(self._entry_key(entry), stringref)
+        # Encode all source keys first. An invalid edit cannot leave half a merge.
+        source_keys = [
+            tuple(self._entry_key(table.entries[i], dest.encoding) for table, dest in zip(sources, dialogs))
+            for i in range(len(source))
+        ]
+        destinations: dict[tuple, int] = {}
+        for i in range(min(len(table) for table in dialogs)):
+            key = tuple(self._entry_key(table.entries[i], table.encoding) for table in dialogs)
+            destinations.setdefault(key, i)
 
-        source_stringrefs: dict[int, int] = {}
-        for source_stringref, entry in source_tlk:
-            entry_key = self._entry_key(entry)
-            destination_stringref = destination_stringrefs.get(entry_key)
-            if destination_stringref is None:
-                destination_stringref = dialog.add_entry(entry)
-                destination_stringrefs[entry_key] = destination_stringref
-            source_stringrefs[source_stringref] = destination_stringref
-
+        resolved: dict[int, int] = {}
+        for i, key in enumerate(source_keys):
+            destination = destinations.get(key)
+            if destination is None:
+                destination = max(len(table) for table in dialogs)
+                for table, source_table in zip(dialogs, sources):
+                    _pad_dialog(table, destination)
+                    table.add_entry(source_table.entries[i])
+                destinations[key] = destination
+            resolved[i] = destination
         if store_memory:
             for token_id, source_stringref in self.strref_mappings.items():
-                memory.memory_str[token_id] = source_stringrefs[source_stringref]
+                memory.memory_str[token_id] = resolved[source_stringref]
 
     @staticmethod
-    def _entry_key(entry: TLKEntry) -> tuple[str, int, str, int, int, float]:
+    def _entry_key(entry: TLKEntry, encoding: str) -> tuple[bytes, int, bytes, int, int, int]:
         return (
-            entry.text,
-            entry.flags,
-            str(entry.voiceover),
-            entry.volume_variance,
-            entry.pitch_variance,
-            entry.sound_length,
+            entry.text_bytes(encoding), entry.flags, entry.voiceover.to_bytes(),
+            entry.volume_variance, entry.pitch_variance, entry.sound_length_bits,
         )
+
+
+def _pad_dialog(dialog: TLK, size: int) -> None:
+    """Keeps absent indices skipped rather than creating successful empty lookups."""
+    while len(dialog) < size:
+        dialog.entries.append(TLKEntry("", ResRef.from_blank(), flags=0x8000))
 
 
 class ModifyTLK:
@@ -202,22 +251,29 @@ class ModifyTLK:
         source_cache: dict[str, TLK] | None = None,
         *,
         store_memory: bool = True,
+        dialog_f: TLK | None = None,
     ):
-        source_entry: TLKEntry | None = self.load(source_cache)
+        source_entry = self.load(source_cache)
+        dialogs = [dialog] if dialog_f is None else [dialog, dialog_f]
         if self.is_replacement:
-            if source_entry is None:
-                dialog.replace(
+            if any(table.get(self.token_id) is None for table in dialogs):
+                raise IndexError(f"Cannot replace nonexistent stringref '{self.token_id}'.")
+            for table in dialogs:
+                table.replace(
                     self.token_id,
-                    self.text if self._text_set else None,
-                    self.sound if self._sound_set else None,
+                    source_entry.text if source_entry is not None else (self.text if self._text_set else None),
+                    source_entry.voiceover if source_entry is not None else (self.sound if self._sound_set else None),
                 )
-            else:
-                dialog.replace(self.token_id, source_entry.text, source_entry.voiceover)
             result_index = self.token_id
         else:
-            entry = source_entry or TLKEntry(self.text or "", self.sound or ResRef.from_blank())
-            result_index = dialog.add_entry(entry)
-
+            entry = source_entry if source_entry is not None else TLKEntry(self.text, self.sound)
+            # Validate each table's declared encoding before extending either one.
+            for table in dialogs:
+                entry.text_bytes(table.encoding)
+            result_index = max(len(table) for table in dialogs)
+            for table in dialogs:
+                _pad_dialog(table, result_index)
+                table.add_entry(entry)
         if store_memory:
             memory.memory_str[self.token_id] = result_index
 
@@ -232,13 +288,11 @@ class ModifyTLK:
 
         entry = source_entry.copy()
         if self._text_set:
-            entry.text = self.text
-            entry.text_present = bool(self.text)
+            entry.replace(text=self.text)
         else:
             self._text = entry.text
         if self._sound_set:
-            entry.voiceover = self.sound
-            entry.sound_present = bool(self.sound)
+            entry.replace(sound_resref=self.sound)
         else:
-            self._sound = ResRef(str(entry.voiceover))
+            self._sound = ResRef.from_bytes(entry.voiceover.to_bytes())
         return entry

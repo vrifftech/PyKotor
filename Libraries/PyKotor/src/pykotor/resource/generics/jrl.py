@@ -3,6 +3,8 @@ from __future__ import annotations
 from enum import IntEnum
 from typing import TYPE_CHECKING
 
+from pykotor.resource.formats.gff.gff_data import GFFFieldType
+from pykotor.resource.generics._gff import (remember_gff, preserve_gff, remember_gff_struct, bind_gff_struct)
 from pykotor.common.language import LocalizedString
 from pykotor.common.misc import Game
 from pykotor.resource.formats.gff import GFF, GFFContent, GFFList, read_gff, write_gff
@@ -77,28 +79,40 @@ class JRLQuestPriority(IntEnum):
     LOW = 3
     LOWEST = 4
 
+    @classmethod
+    def _missing_(cls, value):
+        if not isinstance(value, int):
+            return None
+        member = int.__new__(cls, value)
+        member._name_ = f"VALUE_{value}"
+        member._value_ = value
+        return member
+
 
 def construct_jrl(gff: GFF) -> JRL:
     jrl = JRL()
 
-    for category_struct in gff.root.acquire("Categories", GFFList()):
+    for category_struct in gff.root.acquire("Categories", GFFList(), field_type=GFFFieldType.List):
         quest = JRLQuest()
+        remember_gff_struct(quest, category_struct)
         jrl.quests.append(quest)
-        quest.comment = category_struct.acquire("Comment", "")
-        quest.name = category_struct.acquire("Name", LocalizedString.from_invalid())
-        quest.planet_id = category_struct.acquire("PlanetID", 0)
-        quest.plot_index = category_struct.acquire("PlotIndex", 0)
-        quest.priority = JRLQuestPriority(category_struct.acquire("Priority", 0))
-        quest.tag = category_struct.acquire("Tag", "")
+        quest.comment = category_struct.acquire("Comment", "", field_type=GFFFieldType.String)
+        quest.name = category_struct.acquire("Name", LocalizedString.from_invalid(), field_type=GFFFieldType.LocalizedString)
+        quest.planet_id = category_struct.acquire("PlanetID", 0, field_type=GFFFieldType.Int32)
+        quest.plot_index = category_struct.acquire("PlotIndex", 0, field_type=GFFFieldType.Int32)
+        quest.priority = JRLQuestPriority(category_struct.acquire("Priority", 0, field_type=GFFFieldType.UInt32))
+        quest.tag = category_struct.acquire("Tag", "", field_type=GFFFieldType.String)
 
-        for entry_struct in category_struct.acquire("EntryList", GFFList()):
+        for entry_struct in category_struct.acquire("EntryList", GFFList(), field_type=GFFFieldType.List):
             entry = JRLEntry()
+            remember_gff_struct(entry, entry_struct)
             quest.entries.append(entry)
-            entry.end = bool(entry_struct.acquire("End", 0))
-            entry.entry_id = entry_struct.acquire("ID", 0)
-            entry.text = entry_struct.acquire("Text", LocalizedString.from_invalid())
-            entry.xp_percentage = entry_struct.acquire("XP_Percentage", 0.0)
+            entry.end = bool(entry_struct.acquire("End", 0, field_type=GFFFieldType.UInt16))
+            entry.entry_id = entry_struct.acquire("ID", 0, field_type=GFFFieldType.UInt32)
+            entry.text = entry_struct.acquire("Text", LocalizedString.from_invalid(), field_type=GFFFieldType.LocalizedString)
+            entry.xp_percentage = entry_struct.acquire("XP_Percentage", 0.0, field_type=GFFFieldType.Single)
 
+    remember_gff(jrl, gff)
     return jrl
 
 
@@ -113,6 +127,7 @@ def dismantle_jrl(  # TODO: store original list indices and sort.
     category_list: GFFList = gff.root.set_list("Categories", GFFList())
     for i, quest in enumerate(jrl.quests):
         category_struct = category_list.add(i)
+        bind_gff_struct(category_struct, quest)
         category_struct.set_string("Comment", quest.comment)
         category_struct.set_locstring("Name", quest.name)
         category_struct.set_int32("PlanetID", quest.planet_id)
@@ -123,12 +138,13 @@ def dismantle_jrl(  # TODO: store original list indices and sort.
         entry_list: GFFList = category_struct.set_list("EntryList", GFFList())
         for j, entry in enumerate(quest.entries):
             entry_struct = entry_list.add(j)
+            bind_gff_struct(entry_struct, entry)
             entry_struct.set_uint16("End", entry.end)
             entry_struct.set_uint32("ID", entry.entry_id)
             entry_struct.set_locstring("Text", entry.text)
             entry_struct.set_single("XP_Percentage", entry.xp_percentage)
 
-    return gff
+    return preserve_gff(jrl, gff, lambda original: dismantle_jrl(original, game=game, use_deprecated=use_deprecated))
 
 
 def read_jrl(

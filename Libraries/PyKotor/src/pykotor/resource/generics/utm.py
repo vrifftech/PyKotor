@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from pykotor.resource.formats.gff.gff_data import GFFFieldType
+from pykotor.resource.generics._gff import (remember_gff, preserve_gff, remember_gff_struct, bind_gff_struct)
 from pykotor.common.language import LocalizedString
 from pykotor.common.misc import Game, InventoryItem, ResRef
 from pykotor.resource.formats.gff import GFF, GFFContent, GFFList, read_gff, write_gff
@@ -60,25 +62,29 @@ def construct_utm(
     utm = UTM()
 
     root = gff.root
-    utm.resref = root.acquire("ResRef", ResRef.from_blank())
-    utm.name = root.acquire("LocName", LocalizedString.from_invalid())
-    utm.tag = root.acquire("Tag", "")
-    utm.mark_up = root.acquire("MarkUp", 0)
-    utm.mark_down = root.acquire("MarkDown", 0)
-    utm.on_open = root.acquire("OnOpenStore", ResRef.from_blank())
-    utm.comment = root.acquire("Comment", "")
-    utm.id = root.acquire("ID", 0)
-    utm.can_buy = root.acquire("BuySellFlag", 0) & 1 != 0
-    utm.can_sell = root.acquire("BuySellFlag", 0) & 2 != 0
+    utm.resref = root.acquire("ResRef", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+    utm.name = root.acquire("LocName", LocalizedString.from_invalid(), field_type=GFFFieldType.LocalizedString)
+    utm.tag = root.acquire("Tag", "", field_type=GFFFieldType.String)
+    utm.mark_up = root.acquire("MarkUp", 0, field_type=GFFFieldType.Int32)
+    utm.mark_down = root.acquire("MarkDown", 0, field_type=GFFFieldType.Int32)
+    utm.on_open = root.acquire("OnOpenStore", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+    utm.comment = root.acquire("Comment", "", field_type=GFFFieldType.String)
+    utm.id = root.acquire("ID", 0, field_type=GFFFieldType.UInt8)
+    utm.can_buy = root.acquire("BuySellFlag", 0, field_type=GFFFieldType.UInt8) & 1 != 0
+    utm.can_sell = root.acquire("BuySellFlag", 0, field_type=GFFFieldType.UInt8) & 2 != 0
 
-    item_list: GFFList = root.acquire("ItemList", GFFList())
+    item_list: GFFList = root.acquire("ItemList", GFFList(), field_type=GFFFieldType.List)
     for item_struct in item_list:
         item = InventoryItem(ResRef.from_blank())
+        remember_gff_struct(item, item_struct)
         utm.inventory.append(item)
-        item.droppable = bool(item_struct.acquire("Dropable", 0))
-        item.resref = item_struct.acquire("InventoryRes", ResRef.from_blank())
-        item.infinite = bool(item_struct.acquire("Infinite", 0))
+        item.droppable = bool(item_struct.acquire("Dropable", 0, field_type=GFFFieldType.UInt8))
+        item.resref = item_struct.acquire("InventoryRes", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+        item.infinite = bool(item_struct.acquire("Infinite", 0, field_type=GFFFieldType.UInt8))
+        item.pos_x = item_struct.acquire("Repos_PosX", 0)
+        item.pos_y = item_struct.acquire("Repos_Posy", 0)
 
+    remember_gff(utm, gff)
     return utm
 
 
@@ -103,9 +109,10 @@ def dismantle_utm(
     item_list: GFFList = root.set_list("ItemList", GFFList())
     for i, item in enumerate(utm.inventory):
         item_struct = item_list.add(i)
+        bind_gff_struct(item_struct, item)
         item_struct.set_resref("InventoryRes", item.resref)
-        item_struct.set_uint16("Repos_PosX", i)
-        item_struct.set_uint16("Repos_PosY", 0)
+        item_struct.set_uint16("Repos_PosX", i if item.pos_x is None else item.pos_x)
+        item_struct.set_uint16("Repos_Posy", 0 if item.pos_y is None else item.pos_y)
         if item.droppable:
             item_struct.set_uint8("Dropable", int(item.droppable))
         if item.infinite:
@@ -114,7 +121,7 @@ def dismantle_utm(
     if use_deprecated:
         root.set_uint8("ID", utm.id)
 
-    return gff
+    return preserve_gff(utm, gff, lambda original: dismantle_utm(original, game=game, use_deprecated=use_deprecated))
 
 
 def read_utm(

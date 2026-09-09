@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from pykotor.resource.formats.gff.gff_data import GFFFieldType
+from pykotor.resource.generics._gff import (remember_gff, preserve_gff)
 from pykotor.common.language import LocalizedString
 from pykotor.common.misc import Game, ResRef
 from pykotor.resource.formats.gff import GFF, GFFContent, bytes_gff, read_gff, write_gff
@@ -59,18 +61,19 @@ def construct_utw(
     utw = UTW()
 
     root: GFFStruct = gff.root
-    utw.appearance_id = root.acquire("Appearance", 0)
-    utw.linked_to = root.acquire("LinkedTo", "")
-    utw.resref = root.acquire("TemplateResRef", ResRef.from_blank())
-    utw.tag = root.acquire("Tag", "")
-    utw.name = root.acquire("LocalizedName", LocalizedString.from_invalid())
-    utw.description = root.acquire("Description", LocalizedString.from_invalid())
-    utw.has_map_note = bool(root.acquire("HasMapNote", 0))
-    utw.map_note = root.acquire("MapNote", LocalizedString.from_invalid())
-    utw.map_note_enabled = bool(root.acquire("MapNoteEnabled", 0))
-    utw.palette_id = root.acquire("PaletteID", 0)
-    utw.comment = root.acquire("Comment", "")
+    utw.appearance_id = root.acquire("Appearance", 0, field_type=GFFFieldType.UInt8)
+    utw.linked_to = root.acquire("LinkedTo", "", field_type=GFFFieldType.String)
+    utw.resref = root.acquire("TemplateResRef", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+    utw.tag = root.acquire("Tag", "", field_type=GFFFieldType.String)
+    utw.name = root.acquire("LocalizedName", LocalizedString.from_invalid(), field_type=GFFFieldType.LocalizedString)
+    utw.description = root.acquire("Description", LocalizedString.from_invalid(), field_type=GFFFieldType.LocalizedString)
+    utw.has_map_note = bool(root.acquire("HasMapNote", 0, field_type=GFFFieldType.UInt8))
+    utw.map_note = root.acquire("MapNote", LocalizedString.from_invalid(), field_type=GFFFieldType.LocalizedString)
+    utw.map_note_enabled = bool(root.acquire("MapNoteEnabled", 0, field_type=GFFFieldType.UInt8))
+    utw.palette_id = root.acquire("PaletteID", 0, field_type=GFFFieldType.UInt8)
+    utw.comment = root.acquire("Comment", "", field_type=GFFFieldType.String)
 
+    remember_gff(utw, gff)
     return utw
 
 
@@ -95,7 +98,7 @@ def dismantle_utw(
     root.set_uint8("PaletteID", utw.palette_id)
     root.set_string("Comment", utw.comment)
 
-    return gff
+    return preserve_gff(utw, gff, lambda original: dismantle_utw(original, game=game, use_deprecated=use_deprecated))
 
 
 def read_utw(

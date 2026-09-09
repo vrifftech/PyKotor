@@ -75,7 +75,7 @@ class GFFBinaryReader(ResourceReader):
 
         self._labels = []
         self._reader.seek(label_offset)
-        self._labels.extend(self._reader.read_string(16) for _ in range(label_count))
+        self._labels.extend(self._reader.read_bytes(16).split(b"\0", 1)[0].decode("ascii", "surrogateescape") for _ in range(label_count))
         self._load_struct(self._gff.root, 0)
 
         return self._gff
@@ -87,7 +87,7 @@ class GFFBinaryReader(ResourceReader):
     ):
         self._reader.seek(self._struct_offset + struct_index * 12)
         struct_id, data, field_count = (
-            self._reader.read_int32(),
+            self._reader.read_uint32(max_neg1=True),
             self._reader.read_uint32(),
             self._reader.read_uint32(),
         )
@@ -118,48 +118,49 @@ class GFFBinaryReader(ResourceReader):
             offset = self._reader.read_uint32()  # relative to field data
             self._reader.seek(self._field_data_offset + offset)
             if field_type is GFFFieldType.UInt64:
-                gff_struct.set_uint64(label, self._reader.read_uint64())
+                gff_struct.add_field(label, GFFFieldType.UInt64, self._reader.read_uint64())
             elif field_type is GFFFieldType.Int64:
-                gff_struct.set_int64(label, self._reader.read_int64())
+                gff_struct.add_field(label, GFFFieldType.Int64, self._reader.read_int64())
             elif field_type is GFFFieldType.Double:
-                gff_struct.set_double(label, self._reader.read_double())
+                gff_struct.add_field(label, GFFFieldType.Double, self._reader.read_double())
             elif field_type is GFFFieldType.String:
                 length = self._reader.read_uint32()
-                gff_struct.set_string(label, self._reader.read_string(length))
+                raw_text = self._reader.read_bytes(length)
+                gff_struct.add_field(label, GFFFieldType.String, raw_text.decode("cp1252", "surrogateescape"), raw_data=raw_text)
             elif field_type is GFFFieldType.ResRef:
                 length = self._reader.read_uint8()
-                resref = ResRef(self._reader.read_string(length).strip())
-                gff_struct.set_resref(label, resref)
+                resref = ResRef.from_bytes(self._reader.read_bytes(length), fixed_width=False)
+                gff_struct.add_field(label, GFFFieldType.ResRef, resref)
             elif field_type is GFFFieldType.LocalizedString:
-                gff_struct.set_locstring(label, self._reader.read_locstring())
+                gff_struct.add_field(label, GFFFieldType.LocalizedString, self._reader.read_locstring())
             elif field_type is GFFFieldType.Binary:
                 length = self._reader.read_uint32()
-                gff_struct.set_binary(label, self._reader.read_bytes(length))
+                gff_struct.add_field(label, GFFFieldType.Binary, self._reader.read_bytes(length))
             elif field_type is GFFFieldType.Vector3:
-                gff_struct.set_vector3(label, self._reader.read_vector3())
+                gff_struct.add_field(label, GFFFieldType.Vector3, self._reader.read_vector3())
             elif field_type is GFFFieldType.Vector4:
-                gff_struct.set_vector4(label, self._reader.read_vector4())
+                gff_struct.add_field(label, GFFFieldType.Vector4, self._reader.read_vector4())
         elif field_type is GFFFieldType.Struct:
             struct_index = self._reader.read_uint32()
             new_struct = GFFStruct()
             self._load_struct(new_struct, struct_index)
-            gff_struct.set_struct(label, new_struct)
+            gff_struct.add_field(label, GFFFieldType.Struct, new_struct)
         elif field_type is GFFFieldType.List:
             self._load_list(gff_struct, label)
         elif field_type is GFFFieldType.UInt8:
-            gff_struct.set_uint8(label, self._reader.read_uint8())
+            gff_struct.add_field(label, GFFFieldType.UInt8, self._reader.read_uint8())
         elif field_type is GFFFieldType.Int8:
-            gff_struct.set_int8(label, self._reader.read_int8())
+            gff_struct.add_field(label, GFFFieldType.Int8, self._reader.read_int8())
         elif field_type is GFFFieldType.UInt16:
-            gff_struct.set_uint16(label, self._reader.read_uint16())
+            gff_struct.add_field(label, GFFFieldType.UInt16, self._reader.read_uint16())
         elif field_type is GFFFieldType.Int16:
-            gff_struct.set_int16(label, self._reader.read_int16())
+            gff_struct.add_field(label, GFFFieldType.Int16, self._reader.read_int16())
         elif field_type is GFFFieldType.UInt32:
-            gff_struct.set_uint32(label, self._reader.read_uint32())
+            gff_struct.add_field(label, GFFFieldType.UInt32, self._reader.read_uint32())
         elif field_type is GFFFieldType.Int32:
-            gff_struct.set_int32(label, self._reader.read_int32())
+            gff_struct.add_field(label, GFFFieldType.Int32, self._reader.read_int32())
         elif field_type is GFFFieldType.Single:
-            gff_struct.set_single(label, self._reader.read_single())
+            gff_struct.add_field(label, GFFFieldType.Single, self._reader.read_single())
 
     def _load_list(self, gff_struct: GFFStruct, label: str):
         offset = self._reader.read_uint32()  # relative to list indices
@@ -171,7 +172,7 @@ class GFFBinaryReader(ResourceReader):
             value.add(0)
             child: GFFStruct | None = value.at(len(value) - 1)
             self._load_struct(child, struct_index)
-        gff_struct.set_list(label, value)
+        gff_struct.add_field(label, GFFFieldType.List, value)
 
 
 class GFFBinaryWriter(ResourceWriter):
@@ -232,7 +233,10 @@ class GFFBinaryWriter(ResourceWriter):
         self._writer.write_bytes(self._struct_writer.data())
         self._writer.write_bytes(self._field_writer.data())
         for label in self._labels:
-            self._writer.write_string(label, string_length=16)
+            data = label.encode("ascii", "surrogateescape")
+            if len(data) > 16:
+                raise ValueError(f"GFF field label exceeds 16 bytes: {label!r}")
+            self._writer.write_bytes(data.ljust(16, b"\0"))
         self._writer.write_bytes(self._field_data_writer.data())
         self._writer.write_bytes(self._field_indices_writer.data())
         self._writer.write_bytes(self._list_indices_writer.data())
@@ -254,8 +258,9 @@ class GFFBinaryWriter(ResourceWriter):
             self._struct_writer.write_uint32(self._field_count)
             self._struct_writer.write_uint32(field_count)
 
-            for label, field_type, value in gff_struct:
-                self._build_field(label, value, field_type)
+            for label, field in gff_struct._field_order:
+                field_type, value = field.field_type(), field.value()
+                self._build_field(label, value, field_type, field.raw_data)
         elif field_count > 1:
             self._write_large_struct(field_count, gff_struct)
 
@@ -267,10 +272,11 @@ class GFFBinaryWriter(ResourceWriter):
         pos = self._field_indices_writer.position()
         self._field_indices_writer.write_bytes(b"\x00\x00\x00\x00" * field_count)
 
-        for i, (label, field_type, value) in enumerate(gff_struct):
+        for i, (label, field) in enumerate(gff_struct._field_order):
+            field_type, value = field.field_type(), field.value()
             self._field_indices_writer.seek(pos + i * 4)
             self._field_indices_writer.write_uint32(self._field_count)
-            self._build_field(label, value, field_type)
+            self._build_field(label, value, field_type, field.raw_data)
 
     def _build_list(
         self,
@@ -290,6 +296,7 @@ class GFFBinaryWriter(ResourceWriter):
         label: str,
         value: Any,
         field_type: GFFFieldType,
+        raw_data: bytes | None = None,
     ):
         self._field_count += 1
         field_type_id = field_type.value
@@ -309,9 +316,13 @@ class GFFBinaryWriter(ResourceWriter):
             elif field_type is GFFFieldType.Double:
                 self._field_data_writer.write_double(value)
             elif field_type is GFFFieldType.String:
-                self._field_data_writer.write_string(value, prefix_length=4)
+                data = raw_data if raw_data is not None else value.encode("cp1252", "surrogateescape")
+                self._field_data_writer.write_uint32(len(data))
+                self._field_data_writer.write_bytes(data)
             elif field_type is GFFFieldType.ResRef:
-                self._field_data_writer.write_string(str(value), prefix_length=1)
+                data = value.to_bytes(fixed_width=False)
+                self._field_data_writer.write_uint8(len(data))
+                self._field_data_writer.write_bytes(data)
             elif field_type is GFFFieldType.LocalizedString:
                 self._field_data_writer.write_locstring(value)
             elif field_type is GFFFieldType.Binary:

@@ -24,7 +24,30 @@ class TLK:
         language: Language = Language.ENGLISH,
     ):
         self.entries: list[TLKEntry] = []
-        self.language: Language = language  # game does not use this field
+        self.language_id: int = int(language)
+        self.version: str = "V3.0"
+
+    @property
+    def language(self) -> Language:
+        if self.language_id in Language._value2member_map_:
+            return Language(self.language_id)
+        return Language.UNKNOWN
+
+    @language.setter
+    def language(self, value: Language | int):
+        self.language_id = int(value)
+
+    @staticmethod
+    def encoding_for_language(language_id: int) -> str:
+        """Uses the declared code page; unknown IDs retain opaque high bytes."""
+        if language_id not in Language._value2member_map_:
+            return "ascii"
+        encoding = Language(language_id).get_encoding()
+        return "ascii" if encoding is None else encoding
+
+    @property
+    def encoding(self) -> str:
+        return self.encoding_for_language(self.language_id)
 
     def __len__(
         self,
@@ -110,12 +133,7 @@ class TLK:
             raise IndexError(msg)
 
         entry: TLKEntry = self.entries[stringref]
-        if text is not None:
-            entry.text = text
-            entry.text_present = bool(text)
-        if sound_resref is not None:
-            entry.voiceover = ResRef(str(sound_resref))
-            entry.sound_present = bool(entry.voiceover)
+        entry.replace(text, sound_resref)
 
     def resize(
         self,
@@ -133,44 +151,26 @@ class TLK:
             self.entries.extend([TLKEntry("", ResRef.from_blank()) for _ in range(len(self), size)])
 
     def compare(self, other: TLK, log_func: Callable = print) -> bool:
+        equal = True
+        if self.language_id != other.language_id or self.version != other.version:
+            log_func(f"TLK header mismatch: {self.version}/{self.language_id} != {other.version}/{other.language_id}")
+            equal = False
         if len(self) != len(other):
             log_func(f"TLK row count mismatch. Old: {len(self)}, New: {len(other)}")
-
-        mismatch_count, extra_old, extra_new = 0, 0, 0
-
-        for (old_stringref, old_entry), (new_stringref, new_entry) in zip_longest(self, other, fillvalue=(None, None)):
-            # Both TLKs have the entry but with different content
-            if old_stringref is None or old_entry is None:
-                if new_stringref is not None and new_entry is not None:
-                    extra_new += 1
-                    continue
+            equal = False
+        for stringref, (old_entry, new_entry) in enumerate(zip_longest(self.entries, other.entries)):
+            if old_entry is None or new_entry is None:
+                equal = False
                 continue
-            if new_stringref is None or new_entry is None:
-                extra_old += 1
-                continue
-            if old_entry != new_entry:
-                text_mismatch: bool = old_entry.text != new_entry.text
-                vo_mismatch: bool = old_entry.voiceover != new_entry.voiceover
-                if not text_mismatch and not vo_mismatch:
-                    log_func("TLK entries are not equal, but no differences could be found?")
-                    continue
-
-                log_func(f"Entry mismatch at stringref: {old_stringref}")
-                if text_mismatch:
+            if old_entry != new_entry or old_entry.text_bytes(self.encoding) != new_entry.text_bytes(other.encoding):
+                log_func(f"Entry mismatch at stringref: {stringref}")
+                if old_entry.text != new_entry.text:
                     log_func(format_text(compare_and_format(old_entry.text, new_entry.text)))
-                mismatch_count += 1
-                if vo_mismatch:
-                    log_func(format_text(compare_and_format(old_entry.voiceover, new_entry.voiceover)))
-
-        # Provide a summary of discrepancies
-        if mismatch_count:
-            log_func(f"{mismatch_count} entries have mismatches.")
-        if extra_old:
-            log_func(f"Old TLK has {extra_old} stringrefs that are missing in the new TLK.")
-        if extra_new:
-            log_func(f"New TLK has {extra_new} extra stringrefs that are not in the old TLK.")
-
-        return not (mismatch_count or extra_old or extra_new)
+                for field in ("voiceover", "flags", "volume_variance", "pitch_variance", "sound_length_bits"):
+                    if getattr(old_entry, field) != getattr(new_entry, field):
+                        log_func(f"{field}: {getattr(old_entry, field)!r} != {getattr(new_entry, field)!r}")
+                equal = False
+        return equal
 
 
 class TLKEntry:
@@ -185,10 +185,12 @@ class TLKEntry:
         sound_length: float = 0.0,
         sound_length_bits: int | None = None,
     ):
-        self.text: str = text
+        self._text: str = text
+        self._text_bytes: bytes | None = None
+        self._text_encoding: str | None = None
         self.voiceover: ResRef = voiceover
 
-        # The following fields exist in TLK format, but do not perform any function in KOTOR. The game ignores these.
+        # Presence bits gate text/sound/length lookup; 0x8000 skips this entry.
         self.flags: int = flags
         self.volume_variance: int = volume_variance
         self.pitch_variance: int = pitch_variance
@@ -198,16 +200,64 @@ class TLKEntry:
             else struct.unpack("<I", struct.pack("<f", sound_length))[0]
         )
 
+    @property
+    def text(self) -> str:
+        return self._text
+
+    @text.setter
+    def text(self, value: str):
+        if value != self._text:
+            self._text_bytes = None
+            self._text_encoding = None
+        self._text = value
+
+    def set_text_bytes(self, data: bytes, encoding: str) -> None:
+        """Decodes once while retaining the original representation for an untouched entry."""
+        self._text = data.decode(encoding, "surrogateescape")
+        self._text_bytes = bytes(data)
+        self._text_encoding = encoding
+
+    def text_bytes(self, encoding: str) -> bytes:
+        if self._text_bytes is not None and self._text_encoding == encoding:
+            return self._text_bytes
+        return self.text.encode(encoding, "surrogateescape")
+
+    @property
+    def skipped(self) -> bool:
+        return bool(self.flags & 0x8000)
+
+    @skipped.setter
+    def skipped(self, value: bool):
+        self.flags = self.flags | 0x8000 if value else self.flags & ~0x8000
+
+    def replace(self, text: str | None = None, sound_resref: str | ResRef | None = None) -> None:
+        """Explicitly edits and activates selected fields without resetting other metadata."""
+        if text is not None:
+            self.text = text
+            self.text_present = bool(text)
+        if sound_resref is not None:
+            self.voiceover = (
+                ResRef.from_bytes(sound_resref.to_bytes())
+                if isinstance(sound_resref, ResRef)
+                else ResRef(sound_resref)
+            )
+            self.sound_present = bool(self.voiceover)
+        if text is not None or sound_resref is not None:
+            self.skipped = False
+
     def copy(self) -> TLKEntry:
-        """Returns an independent copy containing the complete TLK entry."""
-        return TLKEntry(
+        """Returns an independent copy including undecoded bytes and complete metadata."""
+        entry = TLKEntry(
             self.text,
-            ResRef(str(self.voiceover)),
+            ResRef.from_bytes(self.voiceover.to_bytes()),
             flags=self.flags,
             volume_variance=self.volume_variance,
             pitch_variance=self.pitch_variance,
             sound_length_bits=self.sound_length_bits,
         )
+        entry._text_bytes = self._text_bytes
+        entry._text_encoding = self._text_encoding
+        return entry
 
     @property
     def sound_length(self) -> float:
@@ -253,13 +303,21 @@ class TLKEntry:
         self,
         other: TLKEntry,
     ):
-        """Returns True if the text and voiceover match."""
+        """Compares text, the stored sound reference, and all entry metadata."""
         if self is other:
             return True
         if not isinstance(other, TLKEntry):
             return NotImplemented
-        return other.text == self.text and other.voiceover == self.voiceover
+        return (
+            other.text == self.text
+            and other.voiceover.to_bytes() == self.voiceover.to_bytes()
+            and other.flags == self.flags
+            and other.volume_variance == self.volume_variance
+            and other.pitch_variance == self.pitch_variance
+            and other.sound_length_bits == self.sound_length_bits
+        )
 
     @property
     def text_length(self) -> int:
+        """Unicode character count; use text_bytes(encoding) for the binary byte length."""
         return len(self.text)

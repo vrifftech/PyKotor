@@ -12,4 +12,4 @@ from pykotor.resource.formats.mdl.io_mdl_ascii import (
     MDLAsciiReader,
     MDLAsciiWriter,
 )
-from pykotor.resource.formats.mdl.mdl_auto import bytes_mdl, write_mdl, read_mdl
+from pykotor.resource.formats.mdl.mdl_auto import bytes_mdl, bytes_mdl_pair, write_mdl, read_mdl

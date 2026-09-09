@@ -35,14 +35,13 @@ class PatcherModifications(ABC):
         sourcefolder (str): The source folder.
         saveas (str): The final name of the file this patch will save as (!SaveAs/!Filename)
         replace_file (bool): Whether to replace the file.
-            This bool is True when using syntax Replace#=file_to_replace.ext, and therefore False when File#=file_to_replace.ext syntax is used.
-            It is currently unknown whether this takes priority over !ReplaceFile, current PyKotor implementation will prioritize !ReplaceFile
+            InstallList and CompileList take this from the File#/Replace# mapping.
+            HACKList uses its first ReplaceFile entry; other lists may use !ReplaceFile.
         destination (str): The destination for the patch file.
         action (str): The action for this patch, purely used for logging purposes.
         override_type (str): The override type, see `class OverrideType` above.
         skip_if_not_replace (bool): Determines how !ReplaceFile will be handled.
-            TSLPatcher's InstallList and CompileList are the only patchlists that handle replace behavior differently.
-            in InstallList/CompileList, if this is True and !ReplaceFile is False or File#=file_to_install.ext, the resource will be skipped if the resource already exists.
+            InstallList, CompileList, and HACKList skip an existing resource unless replacement is enabled.
 
     Methods:
     -------
@@ -58,7 +57,7 @@ class PatcherModifications(ABC):
                 Note: !DefaultDestination is highly undocumented in TSLPatcher so it's unclear whether this matches what TSLPatcher does. I believe it takes priority over InstallList's destinations (excluding !Destination)
         - File-level variables ( e.g. [my_file.nss] )
             !SourceFile=this_file.extension - the name of the file to load. Defaults to 'this_file.ext' when using the `File#=this_file` or `Replace#=this_file` syntax.
-            !ReplaceFile=<1 or 0> - Whether to replace the file. Takes priority over `Replace#=this_file.ext` syntax
+            !ReplaceFile=<1 or 0> - Whether to replace the file, for lists that support this directive.
             !SaveAs=<some_file.tpc> - Determines the final filename of the patch. Defaults to whatever !SourceFile is defined as.
             !Filename=<asdf_file.qwer> - Literally the same as !SaveAs
             !Destination=relative/path/to/destination/folder - The relative path to the folder to save this patched file.
@@ -84,7 +83,7 @@ class PatcherModifications(ABC):
 
         self.action: str = "Patch" + " "
         self.override_type: str = OverrideType.WARN
-        self.skip_if_not_replace: bool = False  # [InstallList] and [CompileList] only
+        self.skip_if_not_replace: bool = False
 
     @abstractmethod
     def patch_resource(
@@ -117,14 +116,19 @@ class PatcherModifications(ABC):
         # Note: The second argument passed to the 'pop' function is the default.
         ####
 
-        self.sourcefile = file_section_dict.pop("!SourceFile", self.sourcefile)
-        # !SaveAs and !Filename are the same.
-        self.saveas = file_section_dict.pop("!Filename", file_section_dict.pop("!SaveAs", self.saveas))
+        sourcefile = file_section_dict.pop("!SourceFile", None)
+        if sourcefile:
+            self.sourcefile = sourcefile
+        # Empty aliases leave the current name unchanged.
+        saveas = file_section_dict.pop("!SaveAs", None)
+        filename = file_section_dict.pop("!Filename", None)
+        if filename or saveas:
+            self.saveas = filename or saveas
 
         destination_fallback: str = self.DEFAULT_DESTINATION if default_destination is None else default_destination
         self.destination = file_section_dict.pop("!Destination", destination_fallback)
 
-        # !ReplaceFile=1 is prioritized, see Stoffe's HLFP mod v2.1 for reference.
+        # Lists with their own replacement rule consume this key before calling here.
         replace_file: bool | str = file_section_dict.pop("!ReplaceFile", self.replace_file)
         self.replace_file = convert_to_bool(replace_file)
 

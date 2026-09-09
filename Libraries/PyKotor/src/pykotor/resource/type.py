@@ -140,7 +140,7 @@ class ResourceType(Enum):
     DWK = ResourceTuple(2052, "dwk", "Walkmeshes", "binary")
     PWK = ResourceTuple(2053, "pwk", "Walkmeshes", "binary")
     JRL = ResourceTuple(2056, "jrl", "Journals", "gff")
-    SAV = ResourceTuple(2057, "sav", "Save Data", "erf")
+    SAV = ResourceTuple(2057, "sav", "Save Data", "binary")  # Known resource ID; not a supported archive format.
     UTW = ResourceTuple(2058, "utw", "Waypoints", "gff")
     FourPC = ResourceTuple(2059, "4pc", "Textures", "binary")  # RGBA 16-bit
     SSF = ResourceTuple(2060, "ssf", "Soundsets", "binary")

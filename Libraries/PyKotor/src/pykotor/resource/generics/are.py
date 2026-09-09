@@ -3,6 +3,8 @@ from __future__ import annotations
 from enum import IntEnum
 from typing import TYPE_CHECKING
 
+from pykotor.resource.formats.gff.gff_data import GFFFieldType
+from pykotor.resource.generics._gff import (remember_gff, preserve_gff, remember_gff_struct, bind_gff_struct)
 from pykotor.common.geometry import Vector2
 from pykotor.common.language import LocalizedString
 from pykotor.common.misc import Color, Game, ResRef
@@ -251,113 +253,116 @@ def construct_are(
     are = ARE()
 
     root = gff.root
-    map_struct = root.acquire("Map", GFFStruct())
+    map_struct = root.acquire("Map", GFFStruct(), field_type=GFFFieldType.Struct)
     are.map_original_struct_id = map_struct.struct_id
 
     are.north_axis = ARENorthAxis(
-        map_struct.acquire("NorthAxis", 0),
+        map_struct.acquire("NorthAxis", 0, field_type=GFFFieldType.Int32),
     )
-    are.map_zoom = map_struct.acquire("MapZoom", 0)
-    are.map_res_x = map_struct.acquire("MapResX", 0)
+    are.map_zoom = map_struct.acquire("MapZoom", 0, field_type=GFFFieldType.Int32)
+    are.map_res_x = map_struct.acquire("MapResX", 0, field_type=GFFFieldType.Int32)
     are.map_point_1 = Vector2(
-        map_struct.acquire("MapPt1X", 0.0),
-        map_struct.acquire("MapPt1Y", 0.0),
+        map_struct.acquire("MapPt1X", 0.0, field_type=GFFFieldType.Single),
+        map_struct.acquire("MapPt1Y", 0.0, field_type=GFFFieldType.Single),
     )
     are.map_point_2 = Vector2(
-        map_struct.acquire("MapPt2X", 0.0),
-        map_struct.acquire("MapPt2Y", 0.0),
+        map_struct.acquire("MapPt2X", 0.0, field_type=GFFFieldType.Single),
+        map_struct.acquire("MapPt2Y", 0.0, field_type=GFFFieldType.Single),
     )
     are.world_point_1 = Vector2(
-        map_struct.acquire("WorldPt1X", 0.0),
-        map_struct.acquire("WorldPt1Y", 0.0),
+        map_struct.acquire("WorldPt1X", 0.0, field_type=GFFFieldType.Single),
+        map_struct.acquire("WorldPt1Y", 0.0, field_type=GFFFieldType.Single),
     )
     are.world_point_2 = Vector2(
-        map_struct.acquire("WorldPt2X", 0.0),
-        map_struct.acquire("WorldPt2Y", 0.0),
+        map_struct.acquire("WorldPt2X", 0.0, field_type=GFFFieldType.Single),
+        map_struct.acquire("WorldPt2Y", 0.0, field_type=GFFFieldType.Single),
     )
-    are.version = root.acquire("Version", 0)
-    are.tag = root.acquire("Tag", "")
-    are.name = root.acquire("Name", LocalizedString.from_invalid())
-    are.comment = root.acquire("Comments", "")
-    are.alpha_test = root.acquire("AlphaTest", 0.0)
-    are.camera_style = root.acquire("CameraStyle", 0)
-    are.default_envmap = root.acquire("DefaultEnvMap", ResRef.from_blank())
-    are.grass_texture = root.acquire("Grass_TexName", ResRef.from_blank())
-    are.grass_density = root.acquire("Grass_Density", 0.0)
-    are.grass_size = root.acquire("Grass_QuadSize", 0.0)
-    are.grass_prob_ll = root.acquire("Grass_Prob_LL", 0.0)
-    are.grass_prob_lr = root.acquire("Grass_Prob_LR", 0.0)
-    are.grass_prob_ul = root.acquire("Grass_Prob_UL", 0.0)
-    are.grass_prob_ur = root.acquire("Grass_Prob_UR", 0.0)
-    are.fog_enabled = bool(root.acquire("SunFogOn", 0))
-    are.fog_near = root.acquire("SunFogNear", 0.0)
-    are.fog_far = root.acquire("SunFogFar", 0.0)
-    are.shadows = bool(root.acquire("SunShadows", 0))
-    are.shadow_opacity = root.acquire("ShadowOpacity", 0)
-    are.wind_power = AREWindPower(root.acquire("WindPower", 0))
-    are.unescapable = bool(root.acquire("Unescapable", 0))
-    are.disable_transit = bool(root.acquire("DisableTransit", 0))
-    are.stealth_xp = bool(root.acquire("StealthXPEnabled", 0))
-    are.stealth_xp_loss = root.acquire("StealthXPLoss", 0)
-    are.stealth_xp_max = root.acquire("StealthXPMax", 0)
-    are.on_enter = root.acquire("OnEnter", ResRef.from_blank())
-    are.on_exit = root.acquire("OnExit", ResRef.from_blank())
-    are.on_heartbeat = root.acquire("OnHeartbeat", ResRef.from_blank())
-    are.on_user_defined = root.acquire("OnUserDefined", ResRef.from_blank())
-    are.chance_rain = root.acquire("ChanceRain", 0)
-    are.chance_snow = root.acquire("ChanceSnow", 0)
-    are.chance_lightning = root.acquire("ChanceLightning", 0)
-    are.dirty_size_1 = root.acquire("DirtySizeOne", 0)
-    are.dirty_formula_1 = root.acquire("DirtyFormulaOne", 0)
-    are.dirty_func_1 = root.acquire("DirtyFuncOne", 0)
-    are.dirty_size_2 = root.acquire("DirtySizeTwo", 0)
-    are.dirty_formula_2 = root.acquire("DirtyFormulaTwo", 0)
-    are.dirty_func_2 = root.acquire("DirtyFuncTwo", 0)
-    are.dirty_size_3 = root.acquire("DirtySizeThree", 0)
-    are.dirty_formula_3 = root.acquire("DirtyFormulaThre", 0)
-    are.dirty_func_3 = root.acquire("DirtyFuncThree", 0)
-    are.unused_id = root.acquire("ID", 0)
-    are.creator_id = root.acquire("Creator_ID", 0)
-    are.flags = root.acquire("Flags", 0)
-    are.mod_spot_check = root.acquire("ModSpotCheck", 0)
-    are.mod_listen_check = root.acquire("ModListenCheck", 0)
-    are.moon_ambient = root.acquire("MoonAmbientColor", 0)
-    are.moon_diffuse = root.acquire("MoonDiffuseColor", 0)
-    are.moon_fog = root.acquire("MoonFogOn", 0)
-    are.moon_fog_near = root.acquire("MoonFogNear", 0.0)
-    are.moon_fog_far = root.acquire("MoonFogFar", 0.0)
-    are.moon_fog_color = root.acquire("MoonFogColor", 0)
-    are.moon_shadows = root.acquire("MoonShadows", 0)
-    are.is_night = root.acquire("IsNight", 0)
-    are.lighting_scheme = root.acquire("LightingScheme", 0)
-    are.day_night = root.acquire("DayNightCycle", 0)
-    are.loadscreen_id = root.acquire("LoadScreenID", 0)
-    are.no_rest = root.acquire("NoRest", 0)
-    are.no_hang_back = root.acquire("NoHangBack", 0)
-    are.player_only = root.acquire("PlayerOnly", 0)
-    are.player_vs_player = root.acquire("PlayerVsPlayer", 0)
+    are.version = root.acquire("Version", 0, field_type=GFFFieldType.UInt32)
+    are.tag = root.acquire("Tag", "", field_type=GFFFieldType.String)
+    are.name = root.acquire("Name", LocalizedString.from_invalid(), field_type=GFFFieldType.LocalizedString)
+    are.comment = root.acquire("Comments", "", field_type=GFFFieldType.String)
+    are.alpha_test = root.acquire("AlphaTest", 0.0, field_type=GFFFieldType.Single)
+    are.camera_style = root.acquire("CameraStyle", 0, field_type=GFFFieldType.Int32)
+    are.default_envmap = root.acquire("DefaultEnvMap", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+    are.grass_texture = root.acquire("Grass_TexName", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+    are.grass_density = root.acquire("Grass_Density", 0.0, field_type=GFFFieldType.Single)
+    are.grass_size = root.acquire("Grass_QuadSize", 0.0, field_type=GFFFieldType.Single)
+    are.grass_prob_ll = root.acquire("Grass_Prob_LL", 0.0, field_type=GFFFieldType.Single)
+    are.grass_prob_lr = root.acquire("Grass_Prob_LR", 0.0, field_type=GFFFieldType.Single)
+    are.grass_prob_ul = root.acquire("Grass_Prob_UL", 0.0, field_type=GFFFieldType.Single)
+    are.grass_prob_ur = root.acquire("Grass_Prob_UR", 0.0, field_type=GFFFieldType.Single)
+    are.fog_enabled = bool(root.acquire("SunFogOn", 0, field_type=GFFFieldType.UInt8))
+    are.fog_near = root.acquire("SunFogNear", 0.0, field_type=GFFFieldType.Single)
+    are.fog_far = root.acquire("SunFogFar", 0.0, field_type=GFFFieldType.Single)
+    are.shadows = bool(root.acquire("SunShadows", 0, field_type=GFFFieldType.UInt8))
+    are.shadow_opacity = root.acquire("ShadowOpacity", 0, field_type=GFFFieldType.UInt8)
+    are.wind_power = AREWindPower(root.acquire("WindPower", 0, field_type=GFFFieldType.Int32))
+    are.unescapable = bool(root.acquire("Unescapable", 0, field_type=GFFFieldType.UInt8))
+    are.disable_transit = bool(root.acquire("DisableTransit", 0, field_type=GFFFieldType.UInt8))
+    are.stealth_xp = bool(root.acquire("StealthXPEnabled", 0, field_type=GFFFieldType.UInt8))
+    are.stealth_xp_loss = root.acquire("StealthXPLoss", 0, field_type=GFFFieldType.UInt32)
+    are.stealth_xp_max = root.acquire("StealthXPMax", 0, field_type=GFFFieldType.UInt32)
+    are.on_enter = root.acquire("OnEnter", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+    are.on_exit = root.acquire("OnExit", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+    are.on_heartbeat = root.acquire("OnHeartbeat", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+    are.on_user_defined = root.acquire("OnUserDefined", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+    are.chance_rain = root.acquire("ChanceRain", 0, field_type=GFFFieldType.Int32)
+    are.chance_snow = root.acquire("ChanceSnow", 0, field_type=GFFFieldType.Int32)
+    are.chance_lightning = root.acquire("ChanceLightning", 0, field_type=GFFFieldType.Int32)
+    are.dirty_size_1 = root.acquire("DirtySizeOne", 0, field_type=GFFFieldType.Int32)
+    are.dirty_formula_1 = root.acquire("DirtyFormulaOne", 0, field_type=GFFFieldType.Int32)
+    are.dirty_func_1 = root.acquire("DirtyFuncOne", 0, field_type=GFFFieldType.Int32)
+    are.dirty_size_2 = root.acquire("DirtySizeTwo", 0, field_type=GFFFieldType.Int32)
+    are.dirty_formula_2 = root.acquire("DirtyFormulaTwo", 0, field_type=GFFFieldType.Int32)
+    are.dirty_func_2 = root.acquire("DirtyFuncTwo", 0, field_type=GFFFieldType.Int32)
+    are.dirty_size_3 = root.acquire("DirtySizeThree", 0, field_type=GFFFieldType.Int32)
+    are.dirty_formula_3 = root.acquire("DirtyFormulaThre", 0, field_type=GFFFieldType.Int32)
+    are.dirty_func_3 = root.acquire("DirtyFuncThree", 0, field_type=GFFFieldType.Int32)
+    are.unused_id = root.acquire("ID", 0, field_type=GFFFieldType.Int32)
+    are.creator_id = root.acquire("Creator_ID", 0, field_type=GFFFieldType.Int32)
+    are.flags = root.acquire("Flags", 0, field_type=GFFFieldType.UInt32)
+    are.mod_spot_check = root.acquire("ModSpotCheck", 0, field_type=GFFFieldType.Int32)
+    are.mod_listen_check = root.acquire("ModListenCheck", 0, field_type=GFFFieldType.Int32)
+    are.moon_ambient = root.acquire("MoonAmbientColor", 0, field_type=GFFFieldType.UInt32)
+    are.moon_diffuse = root.acquire("MoonDiffuseColor", 0, field_type=GFFFieldType.UInt32)
+    are.moon_fog = root.acquire("MoonFogOn", 0, field_type=GFFFieldType.UInt8)
+    are.moon_fog_near = root.acquire("MoonFogNear", 0.0, field_type=GFFFieldType.Single)
+    are.moon_fog_far = root.acquire("MoonFogFar", 0.0, field_type=GFFFieldType.Single)
+    are.moon_fog_color = root.acquire("MoonFogColor", 0, field_type=GFFFieldType.UInt32)
+    are.moon_shadows = root.acquire("MoonShadows", 0, field_type=GFFFieldType.UInt8)
+    are.is_night = root.acquire("IsNight", 0, field_type=GFFFieldType.UInt8)
+    are.lighting_scheme = root.acquire("LightingScheme", 0, field_type=GFFFieldType.UInt8)
+    are.day_night = root.acquire("DayNightCycle", 0, field_type=GFFFieldType.UInt8)
+    are.loadscreen_id = root.acquire("LoadScreenID", 0, field_type=GFFFieldType.UInt16)
+    are.no_rest = root.acquire("NoRest", 0, field_type=GFFFieldType.UInt8)
+    are.no_hang_back = root.acquire("NoHangBack", 0, field_type=GFFFieldType.UInt8)
+    are.player_only = root.acquire("PlayerOnly", 0, field_type=GFFFieldType.UInt8)
+    are.player_vs_player = root.acquire("PlayerVsPlayer", 0, field_type=GFFFieldType.UInt8)
 
-    are.sun_ambient = Color.from_rgb_integer(root.acquire("SunAmbientColor", 0))
-    are.sun_diffuse = Color.from_rgb_integer(root.acquire("SunDiffuseColor", 0))
-    are.dynamic_light = Color.from_rgb_integer(root.acquire("DynAmbientColor", 0))
-    are.fog_color = Color.from_rgb_integer(root.acquire("SunFogColor", 0))
-    are.grass_ambient = Color.from_rgb_integer(root.acquire("Grass_Ambient", 0))
-    are.grass_diffuse = Color.from_rgb_integer(root.acquire("Grass_Diffuse", 0))
+    are.sun_ambient = Color.from_rgb_integer(root.acquire("SunAmbientColor", 0, field_type=GFFFieldType.UInt32))
+    are.sun_diffuse = Color.from_rgb_integer(root.acquire("SunDiffuseColor", 0, field_type=GFFFieldType.UInt32))
+    are.dynamic_light = Color.from_rgb_integer(root.acquire("DynAmbientColor", 0, field_type=GFFFieldType.UInt32))
+    are.fog_color = Color.from_rgb_integer(root.acquire("SunFogColor", 0, field_type=GFFFieldType.UInt32))
+    are.grass_ambient = Color.from_rgb_integer(root.acquire("Grass_Ambient", 0, field_type=GFFFieldType.UInt32))
+    are.grass_diffuse = Color.from_rgb_integer(root.acquire("Grass_Diffuse", 0, field_type=GFFFieldType.UInt32))
 
-    are.grass_emissive = Color.from_rgb_integer(root.acquire("Grass_Emissive", 0))
-    are.dirty_argb_1 = Color.from_rgb_integer(root.acquire("DirtyARGBOne", 0))
-    are.dirty_argb_2 = Color.from_rgb_integer(root.acquire("DirtyARGBTwo", 0))
-    are.dirty_argb_3 = Color.from_rgb_integer(root.acquire("DirtyARGBThree", 0))
+    are.grass_emissive = Color.from_rgb_integer(root.acquire("Grass_Emissive", 0, field_type=GFFFieldType.UInt32))
+    are.dirty_argb_1 = Color.from_rgb_integer(root.acquire("DirtyARGBOne", 0, field_type=GFFFieldType.Int32))
+    are.dirty_argb_2 = Color.from_rgb_integer(root.acquire("DirtyARGBTwo", 0, field_type=GFFFieldType.Int32))
+    are.dirty_argb_3 = Color.from_rgb_integer(root.acquire("DirtyARGBThree", 0, field_type=GFFFieldType.Int32))
 
-    rooms_list = root.acquire("Rooms", GFFList())
+    rooms_list = root.acquire("Rooms", GFFList(), field_type=GFFFieldType.List)
     for room_struct in rooms_list:
-        ambient_scale = room_struct.acquire("AmbientScale", 0.0)
-        env_audio = room_struct.acquire("EnvAudio", 0)
-        room_name = room_struct.acquire("RoomName", "")
-        disable_weather = bool(room_struct.acquire("DisableWeather", 0))
-        force_rating = room_struct.acquire("ForceRating", 0)
-        are.rooms.append(ARERoom(room_name, disable_weather, env_audio, force_rating, ambient_scale))
+        ambient_scale = room_struct.acquire("AmbientScale", 0.0, field_type=GFFFieldType.Single)
+        env_audio = room_struct.acquire("EnvAudio", 0, field_type=GFFFieldType.Int32)
+        room_name = room_struct.acquire("RoomName", "", field_type=GFFFieldType.String)
+        disable_weather = bool(room_struct.acquire("DisableWeather", 0, field_type=GFFFieldType.UInt8))
+        force_rating = room_struct.acquire("ForceRating", 0, field_type=GFFFieldType.Int32)
+        room = ARERoom(room_name, disable_weather, env_audio, force_rating, ambient_scale)
+        remember_gff_struct(room, room_struct)
+        are.rooms.append(room)
 
+    remember_gff(are, gff)
     return are
 
 
@@ -445,6 +450,7 @@ def dismantle_are(
     rooms_list = root.set_list("Rooms", GFFList())
     for room in are.rooms:
         room_struct = rooms_list.add(0)
+        bind_gff_struct(room_struct, room)
         room_struct.set_single("AmbientScale", room.ambient_scale)
         room_struct.set_int32("EnvAudio", room.env_audio)
         room_struct.set_string("RoomName", room.name)
@@ -494,7 +500,7 @@ def dismantle_are(
         root.set_uint8("PlayerVsPlayer", are.player_vs_player)
         root.set_list("Expansion_List", GFFList())
 
-    return gff
+    return preserve_gff(are, gff, lambda original: dismantle_are(original, game=game, use_deprecated=use_deprecated))
 
 
 def read_are(

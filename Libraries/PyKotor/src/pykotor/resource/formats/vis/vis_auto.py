@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import os
+import shutil
+import tempfile
+
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from pykotor.resource.formats.vis.io_vis import VISAsciiReader, VISAsciiWriter
@@ -59,11 +64,25 @@ def write_vis(
         PermissionError: If the file could not be written to the specified destination.
         ValueError: If the specified format was unsupported.
     """
-    if file_format is ResourceType.VIS:
+    if file_format is not ResourceType.VIS:
+        raise ValueError("Unsupported format specified; use VIS.")
+    if not isinstance(target, (str, os.PathLike)):
         VISAsciiWriter(vis, target).write()
-    else:
-        msg = "Unsupported format specified; use VIS."
-        raise ValueError(msg)
+        return
+    path = Path(target)
+    if path.is_dir():
+        error = PermissionError if os.name == "nt" else IsADirectoryError
+        raise error(f"Cannot write VIS to directory '{path}'.")
+    with tempfile.NamedTemporaryFile(dir=path.parent, prefix=f".{path.name.lower()}.", suffix=".tmp", delete=False) as temp:
+        temporary_path = Path(temp.name)
+    try:
+        VISAsciiWriter(vis, temporary_path).write()
+        if path.exists():
+            shutil.copymode(path, temporary_path)
+        os.replace(temporary_path, path)
+    finally:
+        if temporary_path.exists():
+            temporary_path.unlink()
 
 
 def bytes_vis(
@@ -89,4 +108,4 @@ def bytes_vis(
     """
     data = bytearray()
     write_vis(vis, data, file_format)
-    return data
+    return bytes(data)

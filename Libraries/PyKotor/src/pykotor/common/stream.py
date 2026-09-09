@@ -698,16 +698,22 @@ class BinaryReader:
         -------
             A LocalizedString read from the stream.
         """
-        locstring: LocalizedString = LocalizedString.from_invalid()
-        self.skip(4)  # total number of bytes of the localized string
+        locstring = LocalizedString.from_invalid()
+        block_size = self.read_uint32()
+        end = self.position() + block_size
+        self.exceed_check(block_size)
         locstring.stringref = self.read_uint32(max_neg1=True)
         string_count = self.read_uint32()
         for _ in range(string_count):
+            if self.position() + 8 > end:
+                raise ValueError("LocalizedString substring header exceeds its block.")
             string_id = self.read_uint32()
-            language, gender = LocalizedString.substring_pair(string_id)
             length = self.read_uint32()
-            string = self.read_string(length, encoding=language.get_encoding())
-            locstring.set_data(language, gender, string)
+            if self.position() + length > end:
+                raise ValueError("LocalizedString substring exceeds its block.")
+            locstring.set_substring_bytes(string_id, self.read_bytes(length))
+        if self.position() != end:
+            raise ValueError("LocalizedString block length does not match its substrings.")
         return locstring
 
     def read_array_head(
@@ -1501,35 +1507,19 @@ class BinaryWriterFile(BinaryWriter):
             string_length: Fixes the string length to this size, truncating or padding where necessary. Ignores if -1.
             padding: What character is used as padding where applicable.
         """
-        if prefix_length == 0:
-            pass
-        elif prefix_length == 1:
-            if len(value) > 0xFF:
-                msg = "The string length is too large for a prefix length of 1."
-                raise ValueError(msg)
-            self.write_uint8(len(value), big=big)
-
-        elif prefix_length == 2:
-            if len(value) > 0xFFFF:
-                msg = "The string length is too large for a prefix length of 2."
-                raise ValueError(msg)
-            self.write_uint16(len(value), big=big)
-
-        elif prefix_length == 4:
-            if len(value) > 0xFFFFFFFF:
-                msg = "The string length is too large for a prefix length of 4."
-                raise ValueError(msg)
-            self.write_uint32(len(value), big=big)
-
-        else:
-            msg = f"An invalid prefix length '{prefix_length}' was provided."
-            raise ValueError(msg)
-
+        data = value.encode(encoding or "windows-1252", errors=errors)
         if string_length != -1:
-            while len(value) < string_length:
-                value += padding
-            value = value[:string_length]
-        self._stream.write(value.encode(encoding or "windows-1252", errors=errors))
+            pad = padding.encode(encoding or "windows-1252", errors=errors)
+            if len(pad) != 1:
+                raise ValueError("Fixed-width string padding must encode to one byte.")
+            data = data[:string_length].ljust(string_length, pad)
+        if prefix_length not in (0, 1, 2, 4):
+            raise ValueError(f"Invalid string prefix length: {prefix_length}")
+        if prefix_length:
+            if len(data) >= 1 << (8 * prefix_length):
+                raise ValueError("Encoded string is too large for its length prefix.")
+            self.write_bytes(len(data).to_bytes(prefix_length, "big" if big else "little"))
+        self.write_bytes(data)
 
     def write_line(
         self,
@@ -1571,13 +1561,14 @@ class BinaryWriterFile(BinaryWriter):
         bw.write_uint32(value.stringref, big=big, max_neg1=True)
         bw.write_uint32(len(value), big=big)
 
-        for language, gender, substring in value:
-            string_id: int = LocalizedString.substring_id(language, gender)
+        for string_id in value._substrings:
+            data = value.substring_bytes(string_id)
             bw.write_uint32(string_id, big=big)
-            bw.write_string(substring, prefix_length=4, encoding=language.get_encoding())
+            bw.write_uint32(len(data), big=big)
+            bw.write_bytes(data)
 
         locstring_data: bytes = bw.data()
-        self.write_uint32(len(locstring_data))
+        self.write_uint32(len(locstring_data), big=big)
         self.write_bytes(locstring_data)
 
 
@@ -1980,33 +1971,19 @@ class BinaryWriterBytearray(BinaryWriter):
             string_length: Fixes the string length to this size, truncating or padding where necessary. Ignores if -1.
             padding: What character is used as padding where applicable.
         """
-        if prefix_length == 0:
-            pass
-        elif prefix_length == 1:
-            if len(value) > 0xFF:
-                msg = "The string length is too large for a prefix length of 1."
-                raise ValueError(msg)
-            self.write_uint8(len(value), big=big)
-        elif prefix_length == 2:
-            if len(value) > 0xFFFF:
-                msg = "The string length is too large for a prefix length of 2."
-                raise ValueError(msg)
-            self.write_uint16(len(value), big=big)
-        elif prefix_length == 4:
-            if len(value) > 0xFFFFFFFF:
-                msg = "The string length is too large for a prefix length of 4."
-                raise ValueError(msg)
-            self.write_uint32(len(value), big=big)
-        else:
-            msg = "An invalid prefix length was provided."
-            raise ValueError(msg)
-
+        data = value.encode(encoding or "windows-1252", errors=errors)
         if string_length != -1:
-            while len(value) < string_length:
-                value += padding
-            value = value[:string_length]
-
-        self._encode_val_and_update_position(value, encoding, errors)
+            pad = padding.encode(encoding or "windows-1252", errors=errors)
+            if len(pad) != 1:
+                raise ValueError("Fixed-width string padding must encode to one byte.")
+            data = data[:string_length].ljust(string_length, pad)
+        if prefix_length not in (0, 1, 2, 4):
+            raise ValueError(f"Invalid string prefix length: {prefix_length}")
+        if prefix_length:
+            if len(data) >= 1 << (8 * prefix_length):
+                raise ValueError("Encoded string is too large for its length prefix.")
+            self.write_bytes(len(data).to_bytes(prefix_length, "big" if big else "little"))
+        self.write_bytes(data)
 
     def write_line(
         self,
@@ -2057,13 +2034,14 @@ class BinaryWriterBytearray(BinaryWriter):
         bw.write_uint32(value.stringref, big=big, max_neg1=True)
         bw.write_uint32(len(value), big=big)
 
-        for language, gender, substring in value:
-            string_id: int = LocalizedString.substring_id(language, gender)
+        for string_id in value._substrings:
+            data = value.substring_bytes(string_id)
             bw.write_uint32(string_id, big=big)
-            bw.write_string(substring, prefix_length=4, encoding=language.get_encoding(), errors="replace")
+            bw.write_uint32(len(data), big=big)
+            bw.write_bytes(data)
 
         locstring_data: bytes = bw.data()
-        self.write_uint32(len(locstring_data))
+        self.write_uint32(len(locstring_data), big=big)
         self.write_bytes(locstring_data)
 
 if __name__ == "__main__":

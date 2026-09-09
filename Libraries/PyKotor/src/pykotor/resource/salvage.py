@@ -78,7 +78,7 @@ def validate_capsule(
     strict: bool = False,
     game: Game | None = None,
 ):
-    """Attempts to validate an ERF/RIM/MOD/SAV by looping through all resources inside of it.
+    """Attempts to validate an ERF/RIM/MOD by looping through all resources inside of it.
 
     In base terms, for every resource iterated will read it into memory and if it throws OSError/ValueError will simply omit it from the new ERF/RIM written back to disk.
 

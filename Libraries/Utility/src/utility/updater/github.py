@@ -39,10 +39,6 @@ if __name__ == "__main__":
         utility_path = file_absolute_path.parents[6] / "Libraries" / "Utility" / "src"
         if utility_path.exists():
             update_sys_path(utility_path)
-        toolset_path = file_absolute_path.parents[5] / "Tools/HolocronToolset/src/toolset"
-        if toolset_path.exists():
-            update_sys_path(toolset_path.parent)
-            os.chdir(toolset_path)
 
 T = TypeVar("T")
 

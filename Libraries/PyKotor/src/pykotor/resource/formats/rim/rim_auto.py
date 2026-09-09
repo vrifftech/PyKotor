@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import os
+import shutil
+import tempfile
+
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from pykotor.resource.formats.rim.io_rim import RIMBinaryReader, RIMBinaryWriter
@@ -59,7 +64,29 @@ def write_rim(
         ValueError: If the specified format was unsupported.
     """
     if file_format is ResourceType.RIM:
-        RIMBinaryWriter(rim, target).write()
+        if not isinstance(target, (str, os.PathLike)):
+            RIMBinaryWriter(rim, target).write()
+            return
+
+        target_path = Path(target)
+        if target_path.is_dir():
+            error_type = PermissionError if os.name == "nt" else IsADirectoryError
+            raise error_type(f"Cannot write an archive to directory '{target_path}'.")
+        with tempfile.NamedTemporaryFile(
+            dir=target_path.parent,
+            prefix=f".{target_path.name.lower()}.",
+            suffix=".tmp",
+            delete=False,
+        ) as temporary:
+            temporary_path = Path(temporary.name)
+        try:
+            RIMBinaryWriter(rim, temporary_path).write()
+            if target_path.exists():
+                shutil.copymode(target_path, temporary_path)
+            os.replace(temporary_path, target_path)
+        finally:
+            if temporary_path.exists():
+                temporary_path.unlink()
     else:
         msg = "Unsupported format specified; use RIM."
         raise ValueError(msg)

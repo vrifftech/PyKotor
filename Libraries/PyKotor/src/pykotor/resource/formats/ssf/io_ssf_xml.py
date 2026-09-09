@@ -68,6 +68,8 @@ class SSFXMLWriter(ResourceWriter):
         auto_close: bool = True,
     ):
         for sound_name, sound in SSFSound.__members__.items():
+            if sound.value >= self.ssf._entry_count:
+                break
             ElementTree.SubElement(
                 self.xml_root,
                 "sound",

@@ -1,50 +1,5 @@
-[build-system]
-requires = [
-    "setuptools>=42,<70",
-    "wheel",
-]
-build-backend = "setuptools.build_meta"
-
-[tool.setuptools]
-packages = [
-    "Tools",
-    "Libraries",
-]
-
-[project]
-name="PyKotor"
-version="1.7"
-description="Read, modify and write files used by KotOR's game engine."
-authors = [{name = "NickHugi"}]
-maintainers = [{name = "th3w1zard1", email = "halomastar@gmail.com"}]
-readme = {file = "README.md", content-type = "text/markdown"}
-license = {text = "GPLv3 License"}
-keywords = ["kotor", "library", "holocron", "toolset", "pykotor", "editor", "holopatcher", "tslpatcher"]
-requires-python = ">= 3.8"
-dependencies = ["ply>=3.11,<4"]  # required for the nss compiler lexer
-
-[project.optional-dependencies]
-font                 = ["Pillow>=9.5"]    # required for TXI/TGA fonts
-secure_xml           = ["defusedxml~=0.7"]    # secure XML parsing
-encodings = ["charset-normalizer>=2.0,<3.4"]  # used for localized string decodings
-gl = [
-  "django>2.1; os_name != 'nt'",
-  "django>2.0; os_name == 'nt'",
-  "numpy~=1.22",      # ( might need 1.22.2 )
-  "PyOpenGL~=3.1",    # ( might need 3.1.6 )
-  "PyGLM>=2.0,<2.8",  # ( might need 2.5.7 )
-]
-
-[project.urls]
-Homepage = "https://github.com/NickHugi/PyKotor"
-Documentation = "https://github.com/NickHugi/PyKotor/blob/master/README.md"
-Repository = "https://github.com/NickHugi/PyKotor.git"
-Issues = "https://github.com/NickHugi/PyKotor/issues"
-#Changelog = "https://github.com/NickHugi/PyKotor/blob/master/CHANGELOG.md"
-
-########################################################
-## define only linter configurations below this point ##
-########################################################
+# Repository-wide development configuration.
+# Each package under Libraries/ owns its packaging metadata.
 
 [tool.black]
 line-length = 175
@@ -126,13 +81,7 @@ src = [
     "Libraries/PyKotorGL/src",
     "Libraries/PyKotorFont/src",
     "Libraries/Utility/src",
-    "Tools/HolocronToolset/src",
-    "Tools/BatchPatcher/src",
-    "Tools/HoloPatcher/src",
-    "Tools/KotorDiff/src",
-    "Tools/GuiConverter/src",
-    "Tools/MDLDecompile/src",
-    "tests"
+    "tests",
 ]
 
 [tool.ruff.lint]
@@ -230,8 +179,6 @@ ignore = [
 ".github/*py" = ["INP001"]
 "__init__.py" = ["I001", "F401"]
 "globalsettings.py" = ["I001", "F401"]
-"Tools/HolocronToolset/src/toolset/*.py" = ["FBT003", "N802", "N803", "N806", "A001"]
-"Tools/HolocronToolset/src/toolset/uic/*.py" = ["ALL"]
 "resources_rc.py" = ["ALL"]
 ".mdx" = ["ALL"]
 ".mdl" = ["ALL"]

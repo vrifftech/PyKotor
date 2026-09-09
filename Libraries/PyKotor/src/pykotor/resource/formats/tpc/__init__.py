@@ -1,6 +1,9 @@
 from __future__ import annotations
 from pykotor.resource.formats.tpc.tpc_data import (
     TPC,
+    TPCHeader,
+    TPCImage,
+    TPCMipmap,
     TPCTextureFormat,
 )
 from pykotor.resource.formats.tpc.io_tpc import (

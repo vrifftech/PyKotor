@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 
 
 class VIS:
-    """Represents a VIS file."""
+    """A room graph with reciprocal visibility, as used by the engine."""
 
     BINARY_TYPE = ResourceType.VIS
 
@@ -79,51 +79,38 @@ class VIS:
         """
         lower_model: str = model.lower()
 
-        for room in self._rooms:
-            if lower_model in self._visibility[room]:
-                self._visibility[room].remove(lower_model)
-
-        if lower_model in self._rooms:
-            self._rooms.remove(lower_model)
+        self._rooms.discard(lower_model)
+        self._visibility.pop(lower_model, None)
+        for observed in self._visibility.values():
+            observed.discard(lower_model)
 
     def rename_room(
         self,
         old: str,
         new: str,
     ):
-        """Renames a room.
+        """Rename a room and every reference to it, preserving declaration order.
 
-        Args:
-        ----
-            old (str): Old room name
-            new (str): New room name
-
-        Processing Logic:
-        ----------------
-            - Lowercase old and new room names
-            - Check if old and new names are the same
-            - Remove old room name from rooms list
-            - Add new room name to rooms list
-            - Copy visibility of old room to new room
-            - Delete visibility of old room
-            - Replace old room name with new in other rooms' visibility lists.
+        Raises ValueError without modifying the graph if the old room is
+        missing or the new name belongs to another room.
         """
         old = old.lower()
         new = new.lower()
-
         if old == new:
             return
+        if old not in self._rooms:
+            raise ValueError(f"Room '{old}' does not exist.")
+        if new in self._rooms:
+            raise ValueError(f"Room '{new}' already exists.")
 
+        self._visibility = {
+            new if observer == old else observer: {
+                new if room == old else room for room in observed
+            }
+            for observer, observed in self._visibility.items()
+        }
         self._rooms.remove(old)
         self._rooms.add(new)
-
-        self._visibility[new] = copy(self._visibility[old])
-        del self._visibility[old]
-
-        for other in self._visibility:
-            if other != new and old in self._visibility[other]:
-                self._visibility[other].remove(old)
-                self._visibility[other].add(new)
 
     def room_exists(
         self,
@@ -135,8 +122,7 @@ class VIS:
         -------
             True if the room exists.
         """
-        model.lower()
-        return model in self._rooms
+        return model.lower() in self._rooms
 
     def set_visible(
         self,
@@ -144,7 +130,7 @@ class VIS:
         show: str,
         visible: bool,
     ):
-        """Sets the visibility of a specified room based off when viewing from another specified room.
+        """Set or clear visibility in both directions between two rooms.
 
         Args:
         ----
@@ -161,8 +147,10 @@ class VIS:
 
         if visible:
             self._visibility[when_inside].add(show)
-        elif show in self._visibility[when_inside]:
-            self._visibility[when_inside].remove(show)
+            self._visibility[show].add(when_inside)
+        else:
+            self._visibility[when_inside].discard(show)
+            self._visibility[show].discard(when_inside)
 
     def get_visible(
         self,

@@ -6,6 +6,8 @@ from abc import ABC, abstractmethod
 from enum import IntEnum
 from typing import TYPE_CHECKING, Any, Generator, List, NoReturn, cast
 
+from pykotor.resource.formats.gff.gff_data import GFFFieldType
+from pykotor.resource.generics._gff import (remember_gff, preserve_gff, remember_gff_struct, bind_gff_struct)
 from pykotor.common.geometry import Polygon3, Vector2, Vector3, Vector4
 from pykotor.common.language import LocalizedString
 from pykotor.common.misc import Color, Game, ResRef
@@ -34,6 +36,9 @@ class GIT:
     ):
         self.ambient_sound_id: int = 0
         self.ambient_volume: int = 0
+        self.music_night_id: int = 0
+        self.ambient_sound_night_id: int = 0
+        self.ambient_volume_night: int = 0
         self.env_audio: int = 0
         self.music_standard_id: int = 0
         self.music_battle_id: int = 0
@@ -899,72 +904,81 @@ def construct_git(
     git = GIT()
 
     root = gff.root
-    properties_struct = root.acquire("AreaProperties", GFFStruct())
-    git.ambient_volume = properties_struct.acquire("AmbientSndDayVol", 0)
-    git.ambient_sound_id = properties_struct.acquire("AmbientSndDay", 0)
-    git.env_audio = properties_struct.acquire("EnvAudio", 0)
-    git.music_standard_id = properties_struct.acquire("MusicDay", 0)
-    git.music_battle_id = properties_struct.acquire("MusicBattle", 0)
-    git.music_delay = properties_struct.acquire("MusicDelay", 0)
+    properties_struct = root.acquire("AreaProperties", GFFStruct(), field_type=GFFFieldType.Struct)
+    git.ambient_volume = properties_struct.acquire("AmbientSndDayVol", 0, field_type=GFFFieldType.Int32)
+    git.ambient_volume_night = properties_struct.acquire("AmbientSndNitVol", 0, field_type=GFFFieldType.Int32)
+    git.ambient_sound_night_id = properties_struct.acquire("AmbientSndNight", 0, field_type=GFFFieldType.Int32)
+    git.music_night_id = properties_struct.acquire("MusicNight", 0, field_type=GFFFieldType.Int32)
+    git.ambient_sound_id = properties_struct.acquire("AmbientSndDay", 0, field_type=GFFFieldType.Int32)
+    git.env_audio = properties_struct.acquire("EnvAudio", 0, field_type=GFFFieldType.Int32)
+    git.music_standard_id = properties_struct.acquire("MusicDay", 0, field_type=GFFFieldType.Int32)
+    git.music_battle_id = properties_struct.acquire("MusicBattle", 0, field_type=GFFFieldType.Int32)
+    git.music_delay = properties_struct.acquire("MusicDelay", 0, field_type=GFFFieldType.Int32)
 
-    for camera_struct in gff.root.get_list("CameraList"):
+    for camera_struct in gff.root.acquire("CameraList", GFFList(), field_type=GFFFieldType.List):
         camera = GITCamera()
+        remember_gff_struct(camera, camera_struct)
         git.cameras.append(camera)
 
-        camera.camera_id = camera_struct.acquire("CameraID", 0)
-        camera.fov = camera_struct.acquire("FieldOfView", 0.0)
-        camera.height = camera_struct.acquire("Height", 0.0)
-        camera.mic_range = camera_struct.acquire("MicRange", 0.0)
+        camera.camera_id = camera_struct.acquire("CameraID", 0, field_type=GFFFieldType.Int32)
+        camera.fov = camera_struct.acquire("FieldOfView", 0.0, field_type=GFFFieldType.Single)
+        camera.height = camera_struct.acquire("Height", 0.0, field_type=GFFFieldType.Single)
+        camera.mic_range = camera_struct.acquire("MicRange", 0.0, field_type=GFFFieldType.Single)
         camera.orientation = camera_struct.acquire("Orientation", Vector4.from_null())
-        camera.position = camera_struct.acquire("Position", Vector3.from_null())
-        camera.pitch = camera_struct.acquire("Pitch", 0.0)
+        camera.position = camera_struct.acquire("Position", Vector3.from_null(), field_type=GFFFieldType.Vector3)
+        camera.pitch = camera_struct.acquire("Pitch", 0.0, field_type=GFFFieldType.Single)
 
-    for creature_struct in gff.root.get_list("Creature List"):
+    for creature_struct in gff.root.acquire("Creature List", GFFList(), field_type=GFFFieldType.List):
         creature = GITCreature()
+        remember_gff_struct(creature, creature_struct)
         git.creatures.append(creature)
-        creature.resref = creature_struct.acquire("TemplateResRef", ResRef.from_blank())
-        creature.position.x = creature_struct.acquire("XPosition", 0.0)
-        creature.position.y = creature_struct.acquire("YPosition", 0.0)
-        creature.position.z = creature_struct.acquire("ZPosition", 0.0)
+        creature.resref = creature_struct.acquire("TemplateResRef", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+        creature.position.x = creature_struct.acquire("XPosition", 0.0, field_type=GFFFieldType.Single)
+        creature.position.y = creature_struct.acquire("YPosition", 0.0, field_type=GFFFieldType.Single)
+        creature.position.z = creature_struct.acquire("ZPosition", 0.0, field_type=GFFFieldType.Single)
         rot_x, rot_y = (
-            creature_struct.acquire("XOrientation", 0.0),
-            creature_struct.acquire("YOrientation", 0.0),
+            creature_struct.acquire("XOrientation", 0.0, field_type=GFFFieldType.Single),
+            creature_struct.acquire("YOrientation", 0.0, field_type=GFFFieldType.Single),
         )
         creature.bearing = Vector2(rot_x, rot_y).angle() - math.pi / 2
 
-    for door_struct in gff.root.get_list("Door List"):
+    for door_struct in gff.root.acquire("Door List", GFFList(), field_type=GFFFieldType.List):
         door = GITDoor()
+        remember_gff_struct(door, door_struct)
         git.doors.append(door)
-        door.bearing = door_struct.acquire("Bearing", 0.0)
-        door.tag = door_struct.acquire("Tag", "")
-        door.resref = door_struct.acquire("TemplateResRef", ResRef.from_blank())
-        door.linked_to = door_struct.acquire("LinkedTo", "")
-        door.linked_to_flags = GITModuleLink(door_struct.acquire("LinkedToFlags", 0))
-        door.linked_to_module = door_struct.acquire("LinkedToModule", ResRef.from_blank())
-        door.transition_destination = door_struct.acquire("TransitionDestin", LocalizedString.from_invalid())
-        door.position.x = door_struct.acquire("X", 0.0)
-        door.position.y = door_struct.acquire("Y", 0.0)
-        door.position.z = door_struct.acquire("Z", 0.0)
-        tweak_enabled = door_struct.acquire("UseTweakColor", 0)
-        door.tweak_color = Color.from_bgr_integer(door_struct.acquire("TweakColor", 0)) if tweak_enabled else None
+        door.bearing = door_struct.acquire("Bearing", 0.0, field_type=GFFFieldType.Single)
+        door.tag = door_struct.acquire("Tag", "", field_type=GFFFieldType.String)
+        door.resref = door_struct.acquire("TemplateResRef", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+        door.linked_to = door_struct.acquire("LinkedTo", "", field_type=GFFFieldType.String)
+        door.linked_to_flags = GITModuleLink(door_struct.acquire("LinkedToFlags", 0, field_type=GFFFieldType.UInt8))
+        door.linked_to_module = door_struct.acquire("LinkedToModule", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+        door.transition_destination = door_struct.acquire("TransitionDestin", LocalizedString.from_invalid(), field_type=GFFFieldType.LocalizedString)
+        door.position.x = door_struct.acquire("X", 0.0, field_type=GFFFieldType.Single)
+        door.position.y = door_struct.acquire("Y", 0.0, field_type=GFFFieldType.Single)
+        door.position.z = door_struct.acquire("Z", 0.0, field_type=GFFFieldType.Single)
+        tweak_enabled = door_struct.acquire("UseTweakColor", 0, field_type=GFFFieldType.UInt8)
+        door.tweak_color = Color.from_bgr_integer(door_struct.acquire("TweakColor", 0, field_type=GFFFieldType.UInt32)) if tweak_enabled else None
 
-    for encounter_struct in gff.root.get_list("Encounter List"):
-        x = encounter_struct.acquire("XPosition", 0.0)
-        y = encounter_struct.acquire("YPosition", 0.0)
-        z = encounter_struct.acquire("ZPosition", 0.0)
+    for encounter_struct in gff.root.acquire("Encounter List", GFFList(), field_type=GFFFieldType.List):
+        x = encounter_struct.acquire("XPosition", 0.0, field_type=GFFFieldType.Single)
+        y = encounter_struct.acquire("YPosition", 0.0, field_type=GFFFieldType.Single)
+        z = encounter_struct.acquire("ZPosition", 0.0, field_type=GFFFieldType.Single)
 
         encounter = GITEncounter()
+        remember_gff_struct(encounter, encounter_struct)
         git.encounters.append(encounter)
         encounter.position = Vector3(x, y, z)
-        encounter.resref = encounter_struct.acquire("TemplateResRef", ResRef.from_blank())
+        encounter.resref = encounter_struct.acquire("TemplateResRef", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
 
         if encounter_struct.exists("Geometry"):
             geometry_list = encounter_struct.get_list("Geometry")
             for geometry_struct in geometry_list:
-                x = geometry_struct.acquire("X", 0.0)
-                y = geometry_struct.acquire("Y", 0.0)
-                z = geometry_struct.acquire("Z", 0.0)
-                encounter.geometry.append(Vector3(x, y, z))
+                x = geometry_struct.acquire("X", 0.0, field_type=GFFFieldType.Single)
+                y = geometry_struct.acquire("Y", 0.0, field_type=GFFFieldType.Single)
+                z = geometry_struct.acquire("Z", 0.0, field_type=GFFFieldType.Single)
+                point = Vector3(x, y, z)
+                remember_gff_struct(point, geometry_struct)
+                encounter.geometry.append(point)
             if not geometry_list:
                 RobustRootLogger().warning("Encounter geometry list is empty! Creating a default triangle at its position.")
                 encounter.geometry.create_triangle(origin=encounter.position)
@@ -974,71 +988,78 @@ def construct_git(
 
         for spawn_struct in encounter_struct.get_list("SpawnPointList"):
             spawn = GITEncounterSpawnPoint()
-            spawn.x = spawn_struct.acquire("X", 0.0)
-            spawn.y = spawn_struct.acquire("Y", 0.0)
-            spawn.z = spawn_struct.acquire("Z", 0.0)
+            remember_gff_struct(spawn, spawn_struct)
+            spawn.x = spawn_struct.acquire("X", 0.0, field_type=GFFFieldType.Single)
+            spawn.y = spawn_struct.acquire("Y", 0.0, field_type=GFFFieldType.Single)
+            spawn.z = spawn_struct.acquire("Z", 0.0, field_type=GFFFieldType.Single)
             spawn.orientation = spawn_struct.acquire("Orientation", 0.0)
             encounter.spawn_points.append(spawn)
 
-    for placeable_struct in gff.root.get_list("Placeable List"):
+    for placeable_struct in gff.root.acquire("Placeable List", GFFList(), field_type=GFFFieldType.List):
         placeable = GITPlaceable()
+        remember_gff_struct(placeable, placeable_struct)
         git.placeables.append(placeable)
 
-        placeable.resref = placeable_struct.acquire("TemplateResRef", ResRef.from_blank())
-        placeable.position.x = placeable_struct.acquire("X", 0.0)
-        placeable.position.y = placeable_struct.acquire("Y", 0.0)
-        placeable.position.z = placeable_struct.acquire("Z", 0.0)
-        placeable.bearing = placeable_struct.acquire("Bearing", 0.0)
+        placeable.resref = placeable_struct.acquire("TemplateResRef", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+        placeable.position.x = placeable_struct.acquire("X", 0.0, field_type=GFFFieldType.Single)
+        placeable.position.y = placeable_struct.acquire("Y", 0.0, field_type=GFFFieldType.Single)
+        placeable.position.z = placeable_struct.acquire("Z", 0.0, field_type=GFFFieldType.Single)
+        placeable.bearing = placeable_struct.acquire("Bearing", 0.0, field_type=GFFFieldType.Single)
 
-        tweak_enabled = placeable_struct.acquire("UseTweakColor", 0)
-        tweak_int = placeable_struct.acquire("TweakColor", 0)
+        tweak_enabled = placeable_struct.acquire("UseTweakColor", 0, field_type=GFFFieldType.UInt8)
+        tweak_int = placeable_struct.acquire("TweakColor", 0, field_type=GFFFieldType.UInt32)
         placeable.tweak_color = Color.from_bgr_integer(tweak_int) if tweak_enabled else None
 
-    for sound_struct in gff.root.get_list("SoundList"):
+    for sound_struct in gff.root.acquire("SoundList", GFFList(), field_type=GFFFieldType.List):
         sound = GITSound()
+        remember_gff_struct(sound, sound_struct)
         git.sounds.append(sound)
 
-        sound.resref = sound_struct.acquire("TemplateResRef", ResRef.from_blank())
-        sound.position.x = sound_struct.acquire("XPosition", 0.0)
-        sound.position.y = sound_struct.acquire("YPosition", 0.0)
-        sound.position.z = sound_struct.acquire("ZPosition", 0.0)
+        sound.resref = sound_struct.acquire("TemplateResRef", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+        sound.position.x = sound_struct.acquire("XPosition", 0.0, field_type=GFFFieldType.Single)
+        sound.position.y = sound_struct.acquire("YPosition", 0.0, field_type=GFFFieldType.Single)
+        sound.position.z = sound_struct.acquire("ZPosition", 0.0, field_type=GFFFieldType.Single)
 
-    for store_struct in gff.root.get_list("StoreList"):
+    for store_struct in gff.root.acquire("StoreList", GFFList(), field_type=GFFFieldType.List):
         store = GITStore()
+        remember_gff_struct(store, store_struct)
         git.stores.append(store)
 
-        store.resref = store_struct.acquire("ResRef", ResRef.from_blank())
-        store.position.x = store_struct.acquire("XPosition", 0.0)
-        store.position.y = store_struct.acquire("YPosition", 0.0)
-        store.position.z = store_struct.acquire("ZPosition", 0.0)
+        store.resref = store_struct.acquire("ResRef", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+        store.position.x = store_struct.acquire("XPosition", 0.0, field_type=GFFFieldType.Single)
+        store.position.y = store_struct.acquire("YPosition", 0.0, field_type=GFFFieldType.Single)
+        store.position.z = store_struct.acquire("ZPosition", 0.0, field_type=GFFFieldType.Single)
 
         rot_x, rot_y = (
-            store_struct.acquire("XOrientation", 0.0),
-            store_struct.acquire("YOrientation", 0.0),
+            store_struct.acquire("XOrientation", 0.0, field_type=GFFFieldType.Single),
+            store_struct.acquire("YOrientation", 0.0, field_type=GFFFieldType.Single),
         )
         store.bearing = Vector2(rot_x, rot_y).angle() - math.pi / 2
 
-    for trigger_struct in gff.root.get_list("TriggerList"):
+    for trigger_struct in gff.root.acquire("TriggerList", GFFList(), field_type=GFFFieldType.List):
         trigger = GITTrigger()
+        remember_gff_struct(trigger, trigger_struct)
         git.triggers.append(trigger)
 
-        trigger.resref = trigger_struct.acquire("TemplateResRef", ResRef.from_blank())
-        trigger.position.x = trigger_struct.acquire("XPosition", 0.0)
-        trigger.position.y = trigger_struct.acquire("YPosition", 0.0)
-        trigger.position.z = trigger_struct.acquire("ZPosition", 0.0)
-        trigger.tag = trigger_struct.acquire("Tag", "")
-        trigger.linked_to = trigger_struct.acquire("LinkedTo", "")
-        trigger.linked_to_flags = GITModuleLink(trigger_struct.acquire("LinkedToFlags", 0))
-        trigger.linked_to_module = trigger_struct.acquire("LinkedToModule", ResRef.from_blank())
-        trigger.transition_destination = trigger_struct.acquire("TransitionDestin", LocalizedString.from_invalid())
+        trigger.resref = trigger_struct.acquire("TemplateResRef", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+        trigger.position.x = trigger_struct.acquire("XPosition", 0.0, field_type=GFFFieldType.Single)
+        trigger.position.y = trigger_struct.acquire("YPosition", 0.0, field_type=GFFFieldType.Single)
+        trigger.position.z = trigger_struct.acquire("ZPosition", 0.0, field_type=GFFFieldType.Single)
+        trigger.tag = trigger_struct.acquire("Tag", "", field_type=GFFFieldType.String)
+        trigger.linked_to = trigger_struct.acquire("LinkedTo", "", field_type=GFFFieldType.String)
+        trigger.linked_to_flags = GITModuleLink(trigger_struct.acquire("LinkedToFlags", 0, field_type=GFFFieldType.UInt8))
+        trigger.linked_to_module = trigger_struct.acquire("LinkedToModule", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+        trigger.transition_destination = trigger_struct.acquire("TransitionDestin", LocalizedString.from_invalid(), field_type=GFFFieldType.LocalizedString)
 
         if trigger_struct.exists("Geometry"):
             geometry_list = trigger_struct.get_list("Geometry")
             for geometry_struct in geometry_list:
-                x = geometry_struct.acquire("PointX", 0.0)
-                y = geometry_struct.acquire("PointY", 0.0)
-                z = geometry_struct.acquire("PointZ", 0.0)
-                trigger.geometry.append(Vector3(x, y, z))
+                x = geometry_struct.acquire("PointX", 0.0, field_type=GFFFieldType.Single)
+                y = geometry_struct.acquire("PointY", 0.0, field_type=GFFFieldType.Single)
+                z = geometry_struct.acquire("PointZ", 0.0, field_type=GFFFieldType.Single)
+                point = Vector3(x, y, z)
+                remember_gff_struct(point, geometry_struct)
+                trigger.geometry.append(point)
             if not geometry_list:
                 RobustRootLogger().warning("Trigger geometry list is empty! Creating a default triangle at its position.")
                 trigger.geometry.create_triangle(origin=trigger.position)
@@ -1046,28 +1067,30 @@ def construct_git(
             RobustRootLogger().warning("Trigger geometry list missing! Creating a default triangle at its position.")
             trigger.geometry.create_triangle(origin=trigger.position)
 
-    for waypoint_struct in gff.root.get_list("WaypointList"):
+    for waypoint_struct in gff.root.acquire("WaypointList", GFFList(), field_type=GFFFieldType.List):
         waypoint = GITWaypoint()
+        remember_gff_struct(waypoint, waypoint_struct)
         git.waypoints.append(waypoint)
 
-        waypoint.name = waypoint_struct.acquire("LocalizedName", LocalizedString.from_invalid())
-        waypoint.tag = waypoint_struct.acquire("Tag", "")
-        waypoint.resref = waypoint_struct.acquire("TemplateResRef", ResRef.from_blank())
-        waypoint.position.x = waypoint_struct.acquire("XPosition", 0.0)
-        waypoint.position.y = waypoint_struct.acquire("YPosition", 0.0)
-        waypoint.position.z = waypoint_struct.acquire("ZPosition", 0.0)
+        waypoint.name = waypoint_struct.acquire("LocalizedName", LocalizedString.from_invalid(), field_type=GFFFieldType.LocalizedString)
+        waypoint.tag = waypoint_struct.acquire("Tag", "", field_type=GFFFieldType.String)
+        waypoint.resref = waypoint_struct.acquire("TemplateResRef", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+        waypoint.position.x = waypoint_struct.acquire("XPosition", 0.0, field_type=GFFFieldType.Single)
+        waypoint.position.y = waypoint_struct.acquire("YPosition", 0.0, field_type=GFFFieldType.Single)
+        waypoint.position.z = waypoint_struct.acquire("ZPosition", 0.0, field_type=GFFFieldType.Single)
 
-        waypoint.has_map_note = bool(waypoint_struct.acquire("HasMapNote", 0))
+        waypoint.has_map_note = bool(waypoint_struct.acquire("HasMapNote", 0, field_type=GFFFieldType.UInt8))
         if waypoint.has_map_note:
-            waypoint.map_note = waypoint_struct.acquire("MapNote", LocalizedString.from_invalid())
-            waypoint.map_note_enabled = bool(waypoint_struct.acquire("MapNoteEnabled", 0))
+            waypoint.map_note = waypoint_struct.acquire("MapNote", LocalizedString.from_invalid(), field_type=GFFFieldType.LocalizedString)
+            waypoint.map_note_enabled = bool(waypoint_struct.acquire("MapNoteEnabled", 0, field_type=GFFFieldType.UInt8))
 
         rot_x, rot_y = (
-            waypoint_struct.acquire("XOrientation", 0.0),
-            waypoint_struct.acquire("YOrientation", 0.0),
+            waypoint_struct.acquire("XOrientation", 0.0, field_type=GFFFieldType.Single),
+            waypoint_struct.acquire("YOrientation", 0.0, field_type=GFFFieldType.Single),
         )
         waypoint.bearing = Vector2(rot_x, rot_y).angle() - math.pi / 2
 
+    remember_gff(git, gff)
     return git
 
 
@@ -1085,17 +1108,18 @@ def dismantle_git(
     properties_struct = root.set_struct("AreaProperties", GFFStruct(100))
     properties_struct.set_int32("AmbientSndDayVol", git.ambient_volume)
     properties_struct.set_int32("AmbientSndDay", git.ambient_sound_id)
-    properties_struct.set_int32("AmbientSndNitVol", git.ambient_volume)
-    properties_struct.set_int32("AmbientSndNight", git.ambient_sound_id)
+    properties_struct.set_int32("AmbientSndNitVol", git.ambient_volume_night)
+    properties_struct.set_int32("AmbientSndNight", git.ambient_sound_night_id)
     properties_struct.set_int32("EnvAudio", git.env_audio)
     properties_struct.set_int32("MusicDay", git.music_standard_id)
-    properties_struct.set_int32("MusicNight", git.music_standard_id)
+    properties_struct.set_int32("MusicNight", git.music_night_id)
     properties_struct.set_int32("MusicBattle", git.music_battle_id)
     properties_struct.set_int32("MusicDelay", git.music_delay)
 
     camera_list = root.set_list("CameraList", GFFList())
     for camera in git.cameras:
         camera_struct = camera_list.add(GITCamera.GFF_STRUCT_ID)
+        bind_gff_struct(camera_struct, camera)
         camera_struct.set_int32("CameraID", camera.camera_id)
         camera_struct.set_single("FieldOfView", camera.fov)
         camera_struct.set_single("Height", camera.height)
@@ -1111,6 +1135,7 @@ def dismantle_git(
         bearing = Vector2.from_angle(creature.bearing + math.pi / 2)
 
         creature_struct = creature_list.add(GITCreature.GFF_STRUCT_ID)
+        bind_gff_struct(creature_struct, creature)
         if creature.resref:
             creature_struct.set_resref("TemplateResRef", creature.resref)
         creature_struct.set_single("XOrientation", bearing.x)
@@ -1122,6 +1147,7 @@ def dismantle_git(
     door_list = root.set_list("Door List", GFFList())
     for door in git.doors:
         door_struct = door_list.add(GITDoor.GFF_STRUCT_ID)
+        bind_gff_struct(door_struct, door)
         door_struct.set_single("Bearing", door.bearing)
         door_struct.set_string("Tag", door.tag)
         if door.resref:
@@ -1141,6 +1167,7 @@ def dismantle_git(
     encounter_list = root.set_list("Encounter List", GFFList())
     for encounter in git.encounters:
         encounter_struct = encounter_list.add(GITEncounter.GFF_STRUCT_ID)
+        bind_gff_struct(encounter_struct, encounter)
         if encounter.resref:
             encounter_struct.set_resref("TemplateResRef", encounter.resref)
         encounter_struct.set_single("XPosition", encounter.position.x)
@@ -1154,6 +1181,7 @@ def dismantle_git(
         geometry_list = encounter_struct.set_list("Geometry", GFFList())
         for point in encounter.geometry:
             geometry_struct = geometry_list.add(GITEncounter.GFF_GEOMETRY_STRUCT_ID)
+            bind_gff_struct(geometry_struct, point)
             geometry_struct.set_single("X", point.x)
             geometry_struct.set_single("Y", point.y)
             geometry_struct.set_single("Z", point.z)
@@ -1161,6 +1189,7 @@ def dismantle_git(
         spawn_list = encounter_struct.set_list("SpawnPointList", GFFList())
         for spawn in encounter.spawn_points:
             spawn_struct = spawn_list.add(GITEncounter.GFF_SPAWN_STRUCT_ID)
+            bind_gff_struct(spawn_struct, spawn)
             spawn_struct.set_single("Orientation", spawn.orientation)
             spawn_struct.set_single("X", spawn.x)
             spawn_struct.set_single("Y", spawn.y)
@@ -1169,6 +1198,7 @@ def dismantle_git(
     placeable_list = root.set_list("Placeable List", GFFList())
     for placeable in git.placeables:
         placeable_struct = placeable_list.add(GITPlaceable.GFF_STRUCT_ID)
+        bind_gff_struct(placeable_struct, placeable)
         placeable_struct.set_single("Bearing", placeable.bearing)
         if placeable.resref:
             placeable_struct.set_resref("TemplateResRef", placeable.resref)
@@ -1186,6 +1216,7 @@ def dismantle_git(
     sound_list = root.set_list("SoundList", GFFList())
     for sound in git.sounds:
         sound_struct = sound_list.add(GITSound.GFF_STRUCT_ID)
+        bind_gff_struct(sound_struct, sound)
         sound_struct.set_uint32("GeneratedType", 0)
         if sound.resref:
             sound_struct.set_resref("TemplateResRef", sound.resref)
@@ -1198,6 +1229,7 @@ def dismantle_git(
         bearing = Vector2.from_angle(store.bearing + math.pi / 2)
 
         store_struct = store_list.add(GITStore.GFF_STRUCT_ID)
+        bind_gff_struct(store_struct, store)
         if store.resref:
             store_struct.set_resref("ResRef", store.resref)
         store_struct.set_single("XOrientation", bearing.x)
@@ -1209,6 +1241,7 @@ def dismantle_git(
     trigger_list = root.set_list("TriggerList", GFFList())
     for trigger in git.triggers:
         trigger_struct = trigger_list.add(GITTrigger.GFF_STRUCT_ID)
+        bind_gff_struct(trigger_struct, trigger)
         if trigger.resref:
             trigger_struct.set_resref("TemplateResRef", trigger.resref)
         trigger_struct.set_single("XPosition", trigger.position.x)
@@ -1231,6 +1264,7 @@ def dismantle_git(
         geometry_list = trigger_struct.set_list("Geometry", GFFList())
         for point in trigger.geometry:
             geometry_struct = geometry_list.add(GITTrigger.GFF_GEOMETRY_STRUCT_ID)
+            bind_gff_struct(geometry_struct, point)
             geometry_struct.set_single("PointX", point.x)
             geometry_struct.set_single("PointY", point.y)
             geometry_struct.set_single("PointZ", point.z)
@@ -1240,6 +1274,7 @@ def dismantle_git(
         bearing = Vector2.from_angle(waypoint.bearing + math.pi / 2)
 
         waypoint_struct = waypoint_list.add(GITWaypoint.GFF_STRUCT_ID)
+        bind_gff_struct(waypoint_struct, waypoint)
 
         waypoint_struct.set_locstring("LocalizedName", waypoint.name)
         waypoint_struct.set_string("Tag", waypoint.tag)
@@ -1264,7 +1299,7 @@ def dismantle_git(
     if use_deprecated:
         root.set_list("List", GFFList())
 
-    return gff
+    return preserve_gff(git, gff, lambda original: dismantle_git(original, game=game, use_deprecated=use_deprecated))
 
 
 def read_git(

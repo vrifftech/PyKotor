@@ -8,8 +8,7 @@ from typing import TYPE_CHECKING
 from pykotor.common.misc import ResRef
 from pykotor.extract.file import ResourceIdentifier
 from pykotor.resource.type import ResourceType
-from pykotor.tools.misc import is_erf_file, is_mod_file, is_sav_file
-from utility.common.more_collections import OrderedSet
+from pykotor.tools.misc import is_erf_file, is_mod_file
 
 if TYPE_CHECKING:
     import os
@@ -26,8 +25,6 @@ class ERFType(Enum):
         if is_erf_file(ext_or_filepath):
             return cls.ERF
         if is_mod_file(ext_or_filepath):
-            return cls.MOD
-        if is_sav_file(ext_or_filepath):
             return cls.MOD
         msg = f"Invalid ERF extension in filepath '{ext_or_filepath}'."
         raise ValueError(msg)
@@ -46,14 +43,11 @@ class ERF:
     def __init__(
         self,
         erf_type: ERFType = ERFType.ERF,
-        *,
-        is_save: bool = False,
     ):
         self.erf_type: ERFType = erf_type
-        self._resources: OrderedSet[ERFResource] = OrderedSet()
-        self.is_save_erf: bool = is_save
+        self._resources: list[ERFResource] = []
         self.localized_strings: list[ERFLocalizedString] = []
-        self.description_strref: int = 0 if is_save else 0xFFFFFFFF
+        self.description_strref: int = 0xFFFFFFFF
         self.build_year: int = 0
         self.build_day: int = 0
         self.reserved: bytes = bytes(116)
@@ -85,16 +79,22 @@ class ERF:
         """Returns a resource at the specified index or with the specified resref."""
         if isinstance(item, int):
             return self._resources[item]
-        if isinstance(item, (ResourceIdentifier, str)):
-            if isinstance(item, str):
-                item = item.lower()
+        if isinstance(item, ResourceIdentifier):
+            return self._resource_dict[item]
+        if isinstance(item, str):
             try:
-                return self._resource_dict[next(key for key in self._resource_dict if key[0] == item)]
-            except StopIteration as e:
-                msg = f"{item} not found in {self!r}"
-                raise KeyError(msg) from e
+                return next(resource for resource in self._resources if resource.resref == item)
+            except StopIteration as exc:
+                raise KeyError(f"{item} not found in {self!r}") from exc
 
         return NotImplemented
+
+    def append(self, resource: ERFResource) -> None:
+        """Appends a physical record without replacing an earlier matching key."""
+        if not 0 <= resource.restype.type_id <= 0xFFFF:
+            raise ValueError(f"Invalid ERF resource type ID: {resource.restype.type_id}")
+        self._resources.append(resource)
+        self._resource_dict.setdefault(resource.identifier(), resource)
 
     def set_data(
         self,
@@ -115,20 +115,20 @@ class ERF:
             - Construct a tuple key from resref and restype
             - Lookup existing resource by key in internal dict
             - If no existing resource, create a new ERFResource instance
-            - If existing resource, update its properties
+            - If an existing resource matches, update its payload without renaming it
             - Add/update resource to internal lists and dict
         """
+        if not 0 <= restype.type_id <= 0xFFFF:
+            raise ValueError(f"Invalid ERF resource type ID: {restype.type_id}")
+
         ident: ResourceIdentifier = ResourceIdentifier(resname, restype)
         resource: ERFResource | None = self._resource_dict.get(ident)
-        resref = ResRef(ident.resname)
         if resource is None:
-            resource = ERFResource(resref, restype, data)
+            resource = ERFResource(ResRef(ident.resname), restype, data)
             self._resources.append(resource)
             self._resource_dict[ident] = resource
         else:
-            resource.resref = resref
-            resource.restype = restype
-            resource.data = data
+            resource.data = bytes(data)
 
     def get(self, resname: str, restype: ResourceType) -> bytes | None:
         """Returns the data of the resource with the specified resref/restype pair if it exists, otherwise returns None.
@@ -150,7 +150,7 @@ class ERF:
         resname: str,
         restype: ResourceType,
     ):
-        """Removes the resource with the given resref/restype pair if it exists.
+        """Removes all records for the given key so no hidden duplicate becomes active.
 
         Args:
         ----
@@ -158,9 +158,8 @@ class ERF:
             restype: The resource type.
         """
         key = ResourceIdentifier(resname, restype)
-        resource: ERFResource | None = self._resource_dict.pop(key, None)
-        if resource:  # FIXME: should raise here
-            self._resources.remove(resource)
+        self._resource_dict.pop(key, None)
+        self._resources[:] = [resource for resource in self._resources if resource.identifier() != key]
 
     def to_rim(
         self,
@@ -171,18 +170,18 @@ class ERF:
         -------
             A new RIM object.
         """
-        from pykotor.resource.formats.rim import RIM  # Prevent circular imports  # noqa: PLC0415
+        from pykotor.resource.formats.rim import RIM, RIMResource  # Prevent circular imports  # noqa: PLC0415
 
         rim = RIM()
         for resource in self._resources:
-            rim.set_data(str(resource.resref), resource.restype, resource.data)
+            rim.append(RIMResource(ResRef.from_bytes(resource.resref.to_bytes()), resource.restype, resource.data))
         return rim
 
     def __eq__(self, other):
         from pykotor.resource.formats.rim import RIM
         if not isinstance(other, (ERF, RIM)):
             return NotImplemented
-        return set(self._resources) == set(other._resources)
+        return self._resources == other._resources
 
 
 class ERFResource:

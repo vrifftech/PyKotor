@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, TypeVar
 
 import glm
 
-from OpenGL.GL import glReadPixels
+from OpenGL.GL import GL_VIEWPORT, glGetIntegerv, glReadPixels
 from OpenGL.raw.GL.ARB.vertex_shader import GL_FLOAT
 from OpenGL.raw.GL.VERSION.GL_1_0 import (
     GL_BACK,
@@ -163,6 +163,8 @@ class Scene:
         self.selection: list[RenderObject] = []
         self._module: Module | None = module
         self.camera: Camera = Camera()
+        self._screen_size: tuple[int, int] = (0, 0)
+        self._viewport: tuple[int, int, int, int] = (0, 0, 0, 0)
         self.cursor: RenderObject = RenderObject("cursor")
         self.blank_texture: Texture | None = None
         self.blank_lightmap: Texture | None = None
@@ -336,15 +338,13 @@ class Scene:
         info_module_resource = self.module.info()
         return self._resource_from_module(info_module_resource, "' is missing an IFO.")
 
-    def _resource_from_module(self, module_res: ModuleResource[T] | None, errpart: str) -> T | None:
+    def _resource_from_module(self, module_res: ModuleResource[T] | None, errpart: str) -> T:
         if module_res is None:
-            RobustRootLogger().error(f"Cannot render a frame in Scene when this module '{self.module.root()}{errpart}")
-            return None
-        git_resource = module_res.resource()
-        if git_resource is None:
-            RobustRootLogger().error(f"No locations found for '{module_res.identifier()}', needed to render a Scene for module '{self.module.root()}'")
-            return None
-        return git_resource
+            raise ValueError(f"Cannot display module '{self.module.root()}{errpart}")
+        resource = module_res.resource()
+        if resource is None:
+            raise ValueError(f"Cannot load '{module_res.identifier()}' for module '{self.module.root()}'.")
+        return resource
 
     def _resource_from_gitinstance(
         self,
@@ -394,24 +394,24 @@ class Scene:
         for identifier in self.clearCacheBuffer:
             for git_creature in self.git.creatures.copy():
                 if identifier.resname == git_creature.resref and identifier.restype is ResourceType.UTC:
-                    del self.objects[git_creature]
+                    self.objects.pop(git_creature, None)
             for placeable in self.git.placeables.copy():
                 if identifier.resname == placeable.resref and identifier.restype is ResourceType.UTP:
-                    del self.objects[placeable]
+                    self.objects.pop(placeable, None)
             for door in self.git.doors.copy():
                 if door.resref == identifier.resname and identifier.restype is ResourceType.UTD:
-                    del self.objects[door]
+                    self.objects.pop(door, None)
             if identifier.restype in {ResourceType.TPC, ResourceType.TGA}:
-                del self.textures[identifier.resname]
+                self.textures.pop(identifier.resname, None)
             if identifier.restype in {ResourceType.MDL, ResourceType.MDX}:
-                del self.models[identifier.resname]
+                self.models.pop(identifier.resname, None)
             if identifier.restype is ResourceType.GIT:
                 for instance in self.git.instances():
-                    del self.objects[instance]
+                    self.objects.pop(instance, None)
                 self.git = self._getGit()
             if identifier.restype is ResourceType.LYT:
                 for room in self.layout.rooms:
-                    del self.objects[room]
+                    self.objects.pop(room, None)
                 self.layout = self._getLyt()
         self.clearCacheBuffer = []
 
@@ -728,15 +728,47 @@ class Scene:
         for child in obj.children:
             self._picker_render_object(child, obj.transform())
 
-    def pick(
-        self,
-        x: float,
-        y: float,
-    ) -> RenderObject | None:
+    def set_viewport(self, width: int, height: int) -> bool:
+        """Synchronize logical input dimensions with the current GL viewport.
+
+        Call with the host widget's logical size while its context and framebuffer
+        are current, before rendering or picking. Reading GL's actual viewport
+        also accounts for fractional-DPI rounding and screen changes.
+        """
+        self._screen_size = (width, height)
+        self._viewport = tuple(int(value) for value in glGetIntegerv(GL_VIEWPORT))
+        _, _, framebuffer_width, framebuffer_height = self._viewport
+        if width <= 0 or height <= 0 or framebuffer_width <= 0 or framebuffer_height <= 0:
+            return False
+        self.camera.width = framebuffer_width
+        self.camera.height = framebuffer_height
+        return True
+
+    def _screen_to_framebuffer(self, x: float, y: float) -> tuple[int, int] | None:
+        """Map a top-left logical position to an in-bounds GL pixel, or None."""
+        width, height = self._screen_size
+        vx, vy, framebuffer_width, framebuffer_height = self._viewport
+        if (
+            not (0 <= x < width and 0 <= y < height)
+            or framebuffer_width <= 0
+            or framebuffer_height <= 0
+        ):
+            return None
+        # Keep an in-bounds position in the last pixel even if multiplication
+        # rounds a value infinitesimally below the far edge up to the dimension.
+        px = min(framebuffer_width - 1, math.floor(x * framebuffer_width / width))
+        py = min(framebuffer_height - 1, math.floor(y * framebuffer_height / height))
+        return vx + px, vy + framebuffer_height - 1 - py
+
+    def pick(self, x: float, y: float) -> RenderObject | None:
+        """Pick using top-left logical coordinates, like screenToWorld()."""
+        position = self._screen_to_framebuffer(x, y)
+        if position is None:
+            return None
         self.picker_render()
-        pixel = glReadPixels(x, y, 1, 1, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8)[0][0] >> 8  # type: ignore[]
+        pixel = glReadPixels(*position, 1, 1, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8)[0][0] >> 8  # type: ignore[]
         instances = list(self.objects.values())
-        return instances[pixel] if pixel != 0xFFFFFF else None  # noqa: PLR2004
+        return instances[pixel] if 0 <= pixel < len(instances) else None
 
     def select(
         self,
@@ -759,18 +791,23 @@ class Scene:
 
         self.selection.append(actual_target)
 
-    def screenToWorld(self, x: int, y: int) -> Vector3:
+    def screenToWorld(self, x: float, y: float) -> Vector3 | None:
+        """Unproject the depth sample at a top-left logical widget position."""
+        position = self._screen_to_framebuffer(x, y)
+        if position is None:
+            return None
         self._prepare_gl_and_shader()
         group1: list[RenderObject] = [obj for obj in self.objects.values() if isinstance(obj.data, LYTRoom)]
         for obj in group1:
             self._render_object(self.shader, obj, mat4())
 
-        zpos = glReadPixels(x, self.camera.height - y, 1, 1, GL_DEPTH_COMPONENT, GL_FLOAT)[0][0]  # type: ignore[]
+        px, py = position
+        zpos = glReadPixels(px, py, 1, 1, GL_DEPTH_COMPONENT, GL_FLOAT)[0][0]  # type: ignore[]
         cursor: vec3 = glm.unProject(
-            vec3(x, self.camera.height - y, zpos),
+            vec3(px + 0.5, py + 0.5, zpos),
             self.camera.view(),
             self.camera.projection(),
-            vec4(0, 0, self.camera.width, self.camera.height),
+            vec4(*self._viewport),
         )
         return Vector3(cursor.x, cursor.y, cursor.z)
 
@@ -984,7 +1021,7 @@ class Scene:
             self.camera.y = 0
             self.camera.z = 0
         else:
-            point: Vector3 = self.module.info().resource().entry_position
+            point: Vector3 = self._getIfo().entry_position
             self.camera.x = point.x
             self.camera.y = point.y
             self.camera.z = point.z + 1.8
@@ -1106,6 +1143,7 @@ class Camera:
         self.x: float = 40.0
         self.y: float = 130.0
         self.z: float = 0.5
+        # Physical viewport dimensions; logical input size belongs to Scene.
         self.width: int = 1920
         self.height: int = 1080
         self.pitch: float = math.pi / 2

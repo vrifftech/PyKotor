@@ -3,6 +3,8 @@ from __future__ import annotations
 from copy import copy
 from typing import TYPE_CHECKING
 
+from pykotor.resource.formats.gff.gff_data import GFFFieldType
+from pykotor.resource.generics._gff import (remember_gff, preserve_gff, remember_gff_struct, bind_gff_struct)
 from pykotor.common.geometry import Vector2
 from pykotor.common.misc import Game
 from pykotor.resource.formats.gff import GFF, GFFContent, GFFList, read_gff, write_gff
@@ -146,20 +148,23 @@ def construct_pth(
 ) -> PTH:
     pth = PTH()
 
-    connections_list: GFFList = gff.root.acquire("Path_Conections", GFFList())
+    connections_list: GFFList = gff.root.acquire("Path_Conections", GFFList(), field_type=GFFFieldType.List)
 
-    for point_struct in gff.root.acquire("Path_Points", GFFList()):
-        connections: int = point_struct.acquire("Conections", 0)
-        first_connection: int = point_struct.acquire("First_Conection", 0)
-        x: float = point_struct.acquire("X", 0.0)
-        y: float = point_struct.acquire("Y", 0.0)
+    for point_struct in gff.root.acquire("Path_Points", GFFList(), field_type=GFFFieldType.List):
+        connections: int = point_struct.acquire("Conections", 0, field_type=GFFFieldType.UInt32)
+        first_connection: int = point_struct.acquire("First_Conection", 0, field_type=GFFFieldType.UInt32)
+        x: float = point_struct.acquire("X", 0.0, field_type=GFFFieldType.Single)
+        y: float = point_struct.acquire("Y", 0.0, field_type=GFFFieldType.Single)
 
         source: int = pth.add(x, y)
+        remember_gff_struct(pth[source], point_struct)
 
         for i in range(first_connection, first_connection + connections):
-            target: int = connections_list.at(i).acquire("Destination", 0)
+            target: int = connections_list.at(i).acquire("Destination", 0, field_type=GFFFieldType.UInt32)
             pth.connect(source, target)
+            remember_gff_struct(pth._connections[-1], connections_list.at(i))
 
+    remember_gff(pth, gff)
     return pth
 
 
@@ -178,6 +183,7 @@ def dismantle_pth(
         outgoings: list[PTHEdge] = pth.outgoing(i)
 
         point_struct = points_list.add(2)
+        bind_gff_struct(point_struct, point)
         point_struct.set_uint32("Conections", len(outgoings))
         point_struct.set_uint32("First_Conection", len(connections_list))
         point_struct.set_single("X", point.x)
@@ -185,9 +191,10 @@ def dismantle_pth(
 
         for outgoing in outgoings:
             connection_struct = connections_list.add(3)
+            bind_gff_struct(connection_struct, outgoing)
             connection_struct.set_uint32("Destination", outgoing.target)
 
-    return gff
+    return preserve_gff(pth, gff, lambda original: dismantle_pth(original, game=game, use_deprecated=use_deprecated))
 
 
 def read_pth(

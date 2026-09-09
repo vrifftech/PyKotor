@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import itertools
 import os
-import platform
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import suppress
@@ -20,6 +19,7 @@ from pykotor.extract.file import FileResource, LocationResult, ResourceIdentifie
 from pykotor.extract.talktable import TalkTable
 from pykotor.resource.formats.gff import read_gff
 from pykotor.resource.formats.gff.gff_data import GFFContent, GFFFieldType, GFFList, GFFStruct
+from pykotor.resource.formats.txi import read_txi
 from pykotor.resource.formats.tpc import TPC, read_tpc
 from pykotor.resource.formats.twoda.twoda_auto import read_2da
 from pykotor.resource.type import ResourceType
@@ -153,7 +153,6 @@ class Installation:
 
         self._modules: dict[str, list[FileResource]] = {}
         self._lips: dict[str, list[FileResource]] = {}
-        self._saves: dict[Path, dict[Path, list[FileResource]]] = {}
         self._texturepacks: dict[str, list[FileResource]] = {}
         self._rims: dict[str, list[FileResource]] = {}
 
@@ -172,7 +171,7 @@ class Installation:
 
     def reload_all(self):
         if self.progress_callback is not None:
-            self.progress_callback(9, "set_maximum")
+            self.progress_callback(8, "set_maximum")
         self._report_main_progress("Loading chitin...")
         self.load_chitin()
         self._report_main_progress("Loading lips...")
@@ -190,8 +189,6 @@ class Installation:
         self.load_streamsounds()
         self._report_main_progress("Loading textures...")
         self.load_textures()
-        self._report_main_progress("Loading saves...")
-        self.load_saves()
         if self.game().is_k1():
             self._report_main_progress("Loading streamwaves...")
             self.load_streamwaves()
@@ -333,64 +330,6 @@ class Installation:
             The path to the streamvoice/streamwaves folder.
         """
         return self._find_resource_folderpath(("streamvoice", "streamwaves"))
-
-    def save_locations(self) -> list[Path]:
-        # sourcery skip: assign-if-exp, extract-method
-        """Returns a list of existing save locations (paths where save files can be found)."""
-        save_paths: list[Path] = [self._find_resource_folderpath("saves", optional=True)]
-        if self.game().is_k2():
-            cloudsave_dir = self._find_resource_folderpath("cloudsaves", optional=True)
-            if cloudsave_dir.safe_isdir():
-                for folder in cloudsave_dir.iterdir():
-                    if not folder.safe_isdir():
-                        continue
-                    save_paths.append(folder)
-        system = platform.system()
-
-        if system == "Windows":
-            roamingappdata_env: str = os.getenv("APPDATA", "")
-            if not roamingappdata_env.strip() or not Path(roamingappdata_env).safe_isdir():
-                roamingappdata_path = Path.home().joinpath("AppData", "Roaming")
-            else:
-                roamingappdata_path = Path(roamingappdata_env)
-
-            game_folder1 = "kotor" if self.game().is_k1() else "kotor2"  # FIXME: k1 is known but k2's 'kotor2' is a guess
-            save_paths.append(roamingappdata_path.joinpath("LucasArts", game_folder1, "saves"))
-
-            localappdata_env: str = os.getenv("LOCALAPPDATA", "")
-            if not localappdata_env.strip() or not Path(localappdata_env).safe_isdir():
-                localappdata_path = Path.home().joinpath("AppData", "Local")
-            else:
-                localappdata_path = Path(localappdata_env)
-
-            local_virtual_store = localappdata_path / "VirtualStore"
-            game_folder2 = "SWKotOR2" if self.game().is_k2() else "SWKotOR"
-            save_paths.extend(
-                (
-                    local_virtual_store.joinpath("Program Files", "LucasArts", game_folder2, "saves"),
-                    local_virtual_store.joinpath("Program Files (x86)", "LucasArts", game_folder2, "saves")
-                )
-            )
-
-        elif system == "Darwin":  # TODO
-            home = Path.home()
-            save_paths.extend(
-                (
-                    home.joinpath("Library", "Application Support", "Star Wars Knights of the Old Republic II", "saves"),
-                    home.joinpath("Library", "Containers", "com.aspyr.kotor2.appstore", "Data", "Library", "Application Support",
-                                  "Star Wars Knights of the Old Republic II", "saves")
-                )
-            )
-
-        elif system == "Linux":  # TODO
-            xdg_data_home = os.getenv("XDG_DATA_HOME", "")
-            remaining_path_parts = PurePath("aspyr-media", "kotor2", "saves")
-            if xdg_data_home.strip() and CaseAwarePath(xdg_data_home).safe_isdir():
-                save_paths.append(CaseAwarePath(xdg_data_home, remaining_path_parts))
-            save_paths.append(CaseAwarePath.home().joinpath(".local", "share", remaining_path_parts))
-
-        # Filter and return existing paths
-        return [path for path in save_paths if path.safe_isdir()]
 
     def _find_resource_folderpath(
         self,
@@ -615,24 +554,6 @@ class Installation:
     ):
         """Reloads the list of modules files in the texturepacks folder linked to the Installation."""
         self._texturepacks = self.load_resources_dict(self.texturepacks_path(), capsule_check=is_erf_file)
-
-    def load_saves(
-        self,
-    ):
-        """Reloads the data in the 'saves' folder linked to the Installation."""
-        self._saves = {}
-        for save_location in self.save_locations():
-            self._log.debug(f"Found an active save location at '{save_location}'")
-            self._saves[save_location] = {}
-            for this_save_path in save_location.iterdir():
-                if not this_save_path.safe_isdir():
-                    continue
-                self._log.debug(f"Discovered a save bundle '{this_save_path.name}'")
-                self._saves[save_location][this_save_path] = []
-                for file in this_save_path.iterdir():
-                    res_ident = ResourceIdentifier.from_path(file)
-                    file_res = FileResource(res_ident.resname, res_ident.restype, file.stat().st_size, 0, file)
-                    self._saves[save_location][this_save_path].append(file_res)
 
     def load_override(self, directory: str | None = None):
         """Loads the list of resources in a specific subdirectory of the override folder linked to the Installation.
@@ -1522,27 +1443,6 @@ class Installation:
         for resname in resnames:
             textures[resname] = None
 
-        def decode_txi(txi_bytes: bytes) -> str:
-            return txi_bytes.decode("ascii", errors="ignore").strip()
-
-        def get_txi_from_list(case_resname: str, resource_list: list[FileResource]) -> str:
-            txi_resource: FileResource | None = next(
-                (
-                    resource
-                    for resource in resource_list
-                    if resource.restype() is ResourceType.TXI and resource.identifier().lower_resname == case_resname
-                ),
-                None,
-            )
-            if txi_resource is not None:
-                self._log.debug("Found txi resource '%s' at %s", txi_resource.identifier(), txi_resource.filepath().relative_to(self._path.parent))
-                contents = decode_txi(txi_resource.data())
-                if contents and not contents.isascii():
-                    self._log.warning("Texture TXI '%s' is not ascii! (found at %s)", txi_resource.identifier(), txi_resource.filepath())
-                return contents
-            self._log.debug("'%s.txi' resource not found during texture lookup.", case_resname)
-            return ""
-
         def check_dict(values: dict[str, list[FileResource]]):
             for resources in values.values():
                 check_list(resources)
@@ -1555,12 +1455,10 @@ class Installation:
                 if case_resname not in case_resnames:
                     continue
                 case_resnames.remove(case_resname)
-                tpc: TPC = read_tpc(resource.data())
-                if resource.restype() is ResourceType.TGA:
-                    tpc.txi = get_txi_from_list(case_resname, resource_list)
+                tpc: TPC = read_tpc(resource.data(), file_format=resource.restype())
                 textures[case_resname] = tpc
 
-        def check_capsules(values: list[Capsule]):  # NOTE: This function does not support txi's in the Override folder.
+        def check_capsules(values: list[Capsule]):
             for capsule in values:
                 for case_resname in copy(case_resnames):
                     texture_data: bytes | None = None
@@ -1573,9 +1471,7 @@ class Installation:
                         continue
 
                     case_resnames.remove(case_resname)
-                    tpc: TPC = read_tpc(texture_data) if texture_data else TPC()
-                    if tformat is ResourceType.TGA:
-                        tpc.txi = get_txi_from_list(case_resname, capsule.resources())
+                    tpc: TPC = read_tpc(texture_data, file_format=tformat)
                     textures[case_resname] = tpc
 
         def check_folders(resource_folders: list[Path]):
@@ -1593,11 +1489,7 @@ class Installation:
             for texture_file in queried_texture_files:
                 case_resnames.remove(texture_file.stem.casefold())
                 texture_data: bytes = BinaryReader.load_file(texture_file)
-                tpc = read_tpc(texture_data) if texture_data else TPC()
-                txi_file = CaseAwarePath(texture_file.with_suffix(".txi"))
-                if txi_file.exists():
-                    txi_data: bytes = BinaryReader.load_file(txi_file)
-                    tpc.txi = decode_txi(txi_data)
+                tpc = read_tpc(texture_data, file_format=ResourceType.from_extension(texture_file.suffix))
                 textures[texture_file.stem] = tpc
 
         function_map: dict[SearchLocation, Callable] = {
@@ -1617,6 +1509,20 @@ class Installation:
             assert isinstance(item, SearchLocation), f"{type(item).__name__}: {item}"
             function_map.get(item, lambda: None)()
 
+        # TXI is a separate resource lookup. A sidecar in Override can override
+        # the footer of a TPC found in a texture pack, including an empty sidecar.
+        queries = [ResourceIdentifier(name, ResourceType.TXI) for name, texture in textures.items() if texture is not None]
+        locations = self.locations(queries, order, capsules=capsules, folders=folders)
+        for query, matches in locations.items():
+            if not matches:
+                continue
+            location = matches[0]
+            with BinaryReader.from_file(location.filepath) as reader:
+                reader.seek(location.offset)
+                document = read_txi(reader, size=location.size)
+            texture = textures[query.resname]
+            texture.external_txi = document
+            texture.external_txi_source = str(location.filepath)
         return textures
 
     def find_tlk_entry_references(

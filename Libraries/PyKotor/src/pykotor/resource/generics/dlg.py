@@ -3,9 +3,12 @@ from __future__ import annotations
 import uuid
 
 from collections import deque
+from copy import deepcopy
 from enum import IntEnum
 from typing import TYPE_CHECKING, Any, Dict, Generator, Generic, Sequence, TypeVar, cast
 
+from pykotor.resource.formats.gff.gff_data import GFFFieldType
+from pykotor.resource.generics._gff import (remember_gff, preserve_gff, remember_gff_struct, bind_gff_struct)
 from pykotor.common.geometry import Vector3
 from pykotor.common.language import Gender, Language, LocalizedString
 from pykotor.common.misc import Color, Game, ResRef
@@ -57,6 +60,8 @@ class DLG:
         self,
     ):
         self.starters: list[DLGLink] = []
+        self.orphan_entries: list[DLGEntry] = []
+        self.orphan_replies: list[DLGReply] = []
         self.stunts: list[DLGStunt] = []
 
         self.ambient_track: ResRef = ResRef.from_blank()
@@ -82,6 +87,28 @@ class DLG:
         # Deprecated:
         self.delay_entry: int = 0
         self.delay_reply: int = 0
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> DLG:
+        """Copy the dialogue graph without recursing through its links."""
+        result = type(self).__new__(type(self))
+        memo[id(self)] = result
+        nodes = self._all_nodes()
+        objects = [*nodes, *self.starters]
+        for node in nodes:
+            objects.extend(node.links)
+        pending = []
+        for obj in objects:
+            if id(obj) not in memo:
+                memo[id(obj)] = type(obj).__new__(type(obj))
+                pending.append(obj)
+        for obj in pending:
+            copied = memo[id(obj)]
+            copied.__dict__.update(deepcopy(obj.__dict__, memo))
+            if isinstance(obj, DLGNode):
+                copied._gff_key = obj._gff_key
+                copied._gff_record = deepcopy(obj._gff_record, memo)
+        result.__dict__.update(deepcopy(self.__dict__, memo))
+        return result
 
     def find_paths(self, target: DLGEntry | DLGReply | DLGLink) -> list[PureWindowsPath]:
         paths: list[PureWindowsPath] = []
@@ -221,6 +248,19 @@ class DLG:
             else:
                 print(f'{" " * indent}-> [LINK] {link.node.text}')
 
+    def _all_nodes(self) -> list[DLGNode]:
+        pending = list(reversed([link.node for link in self.starters] + self.orphan_entries + self.orphan_replies))
+        seen: set[DLGNode] = set()
+        nodes: list[DLGNode] = []
+        while pending:
+            node = pending.pop()
+            if node in seen:
+                continue
+            seen.add(node)
+            nodes.append(node)
+            pending.extend(link.node for link in reversed(node.links))
+        return nodes
+
     def all_entries(
         self,
         *,
@@ -232,7 +272,7 @@ class DLG:
         -------
             A list of all stored entries.
         """
-        entries = self._all_entries()
+        entries = [node for node in self._all_nodes() if isinstance(node, DLGEntry)]
         if not as_sorted:
             return entries
         return sorted(entries, key=lambda entry: (entry.list_index == -1, entry.list_index))
@@ -288,7 +328,7 @@ class DLG:
         -------
             A list of all stored replies.
         """
-        replies = self._all_replies()
+        replies = [node for node in self._all_nodes() if isinstance(node, DLGReply)]
         if not as_sorted:
             return replies
         return sorted(replies, key=lambda reply: (reply.list_index == -1, reply.list_index))
@@ -389,6 +429,8 @@ class DLGNode:
 
     Contains a list of DLGLink objects to indicate outgoing edges.
     """
+    __slots__ = ("__dict__", "__weakref__", "_gff_key", "_gff_record")
+
     def __init__(
         self,
     ):
@@ -403,6 +445,8 @@ class DLGNode:
         if not isinstance(self, (DLGEntry, DLGNode)):
             raise RuntimeError("Cannot construct base class DLGNode: use DLGEntry or DLGReply instead.")  # noqa: TRY004
 
+        self._gff_key = None
+        self._gff_record = None
         self._hash_cache = hash(uuid.uuid4().hex)
         self.comment: str = ""
         self.links: list[DLGLink] = []
@@ -527,9 +571,13 @@ class DLGNode:
 
         node_dict: dict[str | int, Any] = {"type": self.__class__.__name__, "key": node_key, "data": {}}
         node_map[node_key] = node_dict
+        if self._gff_record is not None:
+            source = GFF(GFFContent.DLG)
+            source.root = self._gff_record
+            node_dict["source_record"] = {"key": self._gff_key, "gff": bytes(bytes_gff(source)).hex()}
 
         for key, value in self.__dict__.items():
-            if key.startswith("__"):
+            if key.startswith(("__", "_gff_")):
                 continue
             if key == "links":
                 links: list[DLGLink] = value
@@ -543,7 +591,7 @@ class DLGNode:
             elif isinstance(value, str):
                 node_dict["data"][key] = {"value": value, "py_type": "str"}
             elif isinstance(value, ResRef):
-                node_dict["data"][key] = {"value": str(value), "py_type": "ResRef"}
+                node_dict["data"][key] = {"value": value.to_bytes(fixed_width=False).hex(), "py_type": "ResRefBytes"}
             elif isinstance(value, Color):
                 node_dict["data"][key] = {"value": value.bgr_integer(), "py_type": "Color"}
             elif isinstance(value, LocalizedString):
@@ -574,7 +622,7 @@ class DLGNode:
         node_key = data.get("key")
         assert isinstance(node_key, (int, str))
         node_type = data.get("type")
-        node_data: dict[str, Any] = data.get("data", {})
+        node_data: dict[str, Any] = dict(data.get("data", {}))
 
         node: DLGEntry | DLGReply
         if node_type == "DLGEntry":
@@ -588,6 +636,11 @@ class DLGNode:
         node_map[node_key] = node
 
         node._hash_cache = int(node_key)  # noqa: SLF001
+        if "source_record" in data:
+            source_record = data["source_record"]
+            node._gff_key = source_record["key"]
+            node._gff_record = read_gff(bytes.fromhex(source_record["gff"])).root
+            node._gff_record._source_key = node._gff_key
         for key, value in cast(Dict[str, dict], node_data).items():
             if value is None:
                 continue
@@ -602,6 +655,8 @@ class DLGNode:
                 setattr(node, key, float(actual_value))
             elif py_type == "bool":
                 setattr(node, key, bool(actual_value))
+            elif py_type == "ResRefBytes":
+                setattr(node, key, ResRef.from_bytes(bytes.fromhex(actual_value), fixed_width=False))
             elif py_type == "ResRef":
                 setattr(node, key, ResRef(actual_value))
             elif py_type == "Color":
@@ -661,6 +716,7 @@ class DLGAnimation:
     ):
         self._hash_cache = hash(uuid.uuid4().hex)
         self.animation_id: int = 6
+        self._animation_offset: int = 0
         self.participant: str = ""
 
     def __repr__(self) -> str:
@@ -675,12 +731,13 @@ class DLGAnimation:
         return self._hash_cache
 
     def to_dict(self) -> dict[str, Any]:
-        return {"animation_id": self.animation_id, "participant": self.participant, "_hash_cache": self._hash_cache}
+        return {"animation_id": self.animation_id, "animation_offset": self._animation_offset, "participant": self.participant, "_hash_cache": self._hash_cache}
 
     @classmethod
     def from_dict(cls, data: dict) -> Self:
         animation = cls()
         animation.animation_id = data.get("animation_id", 6)
+        animation._animation_offset = data.get("animation_offset", 0)
         animation.participant = data.get("participant", "")
         animation._hash_cache = data.get("_hash_cache", animation._hash_cache)  # noqa: SLF001
         return animation
@@ -797,7 +854,7 @@ class DLGLink(Generic[T]):
         }
 
         for key, value in self.__dict__.items():
-            if key.startswith("__"):
+            if key.startswith(("__", "_gff_")):
                 continue
             if key in ("node", "list_index", "_hash_cache"):
                 continue
@@ -810,7 +867,7 @@ class DLGLink(Generic[T]):
             elif isinstance(value, str):
                 link_dict["data"][key] = {"value": value, "py_type": "str"}
             elif isinstance(value, ResRef):
-                link_dict["data"][key] = {"value": str(value), "py_type": "ResRef"}
+                link_dict["data"][key] = {"value": value.to_bytes(fixed_width=False).hex(), "py_type": "ResRefBytes"}
             elif isinstance(value, Color):
                 link_dict["data"][key] = {"value": value.bgr_integer(), "py_type": "Color"}
             elif isinstance(value, LocalizedString):
@@ -854,6 +911,8 @@ class DLGLink(Generic[T]):
                 setattr(link, key, float(actual_value))
             elif py_type == "bool":
                 setattr(link, key, bool(actual_value))
+            elif py_type == "ResRefBytes":
+                setattr(link, key, ResRef.from_bytes(bytes.fromhex(actual_value), fixed_width=False))
             elif py_type == "ResRef":
                 setattr(link, key, ResRef(actual_value))
             elif py_type == "Color":
@@ -936,75 +995,77 @@ def construct_dlg(
         -------
             None - Populates the node in-place
         """
-        node.text = gff_struct.acquire("Text", LocalizedString.from_invalid())
-        node.listener = gff_struct.acquire("Listener", "")
-        node.vo_resref = gff_struct.acquire("VO_ResRef", ResRef.from_blank())
-        node.script1 = gff_struct.acquire("Script", ResRef.from_blank())
-        delay: int = gff_struct.acquire("Delay", 0)
+        remember_gff_struct(node, gff_struct)
+        node.text = gff_struct.acquire("Text", LocalizedString.from_invalid(), field_type=GFFFieldType.LocalizedString)
+        node.listener = gff_struct.acquire("Listener", "", field_type=GFFFieldType.String)
+        node.vo_resref = gff_struct.acquire("VO_ResRef", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+        node.script1 = gff_struct.acquire("Script", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+        delay: int = gff_struct.acquire("Delay", 0, field_type=GFFFieldType.UInt32)
         node.delay = -1 if delay == 0xFFFFFFFF else delay  # noqa: PLR2004
-        node.comment = gff_struct.acquire("Comment", "")
-        node.sound = gff_struct.acquire("Sound", ResRef.from_blank())
-        node.quest = gff_struct.acquire("Quest", "")
-        node.plot_index = gff_struct.acquire("PlotIndex", -1)
-        node.plot_xp_percentage = gff_struct.acquire("PlotXPPercentage", 0.0)
-        node.wait_flags = gff_struct.acquire("WaitFlags", 0)
-        node.camera_angle = gff_struct.acquire("CameraAngle", 0)
-        node.fade_type = gff_struct.acquire("FadeType", 0)
-        node.sound_exists = gff_struct.acquire("SoundExists", 0)
-        node.vo_text_changed = gff_struct.acquire("VOTextChanged", default=False)
+        node.comment = gff_struct.acquire("Comment", "", field_type=GFFFieldType.String)
+        node.sound = gff_struct.acquire("Sound", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+        node.quest = gff_struct.acquire("Quest", "", field_type=GFFFieldType.String)
+        node.plot_index = gff_struct.acquire("PlotIndex", -1, field_type=GFFFieldType.Int32)
+        node.plot_xp_percentage = gff_struct.acquire("PlotXPPercentage", 0.0, field_type=GFFFieldType.Single)
+        node.wait_flags = gff_struct.acquire("WaitFlags", 0, field_type=GFFFieldType.UInt32)
+        node.camera_angle = gff_struct.acquire("CameraAngle", 0, field_type=GFFFieldType.UInt32)
+        node.fade_type = gff_struct.acquire("FadeType", 0, field_type=GFFFieldType.UInt8)
+        node.sound_exists = gff_struct.acquire("SoundExists", 0, field_type=GFFFieldType.UInt8)
+        node.vo_text_changed = gff_struct.acquire("VOTextChanged", default=False, field_type=GFFFieldType.Int32)
 
-        anim_list: GFFList = gff_struct.acquire("AnimList", GFFList())
+        anim_list: GFFList = gff_struct.acquire("AnimList", GFFList(), field_type=GFFFieldType.List)
         for anim_struct in anim_list:
             anim = DLGAnimation()
-            anim.animation_id = anim_struct.acquire("Animation", 0)
-            if anim.animation_id > 10000:
-                anim.animation_id -= 10000
-            anim.participant = anim_struct.acquire("Participant", "")
+            remember_gff_struct(anim, anim_struct)
+            anim.animation_id = anim_struct.acquire("Animation", 0, field_type=GFFFieldType.UInt16)
+            anim._animation_offset = 10000 if anim.animation_id > 10000 else 0
+            anim.animation_id -= anim._animation_offset
+            anim.participant = anim_struct.acquire("Participant", "", field_type=GFFFieldType.String)
             node.animations.append(anim)
 
-        node.script1_param1 = gff_struct.acquire("ActionParam1", 0)
-        node.script2_param1 = gff_struct.acquire("ActionParam1b", 0)
-        node.script1_param2 = gff_struct.acquire("ActionParam2", 0)
-        node.script2_param2 = gff_struct.acquire("ActionParam2b", 0)
-        node.script1_param3 = gff_struct.acquire("ActionParam3", 0)
-        node.script2_param3 = gff_struct.acquire("ActionParam3b", 0)
-        node.script1_param4 = gff_struct.acquire("ActionParam4", 0)
-        node.script2_param4 = gff_struct.acquire("ActionParam4b", 0)
-        node.script1_param5 = gff_struct.acquire("ActionParam5", 0)
-        node.script2_param5 = gff_struct.acquire("ActionParam5b", 0)
-        node.script1_param6 = gff_struct.acquire("ActionParamStrA", "")
-        node.script2_param6 = gff_struct.acquire("ActionParamStrB", "")
-        node.script2 = gff_struct.acquire("Script2", ResRef.from_blank())
-        node.alien_race_node = gff_struct.acquire("AlienRaceNode", 0)
-        node.emotion_id = gff_struct.acquire("Emotion", 0)
-        node.facial_id = gff_struct.acquire("FacialAnim", 0)
-        node.node_id = gff_struct.acquire("NodeID", 0)
-        node.unskippable = gff_struct.acquire("NodeUnskippable", default=False)
-        node.post_proc_node = gff_struct.acquire("PostProcNode", 0)
-        node.record_no_vo_override = gff_struct.acquire("RecordNoVOOverri", default=False)
-        node.record_vo = gff_struct.acquire("RecordVO", default=False)
-        node.vo_text_changed = gff_struct.acquire("VOTextChanged", default=False)
+        node.script1_param1 = gff_struct.acquire("ActionParam1", 0, field_type=GFFFieldType.Int32)
+        node.script2_param1 = gff_struct.acquire("ActionParam1b", 0, field_type=GFFFieldType.Int32)
+        node.script1_param2 = gff_struct.acquire("ActionParam2", 0, field_type=GFFFieldType.Int32)
+        node.script2_param2 = gff_struct.acquire("ActionParam2b", 0, field_type=GFFFieldType.Int32)
+        node.script1_param3 = gff_struct.acquire("ActionParam3", 0, field_type=GFFFieldType.Int32)
+        node.script2_param3 = gff_struct.acquire("ActionParam3b", 0, field_type=GFFFieldType.Int32)
+        node.script1_param4 = gff_struct.acquire("ActionParam4", 0, field_type=GFFFieldType.Int32)
+        node.script2_param4 = gff_struct.acquire("ActionParam4b", 0, field_type=GFFFieldType.Int32)
+        node.script1_param5 = gff_struct.acquire("ActionParam5", 0, field_type=GFFFieldType.Int32)
+        node.script2_param5 = gff_struct.acquire("ActionParam5b", 0, field_type=GFFFieldType.Int32)
+        node.script1_param6 = gff_struct.acquire("ActionParamStrA", "", field_type=GFFFieldType.String)
+        node.script2_param6 = gff_struct.acquire("ActionParamStrB", "", field_type=GFFFieldType.String)
+        node.script2 = gff_struct.acquire("Script2", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+        node.alien_race_node = gff_struct.acquire("AlienRaceNode", 0, field_type=GFFFieldType.Int32)
+        node.emotion_id = gff_struct.acquire("Emotion", 0, field_type=GFFFieldType.Int32)
+        node.facial_id = gff_struct.acquire("FacialAnim", 0, field_type=GFFFieldType.Int32)
+        node.node_id = gff_struct.acquire("NodeID", 0, field_type=GFFFieldType.Int32)
+        node.unskippable = gff_struct.acquire("NodeUnskippable", default=False, field_type=GFFFieldType.Int32)
+        node.post_proc_node = gff_struct.acquire("PostProcNode", 0, field_type=GFFFieldType.Int32)
+        node.record_no_vo_override = gff_struct.acquire("RecordNoVOOverri", default=False, field_type=GFFFieldType.Int32)
+        node.record_vo = gff_struct.acquire("RecordVO", default=False, field_type=GFFFieldType.Int32)
+        node.vo_text_changed = gff_struct.acquire("VOTextChanged", default=False, field_type=GFFFieldType.Int32)
 
         if gff_struct.exists("QuestEntry"):
-            node.quest_entry = gff_struct.acquire("QuestEntry", 0)
+            node.quest_entry = gff_struct.acquire("QuestEntry", 0, field_type=GFFFieldType.UInt32)
         if gff_struct.exists("FadeDelay"):
-            node.fade_delay = gff_struct.acquire("FadeDelay", 0.0)
+            node.fade_delay = gff_struct.acquire("FadeDelay", 0.0, field_type=GFFFieldType.Single)
         if gff_struct.exists("FadeLength"):
-            node.fade_length = gff_struct.acquire("FadeLength", 0.0)
+            node.fade_length = gff_struct.acquire("FadeLength", 0.0, field_type=GFFFieldType.Single)
         if gff_struct.exists("CameraAnimation"):
-            node.camera_anim = gff_struct.acquire("CameraAnimation", 0)
+            node.camera_anim = gff_struct.acquire("CameraAnimation", 0, field_type=GFFFieldType.UInt16)
         if gff_struct.exists("CameraID"):
-            node.camera_id = gff_struct.acquire("CameraID", 0)
+            node.camera_id = gff_struct.acquire("CameraID", 0, field_type=GFFFieldType.Int32)
         if gff_struct.exists("CamFieldOfView"):
-            node.camera_fov = gff_struct.acquire("CamFieldOfView", 0.0)
+            node.camera_fov = gff_struct.acquire("CamFieldOfView", 0.0, field_type=GFFFieldType.Single)
         if gff_struct.exists("CamHeightOffset"):
-            node.camera_height = gff_struct.acquire("CamHeightOffset", 0.0)
+            node.camera_height = gff_struct.acquire("CamHeightOffset", 0.0, field_type=GFFFieldType.Single)
         if gff_struct.exists("CamVidEffect"):
-            node.camera_effect = gff_struct.acquire("CamVidEffect", -1)
+            node.camera_effect = gff_struct.acquire("CamVidEffect", -1, field_type=GFFFieldType.Int32)
         if gff_struct.exists("TarHeightOffset"):
-            node.target_height = gff_struct.acquire("TarHeightOffset", 0.0)
+            node.target_height = gff_struct.acquire("TarHeightOffset", 0.0, field_type=GFFFieldType.Single)
         if gff_struct.exists("FadeColor"):
-            node.fade_color = Color.from_bgr_vector3(gff_struct.acquire("FadeColor", Vector3.from_null()))
+            node.fade_color = Color.from_bgr_vector3(gff_struct.acquire("FadeColor", Vector3.from_null(), field_type=GFFFieldType.Vector3))
 
     def construct_link(
         gff_struct: GFFStruct,
@@ -1021,62 +1082,64 @@ def construct_dlg(
         -------
             None - Populates the link object
         """
-        link.active1 = gff_struct.acquire("Active", ResRef.from_blank())
-        link.active2 = gff_struct.acquire("Active2", ResRef.from_blank())
-        link.logic = gff_struct.acquire("Logic", default=False)
-        link.active1_not = gff_struct.acquire("Not", default=False)
-        link.active2_not = gff_struct.acquire("Not2", default=False)
-        link.active1_param1 = gff_struct.acquire("Param1", 0)
-        link.active1_param2 = gff_struct.acquire("Param2", 0)
-        link.active1_param3 = gff_struct.acquire("Param3", 0)
-        link.active1_param4 = gff_struct.acquire("Param4", 0)
-        link.active1_param5 = gff_struct.acquire("Param5", 0)
-        link.active1_param6 = gff_struct.acquire("ParamStrA", "")
-        link.active2_param1 = gff_struct.acquire("Param1b", 0)
-        link.active2_param2 = gff_struct.acquire("Param2b", 0)
-        link.active2_param3 = gff_struct.acquire("Param3b", 0)
-        link.active2_param4 = gff_struct.acquire("Param4b", 0)
-        link.active2_param5 = gff_struct.acquire("Param5b", 0)
-        link.active2_param6 = gff_struct.acquire("ParamStrB", "")
+        remember_gff_struct(link, gff_struct)
+        link.active1 = gff_struct.acquire("Active", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+        link.active2 = gff_struct.acquire("Active2", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+        link.logic = gff_struct.acquire("Logic", default=False, field_type=GFFFieldType.Int32)
+        link.active1_not = gff_struct.acquire("Not", default=False, field_type=GFFFieldType.UInt8)
+        link.active2_not = gff_struct.acquire("Not2", default=False, field_type=GFFFieldType.UInt8)
+        link.active1_param1 = gff_struct.acquire("Param1", 0, field_type=GFFFieldType.Int32)
+        link.active1_param2 = gff_struct.acquire("Param2", 0, field_type=GFFFieldType.Int32)
+        link.active1_param3 = gff_struct.acquire("Param3", 0, field_type=GFFFieldType.Int32)
+        link.active1_param4 = gff_struct.acquire("Param4", 0, field_type=GFFFieldType.Int32)
+        link.active1_param5 = gff_struct.acquire("Param5", 0, field_type=GFFFieldType.Int32)
+        link.active1_param6 = gff_struct.acquire("ParamStrA", "", field_type=GFFFieldType.String)
+        link.active2_param1 = gff_struct.acquire("Param1b", 0, field_type=GFFFieldType.Int32)
+        link.active2_param2 = gff_struct.acquire("Param2b", 0, field_type=GFFFieldType.Int32)
+        link.active2_param3 = gff_struct.acquire("Param3b", 0, field_type=GFFFieldType.Int32)
+        link.active2_param4 = gff_struct.acquire("Param4b", 0, field_type=GFFFieldType.Int32)
+        link.active2_param5 = gff_struct.acquire("Param5b", 0, field_type=GFFFieldType.Int32)
+        link.active2_param6 = gff_struct.acquire("ParamStrB", "", field_type=GFFFieldType.String)
 
     dlg = DLG()
 
     root: GFFStruct = gff.root
 
-    all_entries: list[DLGEntry] = [DLGEntry() for _ in range(len(root.acquire("EntryList", GFFList())))]
-    all_replies: list[DLGReply] = [DLGReply() for _ in range(len(root.acquire("ReplyList", GFFList())))]
+    all_entries: list[DLGEntry] = [DLGEntry() for _ in range(len(root.acquire("EntryList", GFFList(), field_type=GFFFieldType.List)))]
+    all_replies: list[DLGReply] = [DLGReply() for _ in range(len(root.acquire("ReplyList", GFFList(), field_type=GFFFieldType.List)))]
 
-    dlg.word_count = root.acquire("NumWords", 0)
-    dlg.on_abort = root.acquire("EndConverAbort", ResRef.from_blank())
-    dlg.on_end = root.acquire("EndConversation", ResRef.from_blank())
-    dlg.skippable = root.acquire("Skippable", default=False)
-    dlg.ambient_track = root.acquire("AmbientTrack", ResRef.from_blank())
-    dlg.animated_cut = root.acquire("AnimatedCut", 0)
-    dlg.camera_model = root.acquire("CameraModel", ResRef.from_blank())
-    dlg.computer_type = DLGComputerType(root.acquire("ComputerType", 0))
-    dlg.conversation_type = DLGConversationType(root.acquire("ConversationType", 0))
+    dlg.word_count = root.acquire("NumWords", 0, field_type=GFFFieldType.UInt32)
+    dlg.on_abort = root.acquire("EndConverAbort", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+    dlg.on_end = root.acquire("EndConversation", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+    dlg.skippable = root.acquire("Skippable", default=False, field_type=GFFFieldType.UInt8)
+    dlg.ambient_track = root.acquire("AmbientTrack", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+    dlg.animated_cut = root.acquire("AnimatedCut", 0, field_type=GFFFieldType.UInt8)
+    dlg.camera_model = root.acquire("CameraModel", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+    dlg.computer_type = DLGComputerType(root.acquire("ComputerType", 0, field_type=GFFFieldType.UInt8))
+    dlg.conversation_type = DLGConversationType(root.acquire("ConversationType", 0, field_type=GFFFieldType.Int32))
 
-    dlg.old_hit_check = root.acquire("OldHitCheck", default=False)
-    dlg.unequip_hands = root.acquire("UnequipHItem", default=False)
-    dlg.unequip_items = root.acquire("UnequipItems", default=False)
-    dlg.vo_id = root.acquire("VO_ID", "")
-    dlg.alien_race_owner = root.acquire("AlienRaceOwner", 0)
-    dlg.post_proc_owner = root.acquire("PostProcOwner", 0)
-    dlg.record_no_vo = root.acquire("RecordNoVO", 0)
-    dlg.next_node_id = root.acquire("NextNodeID", 0)
-    dlg.delay_entry = root.acquire("DelayEntry", 0)
-    dlg.delay_reply = root.acquire("DelayReply", 0)
+    dlg.old_hit_check = root.acquire("OldHitCheck", default=False, field_type=GFFFieldType.UInt8)
+    dlg.unequip_hands = root.acquire("UnequipHItem", default=False, field_type=GFFFieldType.UInt8)
+    dlg.unequip_items = root.acquire("UnequipItems", default=False, field_type=GFFFieldType.UInt8)
+    dlg.vo_id = root.acquire("VO_ID", "", field_type=GFFFieldType.String)
+    dlg.alien_race_owner = root.acquire("AlienRaceOwner", 0, field_type=GFFFieldType.Int32)
+    dlg.post_proc_owner = root.acquire("PostProcOwner", 0, field_type=GFFFieldType.Int32)
+    dlg.record_no_vo = root.acquire("RecordNoVO", 0, field_type=GFFFieldType.Int32)
+    dlg.next_node_id = root.acquire("NextNodeID", 0, field_type=GFFFieldType.Int32)
+    dlg.delay_entry = root.acquire("DelayEntry", 0, field_type=GFFFieldType.UInt32)
+    dlg.delay_reply = root.acquire("DelayReply", 0, field_type=GFFFieldType.UInt32)
 
-    stunt_list: GFFList = root.acquire("StuntList", GFFList())
+    stunt_list: GFFList = root.acquire("StuntList", GFFList(), field_type=GFFFieldType.List)
     for stunt_struct in stunt_list:
         stunt = DLGStunt()
+        remember_gff_struct(stunt, stunt_struct)
         dlg.stunts.append(stunt)
-        stunt.participant = stunt_struct.acquire("Participant", "")
-        stunt.stunt_model = stunt_struct.acquire("StuntModel", ResRef.from_blank())
+        stunt.participant = stunt_struct.acquire("Participant", "", field_type=GFFFieldType.String)
+        stunt.stunt_model = stunt_struct.acquire("StuntModel", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
 
-    starting_list: GFFList = root.acquire("StartingList", GFFList())
+    starting_list: GFFList = root.acquire("StartingList", GFFList(), field_type=GFFFieldType.List)
     for link_list_index, link_struct in enumerate(starting_list):
-        node_struct_id = link_struct.acquire("Index", 0)
+        node_struct_id = link_struct.acquire("Index", 0, field_type=GFFFieldType.UInt32)
         try:
             node = all_entries[node_struct_id]
         except IndexError:
@@ -1084,19 +1147,20 @@ def construct_dlg(
             RobustRootLogger().error(f"'Index' field value '{node_struct_id}' at {context_link_msg} does not point to a valid ReplyList node, omitting...")
         else:
             link: DLGLink = DLGLink(node, link_list_index)
+            remember_gff_struct(link, link_struct)
             dlg.starters.append(link)
             construct_link(link_struct, link)
 
-    entry_list: GFFList = root.acquire("EntryList", GFFList())
+    entry_list: GFFList = root.acquire("EntryList", GFFList(), field_type=GFFFieldType.List)
     for node_list_index, entry_struct in enumerate(entry_list):
         entry: DLGEntry = all_entries[node_list_index]
-        entry.speaker = entry_struct.acquire("Speaker", "")
+        entry.speaker = entry_struct.acquire("Speaker", "", field_type=GFFFieldType.String)
         entry.list_index = node_list_index
         construct_node(entry_struct, entry)
 
         replies_list: GFFList = entry_struct.acquire("RepliesList", GFFList())
         for link_list_index, link_struct in enumerate(replies_list):
-            node_struct_id = link_struct.acquire("Index", 0)
+            node_struct_id = link_struct.acquire("Index", 0, field_type=GFFFieldType.UInt32)
             try:
                 node = all_replies[node_struct_id]
             except IndexError:
@@ -1104,13 +1168,14 @@ def construct_dlg(
                 RobustRootLogger().error(f"'Index' field value '{node_struct_id}' at {context_link_msg} does not point to a valid ReplyList node, omitting...")
             else:
                 link = DLGLink(node, link_list_index)
-                link.is_child = bool(link_struct.acquire("IsChild", default=False))
-                link.comment = link_struct.acquire("LinkComment", "")
+                remember_gff_struct(link, link_struct)
+                link.is_child = bool(link_struct.acquire("IsChild", default=False, field_type=GFFFieldType.UInt8))
+                link.comment = link_struct.acquire("LinkComment", "", field_type=GFFFieldType.String)
 
                 entry.links.append(link)
                 construct_link(link_struct, link)
 
-    reply_list: GFFList = root.acquire("ReplyList", GFFList())
+    reply_list: GFFList = root.acquire("ReplyList", GFFList(), field_type=GFFFieldType.List)
     for node_list_index, reply_struct in enumerate(reply_list):
         reply: DLGReply = all_replies[node_list_index]
         reply.list_index = node_list_index
@@ -1118,7 +1183,7 @@ def construct_dlg(
 
         entries_list: GFFList = reply_struct.acquire("EntriesList", GFFList())
         for link_list_index, link_struct in enumerate(entries_list):
-            node_struct_id = link_struct.acquire("Index", 0)
+            node_struct_id = link_struct.acquire("Index", 0, field_type=GFFFieldType.UInt32)
             try:
                 node = all_entries[node_struct_id]
             except IndexError:
@@ -1126,12 +1191,18 @@ def construct_dlg(
                 RobustRootLogger().error(f"'Index' field value '{node_struct_id}' at {context_link_msg} does not point to a valid EntryList node, omitting...")
             else:
                 link = DLGLink(node, link_list_index)
-                link.is_child = bool(link_struct.acquire("IsChild", default=False))
-                link.comment = link_struct.acquire("LinkComment", "")
+                remember_gff_struct(link, link_struct)
+                link.is_child = bool(link_struct.acquire("IsChild", default=False, field_type=GFFFieldType.UInt8))
+                link.comment = link_struct.acquire("LinkComment", "", field_type=GFFFieldType.String)
 
                 reply.links.append(link)
                 construct_link(link_struct, link)
 
+    linked_entries = set(dlg.all_entries())
+    linked_replies = set(dlg.all_replies())
+    dlg.orphan_entries = [node for node in all_entries if node not in linked_entries]
+    dlg.orphan_replies = [node for node in all_replies if node not in linked_replies]
+    remember_gff(dlg, gff)
     return dlg
 
 
@@ -1187,6 +1258,7 @@ def dismantle_dlg(
             - Sets the Index uint32 on the GFFStruct from the node list index
             - If game is K2, sets additional link properties on the GFFStruct.
         """
+        bind_gff_struct(gff_struct, link)
         object.__setattr__(link, "__class__", DLGLink)
         node_list_index = nodes.index(link.node)
         gff_struct.set_uint32("Index", node_list_index)
@@ -1235,6 +1307,7 @@ def dismantle_dlg(
             - Handles optional node properties
             - Creates lists for animations and links and populates them.
         """
+        bind_gff_struct(gff_struct, node)
         gff_struct.set_locstring("Text", node.text)
         gff_struct.set_string("Listener", node.listener)
         gff_struct.set_resref("VO_ResRef", node.vo_resref)
@@ -1256,7 +1329,8 @@ def dismantle_dlg(
         anim_list: GFFList = gff_struct.set_list("AnimList", GFFList())
         for anim in node.animations:
             anim_struct: GFFStruct = anim_list.add(0)
-            anim_struct.set_uint16("Animation", anim.animation_id if anim.animation_id <= 10000 else anim.animation_id + 10000)
+            bind_gff_struct(anim_struct, anim)
+            anim_struct.set_uint16("Animation", anim.animation_id + anim._animation_offset)
             anim_struct.set_string("Participant", anim.participant)
 
         if node.quest.strip() and node.quest_entry:
@@ -1309,6 +1383,7 @@ def dismantle_dlg(
         sorted_links = sorted(node.links, key=lambda link: (link.list_index == -1, link.list_index))
         for i, link in enumerate(sorted_links):
             link_struct: GFFStruct = link_list.add(i)
+            bind_gff_struct(link_struct, link)
             dismantle_link(link_struct, link, nodes, list_name)
 
     all_entries: list[DLGEntry] = dlg.all_entries(as_sorted=True)
@@ -1349,6 +1424,7 @@ def dismantle_dlg(
     stunt_list: GFFList = root.set_list("StuntList", GFFList())
     for stunt in dlg.stunts:
         stunt_struct: GFFStruct = stunt_list.add(0)
+        bind_gff_struct(stunt_struct, stunt)
         stunt_struct.set_string("Participant", stunt.participant)
         stunt_struct.set_resref("StuntModel", stunt.stunt_model)
 
@@ -1356,20 +1432,23 @@ def dismantle_dlg(
     sorted_links: list[DLGLink] = sorted(dlg.starters, key=lambda link: (link.list_index == -1, link.list_index))
     for link_list_index, starter in enumerate(sorted_links):
         starting_struct: GFFStruct = starting_list.add(link_list_index)
+        bind_gff_struct(starting_struct, starter)
         dismantle_link(starting_struct, starter, all_entries, "StartingList")
 
     entry_list: GFFList = root.set_list("EntryList", GFFList())
     for node_list_index, entry in enumerate(all_entries):
         entry_struct: GFFStruct = entry_list.add(node_list_index)
+        bind_gff_struct(entry_struct, entry)
         entry_struct.set_string("Speaker", entry.speaker)
         dismantle_node(entry_struct, entry, all_replies, "RepliesList")
 
     reply_list: GFFList = root.set_list("ReplyList", GFFList())
     for node_list_index, reply in enumerate(all_replies):
         reply_struct: GFFStruct = reply_list.add(node_list_index)
+        bind_gff_struct(reply_struct, reply)
         dismantle_node(reply_struct, reply, all_entries, "EntriesList")
 
-    return gff
+    return preserve_gff(dlg, gff, lambda original: dismantle_dlg(original, game=game, use_deprecated=use_deprecated))
 
 
 def read_dlg(

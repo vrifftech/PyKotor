@@ -125,8 +125,7 @@ class Language(IntEnum):
     SAMOAN = 97
     SOMALI = 98
 
-    # The following languages are supported in the GFF/TLK file formats, but are probably not encodable to 8-bit without significant loss of information
-    # therefore are probably incompatible with KOTOR.
+    # Engine-supported multibyte code pages; serialized lengths count bytes, not characters.
     KOREAN = 128
     CHINESE_TRADITIONAL = 129
     CHINESE_SIMPLIFIED = 130
@@ -438,6 +437,7 @@ class LocalizedString:
 
     def __init__(self, stringref: int, substrings: dict[int, str] | None = None):
         self.stringref: int = stringref
+        self._substring_bytes: dict[int, tuple[str, bytes]] = {}
         self._substrings_internal: IntKeyDict = IntKeyDict() if substrings is None else IntKeyDict(substrings)
 
     @property
@@ -494,15 +494,23 @@ class LocalizedString:
         return other._substrings == self._substrings
 
     def to_dict(self) -> dict:
-        return {
-            "stringref": self.stringref,
-            "substrings": self._substrings
-        }
+        result = {"stringref": self.stringref, "substrings": dict(self._substrings)}
+        raw = {string_id: data.hex() for string_id, (text, data) in self._substring_bytes.items()
+               if self._substrings.get(string_id) == text}
+        if raw:
+            result["substring_bytes"] = raw
+        return result
 
     @staticmethod
     def from_dict(data: dict) -> LocalizedString:
         localized_string = LocalizedString(data["stringref"])
-        localized_string._substrings = data.get("substrings", {})
+        localized_string._substrings = {int(key): value for key, value in data.get("substrings", {}).items()}
+        for key, value in data.get("substring_bytes", {}).items():
+            string_id = int(key)
+            raw = bytes.fromhex(value)
+            language, _ = LocalizedString.substring_pair(string_id)
+            text = raw.decode(LocalizedString.substring_encoding(language), "surrogateescape")
+            localized_string._substring_bytes[string_id] = (text, raw)
         return localized_string
 
     @classmethod
@@ -541,7 +549,7 @@ class LocalizedString:
         return (language * 2) + gender
 
     @staticmethod
-    def substring_pair(substring_id: int | str) -> tuple[Language, Gender]:
+    def substring_pair(substring_id: int | str) -> tuple[Language | int, Gender]:
         """Returns a tuple containing the Language and Gender for a given substring ID.
 
         Args:
@@ -560,7 +568,8 @@ class LocalizedString:
         """
         if not isinstance(substring_id, int):
             substring_id = int(substring_id)
-        language = Language(substring_id // 2)
+        language_id = substring_id // 2
+        language = Language._value2member_map_.get(language_id, language_id)
         gender = Gender(substring_id % 2)
         return language, gender
 
@@ -582,6 +591,29 @@ class LocalizedString:
         """
         substring_id: int = LocalizedString.substring_id(language, gender)
         self._substrings[substring_id] = string
+
+    @staticmethod
+    def substring_encoding(language: Language | int) -> str:
+        """Known language code pages; unknown IDs use an opaque ASCII byte view."""
+        if isinstance(language, Language):
+            encoding = language.get_encoding()
+            if encoding is not None:
+                return encoding
+        return "ascii"
+
+    def set_substring_bytes(self, substring_id: int, data: bytes) -> None:
+        language, _ = self.substring_pair(substring_id)
+        text = data.decode(self.substring_encoding(language), "surrogateescape")
+        self._substrings[substring_id] = text
+        self._substring_bytes[substring_id] = (text, bytes(data))
+
+    def substring_bytes(self, substring_id: int) -> bytes:
+        text = self._substrings[substring_id]
+        stored = self._substring_bytes.get(substring_id)
+        if stored is not None and stored[0] == text:
+            return stored[1]
+        language, _ = self.substring_pair(substring_id)
+        return text.encode(self.substring_encoding(language), "surrogateescape")
 
     def get(
         self,

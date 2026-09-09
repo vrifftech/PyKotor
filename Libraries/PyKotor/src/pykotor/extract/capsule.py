@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from pykotor.common.misc import ResRef
 from pykotor.common.stream import BinaryReader
 from pykotor.extract.file import FileResource, ResourceIdentifier, ResourceResult
 from pykotor.resource.formats.erf import ERF, ERFType, read_erf, write_erf
@@ -17,7 +18,7 @@ if TYPE_CHECKING:
 
 
 class LazyCapsule(FileResource):
-    """LazyCapsule object is used for loading the list of resources stored in the .erf/.rim/.mod/.sav files used by the game.
+    """LazyCapsule object is used for loading the list of resources stored in the .erf/.rim/.mod files used by the game.
 
     Resource data is not actually stored in memory by default but is instead loaded up on demand with the
     LazyCapsule.resource() method. Use the Capsule, RIM, or ERF classes if you want to solely work with capsules in memory.
@@ -224,7 +225,7 @@ class LazyCapsule(FileResource):
             elif file_type == "RIM ":
                 resources = self._load_rim(reader)
             else:
-                msg = f"File '{self._filepath}' must be a ERF/MOD/SAV/RIM capsule, '{self._filepath.suffix}' is not implemented."
+                msg = f"File '{self._filepath}' must be a ERF/MOD/RIM capsule, '{self._filepath.suffix}' is not implemented."
                 raise NotImplementedError(msg)
         #get_root_logger().debug("%s.resources() call, found %s total resources inside %s", self.__class__.__name__, len(resources), self._filepath)
         return resources
@@ -238,7 +239,7 @@ class LazyCapsule(FileResource):
         if file_type in (erf_type.value for erf_type in ERFType):
             return read_erf(self._filepath)
 
-        msg = f"File '{self._filepath}' is not an ERF/MOD/SAV/RIM capsule."
+        msg = f"File '{self._filepath}' is not an ERF/MOD/RIM capsule."
         raise NotImplementedError(msg)
 
     def _write_container(self, container: ERF | RIM) -> None:
@@ -272,6 +273,7 @@ class LazyCapsule(FileResource):
             - Calls set_data to add the resource
             - Writes the container back to the file.
         """
+        restype.validate()
         container = self.as_cached()
         container.set_data(resname, restype, resdata)
         self._write_container(container)
@@ -359,7 +361,7 @@ class LazyCapsule(FileResource):
         restypes: list[ResourceType] = []
         reader.seek(offset_to_keys)
         for _ in range(entry_count):
-            resref = reader.read_string(16)
+            resref = str(ResRef.from_bytes(reader.read_bytes(16)))
             resrefs.append(resref)
             resids.append(reader.read_uint32())
             restype = reader.read_uint16()
@@ -367,9 +369,11 @@ class LazyCapsule(FileResource):
             reader.skip(2)
 
         reader.seek(offset_to_resources)
-        for i in range(entry_count):
-            res_offset: int = reader.read_uint32()
-            res_size:   int = reader.read_uint32()
+        records = [(reader.read_uint32(), reader.read_uint32()) for _ in range(entry_count)]
+        for i, resid in enumerate(resids):
+            if resid >= entry_count:
+                raise ValueError(f"ERF resource ID {resid} has no payload record.")
+            res_offset, res_size = records[resid]
             resources.append(FileResource(resrefs[i], restypes[i], res_size, res_offset, self._filepath))
         return resources
 
@@ -406,18 +410,24 @@ class LazyCapsule(FileResource):
         offset_to_entries = reader.read_uint32()
 
         reader.seek(offset_to_entries)
+        keys = []
+        records = []
         for _ in range(entry_count):
-            resref = reader.read_string(16)
+            resref = str(ResRef.from_bytes(reader.read_bytes(16)))
             restype = ResourceType.from_id(reader.read_uint32())
-            reader.skip(4)
-            offset = reader.read_uint32()
-            size = reader.read_uint32()
+            resid = reader.read_uint32()
+            keys.append((resref, restype, resid))
+            records.append((reader.read_uint32(), reader.read_uint32()))
+        for resref, restype, resid in keys:
+            if resid >= entry_count:
+                raise ValueError(f"RIM resource ID {resid} has no payload record.")
+            offset, size = records[resid]
             resources.append(FileResource(resref, restype, size, offset, self._filepath))
         return resources
 
 
 class Capsule(LazyCapsule):
-    """Capsule object is used for loading the list of resources stored in the .erf/.rim/.mod/.sav files used by the game.
+    """Capsule object is used for loading the list of resources stored in the .erf/.rim/.mod files used by the game.
 
     Resource data is stored in memory on initialization and only reloaded when self.reload() is called or a `reload` argument is passed to relevant functions.
     """

@@ -18,6 +18,7 @@ from pykotor.tslpatcher.logger import PatchLogger
 from pykotor.tslpatcher.memory import NoTokenUsage, TokenUsage2DA, TokenUsageTLK
 from pykotor.tslpatcher.mods.gff import (
     AddFieldGFF,
+    AddFieldGFFReference,
     AddStructToListGFF,
     FieldValue2DAMemory,
     FieldValueConstant,
@@ -143,8 +144,8 @@ class ConfigReader:
             None
             if tslpatchdata_path is None
             else CaseAwarePath.get_case_sensitive_path(tslpatchdata_path)
-        )  # path to the tslpatchdata, optional but we'll use it here for the nwnnsscomp.exe if it exists.
-        self.patch_data_path = self.tslpatchdata_path or self.mod_path
+        )  # Shared compiler inputs do not change the selected INI's default source directory.
+        self.patch_data_path = self.mod_path
         self.config: PatcherConfig
         self.log: PatchLogger = logger or PatchLogger()
 
@@ -153,13 +154,16 @@ class ConfigReader:
         cls,
         file_path: os.PathLike | str,
         logger: PatchLogger | None = None,
+        *,
+        tslpatchdata_path: os.PathLike | str | None = None,
     ):
         """Load PatcherConfig from an INI file path.
 
         Args:
         ----
-            file_path: The path to the INI file.
+            file_path: The path to the INI file; its parent owns default source paths.
             logger: Optional logger instance.
+            tslpatchdata_path: Shared compiler directory, not an override for INI-local sources.
 
         Returns:
         -------
@@ -192,7 +196,12 @@ class ConfigReader:
             e.source = str(resolved_file_path)
             raise e  # noqa: TRY201  # don't `raise from e` here!
 
-        instance = cls(ini, resolved_file_path.parent, logger)
+        if tslpatchdata_path is None:
+            tslpatchdata_path = next(
+                (folder for folder in resolved_file_path.parents if folder.name.casefold() == "tslpatchdata"),
+                None,
+            )
+        instance = cls(ini, resolved_file_path.parent, logger, tslpatchdata_path)
         instance.config = PatcherConfig()
         return instance
 
@@ -301,12 +310,15 @@ class ConfigReader:
         for folder_key, foldername in self.ini[install_list_section].items():
             foldername_section: str | None = self.get_section_name(folder_key)
             if foldername_section is None:
-                raise KeyError(SECTION_NOT_FOUND_ERROR.format(foldername) + REFERENCES_TRACEBACK_MSG.format(folder_key, foldername, install_list_section))
+                self.log.add_warning(SECTION_NOT_FOUND_ERROR.format(folder_key) + REFERENCES_TRACEBACK_MSG.format(folder_key, foldername, install_list_section))
+                continue
 
             folder_section_dict = CaseInsensitiveDict(self.ini[foldername_section])
             sourcefolder: str = folder_section_dict.pop("!SourceFolder", ".")
             folder_section_dict.pop("!OverrideType", None)
             for file_key, filename in folder_section_dict.items():
+                if not filename:
+                    continue
                 file_install = InstallFile(
                     filename,
                     replace_existing=file_key.lower().startswith("replace"),
@@ -319,6 +331,7 @@ class ConfigReader:
                 file_section_name: str | None = self.get_section_name(filename)
                 if file_section_name is not None:
                     file_section_dict = CaseInsensitiveDict(self.ini[file_section_name])
+                    file_section_dict.pop("!ReplaceFile", None)
                     file_install.pop_tslpatcher_vars(file_section_dict, foldername, sourcefolder)
 
     def load_tlk_list(self):
@@ -519,9 +532,12 @@ class ConfigReader:
         default_source_folder = ssf_section_dict.pop("!DefaultSourceFolder", ".")
 
         for identifier, file in ssf_section_dict.items():
+            if not file:
+                continue
             ssf_file_section = self.get_section_name(file)
             if ssf_file_section is None:
-                raise KeyError(SECTION_NOT_FOUND_ERROR.format(file) + REFERENCES_TRACEBACK_MSG.format(identifier, file, ssf_list_section))
+                self.log.add_warning(SECTION_NOT_FOUND_ERROR.format(file) + REFERENCES_TRACEBACK_MSG.format(identifier, file, ssf_list_section))
+                continue
 
             modifications = ModificationsSSF(file, identifier.lower().startswith("replace"))
             self.config.patches_ssf.append(modifications)
@@ -560,11 +576,12 @@ class ConfigReader:
         default_source_folder = gff_section_dict.pop("!DefaultSourceFolder", ".")
 
         for identifier, file in gff_section_dict.items():
-            file_section_name = self.get_section_name(file)
+            file_section_name = self.get_section_name(file or "")
             if file_section_name is None:
-                raise KeyError(SECTION_NOT_FOUND_ERROR.format(file) + REFERENCES_TRACEBACK_MSG.format(identifier, file, gff_list_section))
+                self.log.add_error(SECTION_NOT_FOUND_ERROR.format(file) + REFERENCES_TRACEBACK_MSG.format(identifier, file, gff_list_section))
+                continue
 
-            modifications = ModificationsGFF(file, identifier.lower().startswith("replace"))
+            modifications = ModificationsGFF(file, False)
             self.config.patches_gff.append(modifications)
 
             file_section_dict = CaseInsensitiveDict(self.ini[file_section_name])
@@ -574,12 +591,15 @@ class ConfigReader:
                 try:
                     modifier: ModifyGFF | None = None
                     raw_value = value or ""
-                    if key.startswith("AddField") and len(key) > len("AddField"):
-                        next_gff_section = self.get_section_name(raw_value)
-                        if next_gff_section is None:
-                            self.log.add_error(SECTION_NOT_FOUND_ERROR.format(raw_value) + REFERENCES_TRACEBACK_MSG.format(key, raw_value, file_section_name))
-                            continue
-                        modifier = self.add_field_gff(next_gff_section, CaseInsensitiveDict(self.ini[next_gff_section]))
+                    if key.startswith("AddField"):
+                        if self._requires_runtime_gff_resolution(raw_value):
+                            modifier = AddFieldGFFReference(
+                                file_section_name,
+                                self._deferred_gff_value(raw_value),
+                                self._resolve_addfield_section,
+                            )
+                        else:
+                            modifier = self._resolve_addfield_section(raw_value)
 
                     elif key.startswith("2DAMEMORY") and key[9:].isascii() and key[9:].isdigit():
                         token_id = int(key[9:])
@@ -632,15 +652,17 @@ class ConfigReader:
 
         for identifier, file in compilelist_section_dict.items():
             replace: bool = identifier.lower().startswith("replace")
-            modifications = ModificationsNSS(file, replace)
+            modifications = ModificationsNSS(file, replace=replace)
             modifications.destination = default_destination
             modifications.sourcefolder = default_source_folder
 
             optional_file_section_name: str | None = self.get_section_name(file)
             if optional_file_section_name is not None:
                 file_section_dict = CaseInsensitiveDict(self.ini[optional_file_section_name])
+                file_section_dict.pop("!ReplaceFile", None)
                 modifications.pop_tslpatcher_vars(file_section_dict, default_destination, default_source_folder)
 
+            modifications.saveas = str(PureWindowsPath(modifications.saveas).with_suffix(".ncs"))
             modifications.nwnnsscomp_path = nwnnsscomp_exepath
             modifications.compiler_flags = self.config.script_compiler_flags
             self.config.patches_nss.append(modifications)
@@ -667,8 +689,9 @@ class ConfigReader:
         default_source_folder = hacklist_section_dict.pop("!DefaultSourceFolder", ".")
 
         for identifier, file in hacklist_section_dict.items():
-            replace: bool = identifier.lower().startswith("replace")
-            modifications = ModificationsNCS(file, replace)
+            if not file:
+                continue
+            modifications = ModificationsNCS(file)
 
             file_section_name: str | None = self.get_section_name(file)
             if file_section_name is None:
@@ -679,6 +702,8 @@ class ConfigReader:
                 continue
 
             file_section_dict = CaseInsensitiveDict(self.ini[file_section_name])
+            if not file_section_dict:
+                continue
             modifications.pop_tslpatcher_vars(file_section_dict, default_destination, default_source_folder)
 
             for offset_str, value_str in file_section_dict.items():
@@ -794,6 +819,12 @@ class ConfigReader:
             and raw_value[6:].isascii()
             and raw_value[6:].isdigit()
         )
+
+    def _resolve_addfield_section(self, section: str) -> ModifyGFF:
+        section_name = self.get_section_name(section)
+        if section_name is None:
+            raise KeyError(SECTION_NOT_FOUND_ERROR.format(section))
+        return self.add_field_gff(section_name, CaseInsensitiveDict(self.ini[section_name]))
 
     def add_field_gff(
         self,

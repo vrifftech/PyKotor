@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 import re
-import shlex
 
 from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, Any
@@ -85,13 +84,15 @@ class ModificationsNSS(PatcherModifications):
             return True
 
         # Replace memory tokens in the script, and save to the file.
-        source = MutableString(decode_bytes_with_fallbacks(nss_bytes))
+        source_text = decode_bytes_with_fallbacks(nss_bytes)
+        source = MutableString(source_text)
         self.apply(source, memory, logger, game)
         if self.temp_script_folder is None:
             raise RuntimeError("CompileList working directory was not prepared before compilation.")
         temp_script_file = self.temp_script_folder / PureWindowsPath(self.sourcefile).name.lower()
 
-        BinaryWriter.dump(temp_script_file, source.value.encode(encoding="windows-1252", errors="ignore"))
+        processed_bytes = nss_bytes if source.value == source_text else source.value.encode("windows-1252")
+        BinaryWriter.dump(temp_script_file, processed_bytes)
 
         # Compile with external on windows, fall back to built-in if mac/linux or if external fails.
         is_windows = os.name == "nt"
@@ -110,6 +111,9 @@ class ModificationsNSS(PatcherModifications):
                 )
             try:
                 return self._compile_with_external(temp_script_file, nwnnsscompiler, logger, game)
+            except EntryPointError as exc:
+                logger.add_note(str(exc))
+                return True
             except Exception as e:  # pylint: disable=W0718  # noqa: BLE001
                 logger.add_error(str(universal_simplify_exception(e)))
 
@@ -158,12 +162,22 @@ class ModificationsNSS(PatcherModifications):
         """
         def replace_tokens(token_name: str, memory_dict: dict[int, Any]) -> None:
             search_pattern = re.compile(rf"#{token_name}([0-9]+)#")
-            for token_id in sorted(memory_dict):
+            highest_token = max(memory_dict, default=0) if token_name == "2DAMEMORY" else 0
+            previous_token = -1
+            while True:
+                token_ids = {
+                    int(match.group(1))
+                    for match in search_pattern.finditer(nss_source.value)
+                    if match.group(1) == str(int(match.group(1)))
+                    and int(match.group(1)) > previous_token
+                    and (int(match.group(1)) in memory_dict or 1 <= int(match.group(1)) <= highest_token)
+                }
+                if not token_ids:
+                    break
+                token_id = min(token_ids)
+                previous_token = token_id
                 token = f"#{token_name}{token_id}#"
-                if token not in nss_source.value:
-                    continue
-
-                replacement_value = memory_dict[token_id]
+                replacement_value = memory_dict.get(token_id, "")
                 if isinstance(replacement_value, PureWindowsPath):
                     replacement_value = str(replacement_value)
 
@@ -184,6 +198,42 @@ class ModificationsNSS(PatcherModifications):
         replace_tokens("2DAMEMORY", memory.memory_2da)
         replace_tokens("StrRef", memory.memory_str)
 
+    @staticmethod
+    def _split_compiler_flags(flags: str) -> list[str]:
+        """Split Windows compiler arguments without POSIX backslash escaping."""
+        arguments: list[str] = []
+        index = 0
+        while index < len(flags):
+            if flags[index] in " \t":
+                index += 1
+                continue
+            argument: list[str] = []
+            quoted = False
+            while index < len(flags) and (quoted or flags[index] not in " \t"):
+                backslashes = 0
+                while index < len(flags) and flags[index] == "\\":
+                    backslashes += 1
+                    index += 1
+                if index < len(flags) and flags[index] == '"':
+                    argument.append("\\" * (backslashes // 2))
+                    if backslashes % 2:
+                        argument.append('"')
+                    elif quoted and index + 1 < len(flags) and flags[index + 1] == '"':
+                        argument.append('"')
+                        index += 1
+                    else:
+                        quoted = not quoted
+                    index += 1
+                else:
+                    argument.append("\\" * backslashes)
+                    if index < len(flags) and (quoted or flags[index] not in " \t"):
+                        argument.append(flags[index])
+                        index += 1
+            if quoted:
+                raise ValueError("Unclosed double quote in ScriptCompilerFlags.")
+            arguments.append("".join(argument))
+        return arguments
+
     def _compile_with_external(
         self,
         temp_script_file: Path,
@@ -193,11 +243,7 @@ class ModificationsNSS(PatcherModifications):
     ) -> bytes | Literal[True]:
         with TemporaryDirectory() as tempdir:
             tempcompiled_filepath: Path = Path(tempdir, "temp_script.ncs")
-            try:
-                compiler_flags = shlex.split(self.compiler_flags)
-            except (TypeError, ValueError) as exc:
-                logger.add_error(f"Invalid ScriptCompilerFlags value '{self.compiler_flags}': {exc}")
-                compiler_flags = []
+            compiler_flags = self._split_compiler_flags(self.compiler_flags)
             stdout, stderr = nwnnsscompiler.compile_script(
                 temp_script_file,
                 tempcompiled_filepath,

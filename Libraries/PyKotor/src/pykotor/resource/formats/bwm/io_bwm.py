@@ -9,294 +9,163 @@ from pykotor.resource.formats.bwm.bwm_data import BWM, BWMFace, BWMType
 from pykotor.resource.type import ResourceReader, ResourceWriter, autoclose
 
 if TYPE_CHECKING:
-    from pykotor.resource.formats.bwm.bwm_data import BWMAdjacency, BWMEdge, BWMNodeAABB
     from pykotor.resource.type import SOURCE_TYPES, TARGET_TYPES
 
 
 class BWMBinaryReader(ResourceReader):
-    def __init__(
-        self,
-        source: SOURCE_TYPES,
-        offset: int = 0,
-        size: int = 0,
-    ):
-        """Initializes a Wok object.
-
-        Args:
-        ----
-            source: {The source object to initialize from}
-            offset: {The offset into the source}
-            size: {The number of bytes to read from the source}.
-
-        Returns:
-        -------
-            self: {The initialized Wok object}
-
-        Processing Logic:
-        ----------------
-            - Initializes the superclass with the given source, offset and size
-            - Sets the wok attribute to None
-            - Initializes the position, relative and absolute hook vectors to null vectors
-            - Sets up the instance attributes.
-        """
+    def __init__(self, source: SOURCE_TYPES, offset: int = 0, size: int = 0):
         super().__init__(source, offset, size)
         self._wok: BWM | None = None
-        self.position: Vector3 = Vector3.from_null()
-        self.relative_hook1: Vector3 = Vector3.from_null()
-        self.relative_hook2: Vector3 = Vector3.from_null()
-        self.absolute_hook1: Vector3 = Vector3.from_null()
-        self.absolute_hook2: Vector3 = Vector3.from_null()
 
     @autoclose
-    def load(
-        self,
-        auto_close: bool = True,
-    ) -> BWM:
-        """Loads a binary BWM file and returns a BWM object.
+    def load(self, auto_close: bool = True) -> BWM:
+        data = self._reader.read_bytes(self._size)
+        if len(data) < 136 or data[:4] != b"BWM ":
+            raise ValueError("Not a valid binary BWM file.")
+        if data[4:8] != b"V1.0":
+            raise ValueError("The BWM version of the file is unsupported.")
 
-        Args:
-        ----
-            self: The BWMReader object
-            auto_close: Whether to automatically close the file after loading
+        wok = self._wok = BWM()
+        wok.walkmesh_type = BWMType(struct.unpack_from("<I", data, 8)[0])
+        vectors = [Vector3(*struct.unpack_from("<3f", data, offset)) for offset in range(12, 72, 12)]
+        wok.relative_hook1, wok.relative_hook2, wok.absolute_hook1, wok.absolute_hook2, wok.position = vectors
+        (vertex_count, vertex_offset, face_count, face_offset, material_offset,
+         normal_offset, plane_offset, aabb_count, aabb_offset, root,
+         adjacency_count, adjacency_offset, edge_count, edge_offset,
+         perimeter_count, perimeter_offset) = struct.unpack_from("<16I", data, 72)
 
-        Returns:
-        -------
-            BWM: The loaded BWM object
+        # Validate table extents before dereferencing any file-provided offset.
+        for count, offset, stride in (
+            (vertex_count, vertex_offset, 12), (face_count, face_offset, 12),
+            (face_count, material_offset, 4), (face_count, normal_offset, 12),
+            (face_count, plane_offset, 4), (aabb_count, aabb_offset, 44),
+            (adjacency_count, adjacency_offset, 12), (edge_count, edge_offset, 8),
+            (perimeter_count, perimeter_offset, 4),
+        ):
+            if count and (offset < 136 or offset + count * stride > len(data)):
+                raise ValueError("A BWM table extends outside the resource.")
+        if aabb_count and root >= aabb_count:
+            raise ValueError("The BWM tree root is outside the node table.")
+        if adjacency_count > face_count:
+            raise ValueError("The BWM adjacency table has more rows than faces.")
 
-        Processing Logic:
-        ----------------
-            - Reads header info like file type, version
-            - Reads BWM properties like type, positions etc
-            - Reads vertex data
-            - Loops through faces and reads index data
-            - Loops through faces and reads material data
-            - Loops through edges and reads transition data
-            - Sets loaded data to BWM object.
-        """
-        self._wok = BWM()
-
-        file_type = self._reader.read_string(4)
-        file_version = self._reader.read_string(4)
-
-        if file_type != "BWM ":
-            msg = "Not a valid binary BWM file."
-            raise ValueError(msg)
-
-        if file_version != "V1.0":
-            msg = "The BWM version of the file is unsupported."
-            raise ValueError(msg)
-
-        self._wok.walkmesh_type = BWMType(self._reader.read_uint32())
-        self._wok.relative_hook1 = self._reader.read_vector3()
-        self._wok.relative_hook2 = self._reader.read_vector3()
-        self._wok.absolute_hook1 = self._reader.read_vector3()
-        self._wok.absolute_hook2 = self._reader.read_vector3()
-        self._wok.position = self._reader.read_vector3()
-
-        vertices_count = self._reader.read_uint32()
-        vertices_offset = self._reader.read_uint32()
-        face_count = self._reader.read_uint32()
-        indices_offset = self._reader.read_uint32()
-        materials_offset = self._reader.read_uint32()
-        self._reader.read_uint32()  # normals_offset
-        self._reader.read_uint32()  # planar_distances_offset
-
-        self._reader.read_uint32()  # aabb_count
-        self._reader.read_uint32()  # aabb_offset
-        self._reader.skip(4)
-        self._reader.read_uint32()  # adjacencies_count
-        self._reader.read_uint32()  # adjacencies_offset
-        edges_count = self._reader.read_uint32()
-        edges_offset = self._reader.read_uint32()
-        self._reader.read_uint32()  # perimeters_count
-        self._reader.read_uint32()  # perimeters_offset
-
-        self._reader.seek(vertices_offset)
-        vertices = [self._reader.read_vector3() for _ in range(vertices_count)]
-        faces: list[BWMFace] = []
-        self._reader.seek(indices_offset)
-        for _ in range(face_count):
-            i1, i2, i3 = (
-                self._reader.read_uint32(),
-                self._reader.read_uint32(),
-                self._reader.read_uint32(),
-            )
-            v1, v2, v3 = vertices[i1], vertices[i2], vertices[i3]
-            faces.append(BWMFace(v1, v2, v3))
-
-        walkable_count = 0
-        self._reader.seek(materials_offset)
-        for face in faces:
-            material_id = self._reader.read_uint32()
-            face.material = SurfaceMaterial(material_id)
-            if face.material.walkable():
-                walkable_count += 1
-
-        self._reader.seek(edges_offset)
-        x: list[int] = []
-        for _ in range(edges_count):
-            edge_index = self._reader.read_uint32()
-            x.append(edge_index)
-            transition = self._reader.read_uint32()
-
+        vertices = [Vector3(*struct.unpack_from("<3f", data, vertex_offset + i * 12)) for i in range(vertex_count)]
+        for i in range(face_count):
+            indices = struct.unpack_from("<3I", data, face_offset + i * 12)
+            if any(index >= vertex_count for index in indices):
+                raise ValueError("A BWM face references a missing vertex.")
+            face = BWMFace(*(vertices[index] for index in indices))
+            face.material = SurfaceMaterial(struct.unpack_from("<I", data, material_offset + i * 4)[0])
+            wok.faces.append(face)
+        for i in range(edge_count):
+            edge, transition = struct.unpack_from("<2I", data, edge_offset + i * 8)
+            if edge >= face_count * 3:
+                raise ValueError("A BWM boundary references a missing face edge.")
+            face, local = divmod(edge, 3)
             if transition != 0xFFFFFFFF:
-                face_index = edge_index // 3
-                trans_index = edge_index % 3
-                if trans_index == 0:
-                    faces[face_index].trans1 = transition
-                elif trans_index == 1:
-                    faces[face_index].trans2 = transition
-                elif trans_index == 2:
-                    faces[face_index].trans3 = transition
+                setattr(wok.faces[face], ("trans1", "trans2", "trans3")[local], transition)
+        previous = 0
+        for i in range(perimeter_count):
+            end = struct.unpack_from("<I", data, perimeter_offset + i * 4)[0]
+            if not previous < end <= edge_count:
+                raise ValueError("A BWM perimeter has an invalid end index.")
+            previous = end
 
-        self._wok.faces = faces
-
-        return self._wok
+        wok._vertices = vertices
+        wok._source_data = data
+        wok._source_geometry = wok._geometry_signature()
+        return wok
 
 
 class BWMBinaryWriter(ResourceWriter):
     HEADER_SIZE = 136
 
-    def __init__(
-        self,
-        wok: BWM,
-        target: TARGET_TYPES,
-    ):
+    def __init__(self, wok: BWM, target: TARGET_TYPES):
+        self._wok = wok
+        # Finish geometry generation and encoding before opening even a direct
+        # writer's destination. Public path writes additionally commit atomically.
+        self._data = self._build()
         super().__init__(target)
-        self._wok: BWM = wok
 
     @autoclose
-    def write(
-        self,
-        auto_close: bool = True,
-    ):
-        """Writes the walkmesh data to a binary file.
+    def write(self, auto_close: bool = True):
+        self._writer.write_bytes(self._data)
 
-        Args:
-        ----
-            self: The walkmesh object
-            auto_close: Whether to close the file after writing (default: True).
+    def _build(self) -> bytes:
+        wok = self._wok
+        if wok._source_data is not None and wok._geometry_signature() == wok._source_geometry:
+            # Keep original collision structures, normals, padding and table order
+            # when only hooks, position, material properties or transitions changed.
+            data = bytearray(wok._source_data)
+            self._write_properties(data)
+            material_offset = struct.unpack_from("<I", data, 88)[0]
+            for index, face in enumerate(wok.faces):
+                struct.pack_into("<I", data, material_offset + index * 4, face.material.value)
+            edge_count, edge_offset = struct.unpack_from("<2I", data, 120)
+            for index in range(edge_count):
+                edge = struct.unpack_from("<I", data, edge_offset + index * 8)[0]
+                face, local = divmod(edge, 3)
+                value = (wok.faces[face].trans1, wok.faces[face].trans2, wok.faces[face].trans3)[local]
+                struct.pack_into("<I", data, edge_offset + index * 8 + 4,
+                                 0xFFFFFFFF if value is None or value == -1 else value)
+            return bytes(data)
 
-        Processing Logic:
-        ----------------
-            1. Extracts vertex, face, edge and other data from the walkmesh object
-            2. Packs the data into byte arrays with the correct offsets
-            3. Writes the header, offsets and packed data to the binary file
-            4. Closes the file if auto_close is True.
-        """
-        vertices: list[Vector3] = self._wok.vertices()
+        vertices = wok.vertices()
+        vertex_indices = {id(vertex): index for index, vertex in enumerate(vertices)}
+        walkable = wok.walkable_faces()
+        faces = walkable + wok.unwalkable_faces()
+        face_indices = {face: index for index, face in enumerate(faces)}
+        nodes = wok.aabbs()
+        node_indices = {node: index for index, node in enumerate(nodes)}
+        adjacency = wok._adjacency_map()
+        edges = wok.edges()
+        data = bytearray(self.HEADER_SIZE)
+        data[:8] = b"BWM V1.0"
+        self._write_properties(data)
 
-        walkable: list[BWMFace] = [face for face in self._wok.faces if face.material.walkable()]
-        unwalkable: list[BWMFace] = [face for face in self._wok.faces if not face.material.walkable()]
-        faces: list[BWMFace] = walkable + unwalkable
-        aabbs: list[BWMNodeAABB] = self._wok.aabbs()
+        def block(rows, fmt: str) -> int:
+            offset = len(data)
+            for row in rows:
+                data.extend(struct.pack("<" + fmt, *row))
+            return offset
 
-        vertex_offset = 136
-        vertex_data = bytearray()
-        for vertex in vertices:
-            vertex_data += struct.pack("fff", vertex.x, vertex.y, vertex.z)
+        vertex_offset = block(((v.x, v.y, v.z) for v in vertices), "3f")
+        face_offset = block(((vertex_indices[id(f.v1)], vertex_indices[id(f.v2)], vertex_indices[id(f.v3)]) for f in faces), "3I")
+        material_offset = block(((f.material.value,) for f in faces), "I")
+        normals = [face.normal() for face in faces]
+        normal_offset = block(((n.x, n.y, n.z) for n in normals), "3f")
+        plane_offset = block(((-n.dot(f.v1),) for f, n in zip(faces, normals)), "f")
+        aabb_offset = block((
+            (n.bb_min.x, n.bb_min.y, n.bb_min.z, n.bb_max.x, n.bb_max.y, n.bb_max.z,
+             0xFFFFFFFF if n.face is None else face_indices[n.face], 4, n.sigplane.value,
+             0xFFFFFFFF if n.left is None else node_indices[n.left],
+             0xFFFFFFFF if n.right is None else node_indices[n.right]) for n in nodes
+        ), "6f5I")
+        adjacency_offset = block((
+            tuple(0xFFFFFFFF if a is None else face_indices[a.face] * 3 + a.edge for a in adjacency[face])
+            for face in walkable
+        ), "3I")
+        edge_offset = block((
+            (face_indices[e.face] * 3 + e.index, 0xFFFFFFFF if e.transition == -1 else e.transition) for e in edges
+        ), "2I")
+        perimeters = [index + 1 for index, edge in enumerate(edges) if edge.final]
+        perimeter_offset = block(((end,) for end in perimeters), "I")
+        struct.pack_into("<16I", data, 72, len(vertices), vertex_offset, len(faces), face_offset,
+                         material_offset, normal_offset, plane_offset, len(nodes), aabb_offset, 0,
+                         len(walkable), adjacency_offset, len(edges), edge_offset, len(perimeters), perimeter_offset)
+        return bytes(data)
 
-        indices_offset = vertex_offset + len(vertex_data)
-        indices_data = bytearray()
-        for face in faces:
-            i1, i2, i3 = (
-                vertices.index(face.v1),
-                vertices.index(face.v2),
-                vertices.index(face.v3),
-            )
-            indices_data += struct.pack("III", i1, i2, i3)
-
-        material_offset = indices_offset + len(indices_data)
-        material_data = bytearray()
-        for face in faces:
-            material_data += struct.pack("I", face.material.value)
-
-        normal_offset = material_offset + len(material_data)
-        normal_data = bytearray()
-        for face in faces:
-            normal = face.normal()
-            normal_data += struct.pack("fff", normal.x, normal.y, normal.z)
-
-        coefficient_offset = normal_offset + len(normal_data)
-        coeffeicent_data = bytearray()
-        for face in faces:
-            coeffeicent_data += struct.pack("f", face.planar_distance())
-
-        aabb_offset = coefficient_offset + len(coeffeicent_data)
-        aabb_data = bytearray()
-        for aabb in aabbs:
-            aabb_data += struct.pack("fff", aabb.bb_min.x, aabb.bb_min.y, aabb.bb_min.z)
-            aabb_data += struct.pack("fff", aabb.bb_max.x, aabb.bb_max.y, aabb.bb_max.z)
-            aabb_data += struct.pack(
-                "I",
-                0xFFFFFFFF if aabb.face is None else faces.index(aabb.face),
-            )
-            aabb_data += struct.pack("I", 4)
-            aabb_data += struct.pack("I", aabb.sigplane.value)
-            aabb_data += struct.pack(
-                "I",
-                0xFFFFFFFF if aabb.left is None else aabbs.index(aabb.left) + 1,
-            )
-            aabb_data += struct.pack(
-                "I",
-                0xFFFFFFFF if aabb.right is None else aabbs.index(aabb.right) + 1,
-            )
-
-        adjacency_offset = aabb_offset + len(aabb_data)
-        adjacency_data = bytearray()
-        for face in walkable:
-            adjancencies: tuple[BWMAdjacency | None, BWMAdjacency | None, BWMAdjacency | None] = self._wok.adjacencies(face)
-            indexes: list[int] = [
-                -1 if adjacency is None
-                else faces.index(adjacency.face) * 3 + adjacency.edge
-                for adjacency in adjancencies
-            ]
-            adjacency_data += struct.pack("iii", *indexes)
-
-        edges: list[BWMEdge] = self._wok.edges()
-        edge_data = bytearray()
-        edge_offset = adjacency_offset + len(adjacency_data)
-        for edge in edges:
-            edge_index = faces.index(edge.face) * 3 + edge.index
-            edge_data += struct.pack("ii", edge_index, edge.transition)
-
-        perimeters: list[int] = [edges.index(edge) + 1 for edge in edges if edge.final]
-        perimeter_data = bytearray()
-        perimeter_offset = edge_offset + len(edge_data)
-        for perimeter in perimeters:
-            perimeter_data += struct.pack("I", perimeter)
-
-        self._writer.write_string("BWM V1.0")
-        self._writer.write_uint32(self._wok.walkmesh_type.value)
-        self._writer.write_vector3(self._wok.relative_hook1)
-        self._writer.write_vector3(self._wok.relative_hook2)
-        self._writer.write_vector3(self._wok.absolute_hook1)
-        self._writer.write_vector3(self._wok.absolute_hook2)
-        self._writer.write_vector3(self._wok.position)
-
-        self._writer.write_uint32(len(vertices))
-        self._writer.write_uint32(vertex_offset)
-        self._writer.write_uint32(len(faces))
-        self._writer.write_uint32(indices_offset)
-        self._writer.write_uint32(material_offset)
-        self._writer.write_uint32(normal_offset)
-        self._writer.write_uint32(coefficient_offset)
-        self._writer.write_uint32(len(aabbs))
-        self._writer.write_uint32(aabb_offset)
-        self._writer.write_uint32(0)
-        self._writer.write_uint32(len(self._wok.walkable_faces()))
-        self._writer.write_uint32(adjacency_offset)
-        self._writer.write_uint32(len(edges))
-        self._writer.write_uint32(edge_offset)
-        self._writer.write_uint32(len(perimeters))
-        self._writer.write_uint32(perimeter_offset)
-
-        self._writer.write_bytes(vertex_data)
-        self._writer.write_bytes(indices_data)
-        self._writer.write_bytes(material_data)
-        self._writer.write_bytes(normal_data)
-        self._writer.write_bytes(coeffeicent_data)
-        self._writer.write_bytes(aabb_data)
-        self._writer.write_bytes(adjacency_data)
-        self._writer.write_bytes(edge_data)
-        self._writer.write_bytes(perimeter_data)
+    def _write_properties(self, data: bytearray):
+        wok = self._wok
+        struct.pack_into("<I", data, 8, wok.walkmesh_type.value)
+        vectors = (wok.relative_hook1, wok.relative_hook2, wok.absolute_hook1, wok.absolute_hook2, wok.position)
+        for index, vector in enumerate(vectors):
+            for axis, value in enumerate((vector.x, vector.y, vector.z)):
+                offset = 12 + index * 12 + axis * 4
+                encoded = struct.pack("<f", value)
+                if wok._source_data is not None:
+                    original = wok._source_data[offset:offset + 4]
+                    # Preserve untouched float bit patterns, including NaN payloads.
+                    if encoded == struct.pack("<f", struct.unpack("<f", original)[0]):
+                        encoded = original
+                data[offset:offset + 4] = encoded

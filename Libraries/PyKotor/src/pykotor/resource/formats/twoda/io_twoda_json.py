@@ -59,11 +59,11 @@ class TwoDAJSONWriter(ResourceWriter):
         self,
         auto_close: bool = True,
     ):
-        for row in self._twoda:
+        for index, row in enumerate(self._twoda):
             json_row: dict[str, str] = {"_id": row.label()}
             self._json["rows"].append(json_row)
             for header in self._twoda.get_headers():
-                json_row[header] = row.get_string(header)
+                json_row[header] = self._twoda.get_cell(index, header)
 
         json_dump: str = json.dumps(self._json, indent=4)
         self._writer.write_bytes(json_dump.encode())

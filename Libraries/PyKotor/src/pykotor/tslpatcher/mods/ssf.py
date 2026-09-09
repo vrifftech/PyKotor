@@ -27,9 +27,14 @@ _HEXADECIMAL = re.compile(r"^\$[0-9A-Fa-f]+$")
 def _parse_ssf_integer(value: Any) -> int | None:
     text = str(value).strip()
     if _HEXADECIMAL.fullmatch(text):
-        return int(text[1:], 16) & 0xFFFFFFFF
+        number = int(text[1:], 16)
+        return number if number <= 0xFFFFFFFF else None
+    if text == "4294967295":
+        return 0xFFFFFFFF
     if _SIGNED_DECIMAL.fullmatch(text):
-        return int(text, 10) & 0xFFFFFFFF
+        number = int(text, 10)
+        if -0x80000000 <= number <= 0x7FFFFFFF:
+            return number & 0xFFFFFFFF
     return None
 
 
@@ -46,8 +51,10 @@ class ModifySSF:
             raw_value = f"2DAMEMORY{self.stringref.token_id}"
             if not memory.memory_2da:
                 return raw_value
-            token_id = self.stringref.token_id if self.stringref.token_id in memory.memory_2da else 1
-            return memory.memory_2da.get(token_id, raw_value)
+            token_id = self.stringref.token_id
+            if not 1 <= token_id <= max(memory.memory_2da):
+                token_id = 1
+            return memory.memory_2da.get(token_id, "")
 
         raw_value = self.stringref if isinstance(self.stringref, str) else self.stringref.value(memory)
         if raw_value.startswith("2DAMEMORY"):
@@ -55,9 +62,9 @@ class ModifySSF:
                 return raw_value
             suffix = raw_value[9:]
             token_id = int(suffix) if _ASCII_DIGITS.fullmatch(suffix) else 1
-            if token_id not in memory.memory_2da:
+            if not 1 <= token_id <= max(memory.memory_2da):
                 token_id = 1
-            return memory.memory_2da.get(token_id, raw_value)
+            return memory.memory_2da.get(token_id, "")
 
         return raw_value
 

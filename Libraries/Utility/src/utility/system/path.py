@@ -355,7 +355,8 @@ class PurePath(pathlib.PurePath, metaclass=PurePathType):  # type: ignore[misc]
 
     @classmethod
     def pathify(cls, path: PathElem) -> Self:
-        return path if isinstance(path, cls) else cls(path)
+        # Virtual pathlib instance checks do not supply our custom methods.
+        return path if cls in type(path).__mro__ else cls(path)
 
     def split_filename(  # type: ignore[misc]
         self: PurePath,  # type: ignore[misc]

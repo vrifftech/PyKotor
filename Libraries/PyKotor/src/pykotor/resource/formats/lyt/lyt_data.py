@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 class LYT:
     """Represents a LYT file."""
 
-    BINARY_TYPE = ResourceType.LTR
+    BINARY_TYPE = ResourceType.LYT
 
     def __init__(
         self,
@@ -74,7 +74,7 @@ class LYTRoom:
     def __hash__(
         self,
     ):
-        return hash(self.model)
+        return hash(self.model.lower())
 
 
 class LYTTrack:
@@ -147,7 +147,8 @@ class LYTDoorHook:
         room: The corresponding room in the layout.
         door: The door name.
         position: The door position.
-        orientation: The door orientation.
+        orientation: The door quaternion in XYZW order (stored as WXYZ in LYT).
+        unknown: The integer preceding the hook position in the source record.
     """
 
     def __init__(
@@ -156,11 +157,13 @@ class LYTDoorHook:
         door: str,
         position: Vector3,
         orientation: Vector4,
+        unknown: int = 0,
     ):
         self.room: str = room  # TODO: find out if this is case-insensitive and implement via __eq__.
         self.door: str = door  # TODO: find out if this is case-insensitive and implement via __eq__.
         self.position: Vector3 = position
         self.orientation: Vector4 = orientation
+        self.unknown: int = unknown
 
     def __eq__(
         self,
@@ -175,4 +178,5 @@ class LYTDoorHook:
             and self.door == other.door
             and self.position == other.position
             and self.orientation == other.orientation
+            and self.unknown == other.unknown
         )

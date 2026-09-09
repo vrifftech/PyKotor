@@ -1,0 +1,119 @@
+{
+  "snapshot": "audited-consolidated-01",
+  "repository": "PyKotor",
+  "baseline_and_history": {
+    "base": "PyKotor-master-TSLPatcher-parity-fixes.zip",
+    "sha256": "1fe8a45c1cabb469282864a6af49b31774e8d418b8736b2f6af66d05081dc284",
+    "patches": [
+      {
+        "file": "PyKotor_remove_SAV_support.patch",
+        "sha256": "94209216125e19aec16b1a2b6fa1057bf3c76ea4af190d65b70ce3a73ca6ed75"
+      },
+      {
+        "file": "PyKotor_template_behavior_fixes.patch",
+        "sha256": "643ba1da9959ca0eb080093bd33e50106e153e08deed526c1ededa7f97b71631"
+      },
+      {
+        "file": "PyKotor_component_behavior_fixes.patch",
+        "sha256": "e0868387710357dd9b726afaea8d9d3f3e3457ada4bdd7ee3d5902ba77680c7d"
+      },
+      {
+        "file": "PyKotor_engine_SSF_2DA_repairs.patch",
+        "sha256": "1fc4ac6f86211a3e2f8aea4e1ab9e83d022b53347e6c8c3719c6ddefd1074a76"
+      },
+      {
+        "file": "PyKotor_engine_TLK_archive_repairs.patch",
+        "sha256": "b96f2f8a51aabf7150f597dbf94763c47222f6bcd9f60181204ab5b8f7820bba"
+      },
+      {
+        "file": "PyKotor_engine_GFF_repairs.patch",
+        "sha256": "1023d0d3ff46b535ef82756d9c6d0440d95e6b4edfc009bb0280d2b70577b579"
+      },
+      {
+        "file": "PyKotor_stable_GFF_membership.patch",
+        "sha256": "87131025fca06e9e1e67a3df43fd263c616ea5595c3e97d319239ddc664dee39"
+      },
+      {
+        "file": "PyKotor_engine_TPC_TXI_repairs.patch",
+        "sha256": "54abd362c56c511a2742990e70cb3ff670214af0cf1e1ee77fdded0730972fb0"
+      },
+      {
+        "file": "PyKotor_engine_BWM_repairs.patch",
+        "sha256": "de1a884a0cccc1653689edba6a291c280f0e1505dd3775054535e9434c514b3e"
+      },
+      {
+        "file": "PyKotor_engine_MDL_MDX_repairs.patch",
+        "sha256": "270222bcbab999abaaeed5b592ff67ede569075f8f30aacf6712d732a1413fa1"
+      },
+      {
+        "file": "PyKotor_LYT_doorhook_repairs.patch",
+        "sha256": "e865b0ee5f6779b1b1f43000ae101293b0cd0cc5fff0a32469d0d818ec9e1de6"
+      },
+      {
+        "file": "PyKotor_LYT_VIS_correctness_repairs.patch",
+        "sha256": "302fc4bd126d4b396621e7da459ab03d084f659789dbd9ff35cd3395d9186991"
+      },
+      {
+        "file": "PyKotor_package_source_roots.patch",
+        "sha256": "f6cd2446845d3e697c68610d258ce61664ed6b94197ff7f2d9ec639b713a386c"
+      },
+      {
+        "file": "PyKotor_HoloPatcher_frontend_helpers.patch",
+        "sha256": "9e2781f677e2d726143935632fd56fdcf8a02048a53260b0e347bcf7affa359d"
+      },
+      {
+        "file": "PyKotorGL_DPI_viewport_repairs.patch",
+        "sha256": "9864da145276dc8cf900610b8774167467d2b74cf9aa90333c3a1753f52b17b5"
+      },
+      {
+        "file": "PyKotorGL_renderer_safety_repairs.patch",
+        "sha256": "5bec9e6e8754b6b52b6abd680e1105a1cda43b245de3acffd4c1332d5811b627"
+      },
+      {
+        "file": "PyKotor_resource_discovery_path_fix.patch",
+        "sha256": "ee499c838a3fcf4a422459be3edf65bd9b6a861ec5508b1e39b53f729e641fa6"
+      }
+    ],
+    "review_comparison": {
+      "key": "current_backend",
+      "compared": 380,
+      "missing": [],
+      "mismatches": []
+    },
+    "cleanup": {
+      "file": "PyKotor_repository_split_cleanup.patch",
+      "sha256": "8e8e1ceea884004e1de0c6e74bafb56c53373e8fbf14873d2be2cd8754aaa3e2"
+    }
+  },
+  "new_utility_fix": {
+    "file": "PyKotor_Utility_path_macOS_fixes.patch",
+    "sha256": "ac7efd5af129fe26808689195854ff6b695150d184d718a6664b001f170cfcd6",
+    "scope": [
+      "Libraries/Utility/src/utility/system/agnostics/__init__.py",
+      "Libraries/Utility/src/utility/system/path.py"
+    ]
+  },
+  "backend_snapshot": "audited-consolidated-01",
+  "format": "standalone source checkout",
+  "existing_version_metadata_retained": true,
+  "packaging_exclusions": [
+    {
+      "repo": "PyKotor",
+      "file": "Libraries/PyKotorFont/src/tests/files/TH Sarabun New Regular/TH Sarabun New Regular.ttf",
+      "reason": "font binary not bundled",
+      "sha256": "5f313df437c7b80e1a8ef2afad821279c21010d49a71a9fa571d171de5376858"
+    },
+    {
+      "repo": "PyKotor",
+      "file": "Libraries/PyKotorFont/src/tests/files/roboto/Roboto-Black.ttf",
+      "reason": "font binary not bundled",
+      "sha256": "3872e9b39760a1b59ac1e192633dbb3b58e595b4d423930ac7ded525e9ae25e0"
+    },
+    {
+      "repo": "PyKotor",
+      "file": "pytest.log",
+      "reason": "generated output",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ]
+}

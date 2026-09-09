@@ -352,6 +352,7 @@ class _GFFField:
     ):
         self._field_type: GFFFieldType = field_type
         self._value: Any
+        self.raw_data: bytes | None = None
         if field_type in self.INTEGER_TYPES:
             self._value: Any = int(value)
         else:
@@ -394,18 +395,20 @@ class GFFStruct:
     ):
         self.struct_id: int = struct_id
         self._fields: dict[str, _GFFField] = {}
+        self._field_order: list[tuple[str, _GFFField]] = []
+        self._source_key: str | None = None
 
     def __len__(
         self,
     ) -> int:
         """Returns the number of fields."""
-        return len(self._fields)
+        return len(self._field_order)
 
     def __iter__(
         self,
     ) -> Generator[tuple[str, GFFFieldType, Any], Any, None]:
         """Iterates through the stored fields yielding each field's (label, type, value)."""
-        for label, field in self._fields.items():
+        for label, field in self._field_order:
             yield label, field.field_type(), field.value()
 
     def __getitem__(
@@ -425,8 +428,30 @@ class GFFStruct:
         ----
             label: The field label.
         """
-        if label in self._fields:
-            self._fields.pop(label)
+        self._fields.pop(label, None)
+        self._field_order[:] = [(name, field) for name, field in self._field_order if name != label]
+
+    def add_field(self, label: str, field_type: GFFFieldType, value: Any, *, raw_data: bytes | None = None) -> None:
+        """Appends a physical field. Name lookup selects its first occurrence."""
+        field = _GFFField(field_type, value)
+        field.raw_data = raw_data
+        self._field_order.append((label, field))
+        self._fields.setdefault(label, field)
+
+    def _set_field(self, label: str, field_type: GFFFieldType, value: Any) -> None:
+        """Replaces the first named field without collapsing later records."""
+        existing = self._fields.get(label)
+        if existing is None:
+            self.add_field(label, field_type, value)
+            return
+        if field_type is GFFFieldType.String and existing.field_type() is field_type and existing.value() == value:
+            return
+        field = _GFFField(field_type, value)
+        for index, (name, record) in enumerate(self._field_order):
+            if record is existing:
+                self._field_order[index] = (name, field)
+                break
+        self._fields[label] = field
 
     def exists(
         self,
@@ -498,21 +523,29 @@ class GFFStruct:
             log_func(f"Struct ID is different at '{current_path}': '{self.struct_id}' --> '{other_gff_struct.struct_id}'")
             is_same = False
 
-        # Create dictionaries for both old and new structures
-        old_dict: dict[str, tuple[GFFFieldType, Any]] = {
-            label or f"gffstruct({idx})": (ftype, value) for idx, (label, ftype, value) in enumerate(self) if label not in ignore_labels
-        }
-        new_dict: dict[str, tuple[GFFFieldType, Any]] = {
-            label or f"gffstruct({idx})": (ftype, value) for idx, (label, ftype, value) in enumerate(other_gff_struct) if label not in ignore_labels
-        }
+        # Compare every physical occurrence, not a last-wins dictionary view.
+        def physical_fields(node: GFFStruct) -> dict[tuple[str, int], tuple[GFFFieldType, Any]]:
+            occurrences: dict[str, int] = {}
+            fields = {}
+            for label, kind, value in node:
+                occurrence = occurrences.get(label, 0)
+                occurrences[label] = occurrence + 1
+                if label not in ignore_labels:
+                    fields[(label, occurrence)] = (kind, value)
+            return fields
+
+        old_dict = physical_fields(self)
+        new_dict = physical_fields(other_gff_struct)
 
         # Union of labels from both old and new structures
-        all_labels: set[str] = set(old_dict.keys()) | set(new_dict.keys())
+        all_labels: set[tuple[str, int]] = set(old_dict.keys()) | set(new_dict.keys())
 
-        for label in all_labels:
-            child_path: PureWindowsPath = current_path / str(label)
-            old_ftype, old_value = old_dict.get(label, (None, None))
-            new_ftype, new_value = new_dict.get(label, (None, None))
+        for key in all_labels:
+            name, occurrence = key
+            label = name if occurrence == 0 else f"{name}[{occurrence}]"
+            child_path: PureWindowsPath = current_path / label
+            old_ftype, old_value = old_dict.get(key, (None, None))
+            new_ftype, new_value = new_dict.get(key, (None, None))
 
             if ignore_default_changes and is_ignorable_comparison(old_value, new_value):
                 continue
@@ -583,6 +616,8 @@ class GFFStruct:
         label: str,
         default: T,
         object_type: type[U | T] | tuple[type[U], ...] | None = None,
+        *,
+        field_type: GFFFieldType | None = None,
     ) -> T | U:
         """Gets the value from the specified field.
 
@@ -599,11 +634,11 @@ class GFFStruct:
         assert isinstance(default, object), f"{type(default).__name__}: {default}"
         value: T = default
         if object_type is None:
-            object_type = default.__class__
+            object_type = bool if type(default) is bool else (field_type.return_type() if field_type is not None else type(default))
         if (
             self.exists(label)
-            and object_type is not None
-#           and isinstance(self[label], object_type)  # TODO: uncomment this and assert type after fixing all the call typings
+            and (field_type is None or self.what_type(label) is field_type)
+            and (isinstance(self[label], object_type) or (object_type is bool and type(self[label]) is int))
         ):
             value = self[label]
         if object_type is bool and value.__class__ is int:
@@ -696,7 +731,7 @@ class GFFStruct:
             label: The field label.
             value: The new field value.
         """
-        self._fields[label] = _GFFField(GFFFieldType.UInt8, value)
+        self._set_field(label, GFFFieldType.UInt8, value)
 
     def set_uint16(
         self,
@@ -710,7 +745,7 @@ class GFFStruct:
             label: The field label.
             value: The new field value.
         """
-        self._fields[label] = _GFFField(GFFFieldType.UInt16, value)
+        self._set_field(label, GFFFieldType.UInt16, value)
 
     def set_uint32(
         self,
@@ -724,7 +759,7 @@ class GFFStruct:
             label: The field label.
             value: The new field value.
         """
-        self._fields[label] = _GFFField(GFFFieldType.UInt32, value)
+        self._set_field(label, GFFFieldType.UInt32, value)
 
     def set_uint64(
         self,
@@ -738,7 +773,7 @@ class GFFStruct:
             label: The field label.
             value: The new field value.
         """
-        self._fields[label] = _GFFField(GFFFieldType.UInt64, value)
+        self._set_field(label, GFFFieldType.UInt64, value)
 
     def set_int8(
         self,
@@ -752,7 +787,7 @@ class GFFStruct:
             label: The field label.
             value: The new field value.
         """
-        self._fields[label] = _GFFField(GFFFieldType.Int8, value)
+        self._set_field(label, GFFFieldType.Int8, value)
 
     def set_int16(
         self,
@@ -766,7 +801,7 @@ class GFFStruct:
             label: The field label.
             value: The new field value.
         """
-        self._fields[label] = _GFFField(GFFFieldType.Int16, value)
+        self._set_field(label, GFFFieldType.Int16, value)
 
     def set_int32(
         self,
@@ -780,7 +815,7 @@ class GFFStruct:
             label: The field label.
             value: The new field value.
         """
-        self._fields[label] = _GFFField(GFFFieldType.Int32, value)
+        self._set_field(label, GFFFieldType.Int32, value)
 
     def set_int64(
         self,
@@ -794,7 +829,7 @@ class GFFStruct:
             label: The field label.
             value: The new field value.
         """
-        self._fields[label] = _GFFField(GFFFieldType.Int64, value)
+        self._set_field(label, GFFFieldType.Int64, value)
 
     def set_single(
         self,
@@ -808,7 +843,7 @@ class GFFStruct:
             label: The field label.
             value: The new field value.
         """
-        self._fields[label] = _GFFField(GFFFieldType.Single, value)
+        self._set_field(label, GFFFieldType.Single, value)
 
     def set_double(
         self,
@@ -822,7 +857,7 @@ class GFFStruct:
             label: The field label.
             value: The new field value.
         """
-        self._fields[label] = _GFFField(GFFFieldType.Double, value)
+        self._set_field(label, GFFFieldType.Double, value)
 
     def set_resref(
         self,
@@ -836,7 +871,7 @@ class GFFStruct:
             label: The field label.
             value: The new field value.
         """
-        self._fields[label] = _GFFField(GFFFieldType.ResRef, value)
+        self._set_field(label, GFFFieldType.ResRef, value)
 
     def set_string(
         self,
@@ -850,7 +885,7 @@ class GFFStruct:
             label: The field label.
             value: The new field value.
         """
-        self._fields[label] = _GFFField(GFFFieldType.String, value)
+        self._set_field(label, GFFFieldType.String, value)
 
     def set_locstring(
         self,
@@ -864,7 +899,7 @@ class GFFStruct:
             label: The field label.
             value: The new field value.
         """
-        self._fields[label] = _GFFField(GFFFieldType.LocalizedString, value)
+        self._set_field(label, GFFFieldType.LocalizedString, value)
 
     def set_binary(
         self,
@@ -878,7 +913,7 @@ class GFFStruct:
             label: The field label.
             value: The new field value.
         """
-        self._fields[label] = _GFFField(GFFFieldType.Binary, value)
+        self._set_field(label, GFFFieldType.Binary, value)
 
     def set_vector3(
         self,
@@ -892,7 +927,7 @@ class GFFStruct:
             label: The field label.
             value: The new field value.
         """
-        self._fields[label] = _GFFField(GFFFieldType.Vector3, value)
+        self._set_field(label, GFFFieldType.Vector3, value)
 
     def set_vector4(
         self,
@@ -906,7 +941,7 @@ class GFFStruct:
             label: The field label.
             value: The new field value.
         """
-        self._fields[label] = _GFFField(GFFFieldType.Vector4, value)
+        self._set_field(label, GFFFieldType.Vector4, value)
 
     def set_struct(
         self,
@@ -924,7 +959,7 @@ class GFFStruct:
         -------
             The value that was passed to the method.
         """
-        self._fields[label] = _GFFField(GFFFieldType.Struct, value)
+        self._set_field(label, GFFFieldType.Struct, value)
         return value
 
     def set_list(
@@ -943,7 +978,7 @@ class GFFStruct:
         -------
             The value that was passed to the method.
         """
-        self._fields[label] = _GFFField(GFFFieldType.List, value)
+        self._set_field(label, GFFFieldType.List, value)
         return value
 
     def get_uint8(

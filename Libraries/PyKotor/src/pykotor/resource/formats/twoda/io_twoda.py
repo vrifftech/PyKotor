@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from pykotor.common.stream import BinaryReader
 from pykotor.resource.formats.twoda.twoda_data import TwoDA
 from pykotor.resource.type import ResourceReader, ResourceWriter, autoclose
 
@@ -10,152 +11,73 @@ if TYPE_CHECKING:
 
 
 class TwoDABinaryReader(ResourceReader):
-    def __init__(
-        self,
-        source: SOURCE_TYPES,
-        offset: int = 0,
-        size: int = 0,
-    ):
+    def __init__(self, source: SOURCE_TYPES, offset: int = 0, size: int = 0):
         super().__init__(source, offset, size)
-        self._twoda: TwoDA | None = None
 
     @autoclose
-    def load(
-        self,
-        auto_close: bool = True,
-    ) -> TwoDA:
-        """Loads a 2DA file from the provided reader.
+    def load(self, auto_close: bool = True) -> TwoDA:
+        # Bound terminated strings and offsets to this resource, not its container.
+        with BinaryReader.from_bytes(self._reader.read_bytes(self._size)) as reader:
+            if reader.read_bytes(8) != b"2DA V2.b":
+                raise ValueError("Expected a binary 2DA V2.b header.")
+            newline = reader.read_bytes(1)
+            if newline == b"\r":
+                if reader.peek() == b"\n":
+                    reader.skip(1)
+            elif newline != b"\n":
+                raise ValueError("Missing line ending after the binary 2DA header.")
 
-        Args:
-        ----
-            auto_close: Whether to close the reader after loading - default True
+            twoda = TwoDA()
+            while reader.peek() != b"\0":
+                twoda.add_column(reader.read_terminated_string("\t", encoding="latin-1"))
+            reader.skip(1)
 
-        Returns:
-        -------
-            TwoDA: The loaded TwoDA object
+            row_count = reader.read_uint32()
+            for _ in range(row_count):
+                twoda.add_row(reader.read_terminated_string("\t", encoding="latin-1"))
 
-        Processing Logic:
-        ----------------
-            - Read file header and validate type and version
-            - Read column headers
-            - Read row count and populate rows
-            - Read cell offsets
-            - Seek to cell data and populate cells
-        """
-        self._twoda = TwoDA()
-
-        file_type = self._reader.read_string(4)
-        file_version = self._reader.read_string(4)
-
-        if file_type != "2DA ":
-            msg = "The file type that was loaded is invalid."
-            raise TypeError(msg)
-
-        if file_version != "V2.b":
-            msg = "The 2DA version that was loaded is not supported."
-            raise TypeError(msg)
-
-        self._reader.read_uint8()  # \n
-
-        columns = []
-        while self._reader.peek() != b"\0":
-            column_header = self._reader.read_terminated_string("\t")
-            self._twoda.add_column(column_header)
-            columns.append(column_header)
-
-        self._reader.read_uint8()  # \0
-
-        row_count = self._reader.read_uint32()
-        column_count = self._twoda.get_width()
-        cell_count = row_count * column_count
-        for _ in range(row_count):
-            row_header = self._reader.read_terminated_string("\t")
-            row_label = row_header
-            self._twoda.add_row(row_label)
-
-        cell_offsets: list[int] = [0] * cell_count
-        for i in range(cell_count):
-            cell_offsets[i] = self._reader.read_uint16()
-
-        self._reader.read_uint16()
-        cell_data_offset = self._reader.position()
-
-        for i in range(cell_count):
-            column_id = i % column_count
-            row_id = i // column_count
-            column_header = columns[column_id]
-            self._reader.seek(cell_data_offset + cell_offsets[i])
-            cell_value = self._reader.read_terminated_string("\0")
-            self._twoda.set_cell(row_id, column_header, cell_value)
-
-        return self._twoda
+            headers = twoda.get_headers()
+            offsets = [reader.read_uint16() for _ in range(row_count * len(headers))]
+            reader.skip(2)  # Legacy string-pool size; not an addressing bound.
+            data_start = reader.position()
+            for index, offset in enumerate(offsets):
+                reader.seek(data_start + offset)
+                value = reader.read_terminated_string("\0", encoding="latin-1")
+                twoda.set_cell(index // len(headers), headers[index % len(headers)], value)
+            return twoda
 
 
 class TwoDABinaryWriter(ResourceWriter):
-    def __init__(
-        self,
-        twoda: TwoDA,
-        target: TARGET_TYPES,
-    ):
+    def __init__(self, twoda: TwoDA, target: TARGET_TYPES):
         super().__init__(target)
-        self._twoda: TwoDA = twoda
+        self._twoda = twoda
 
     @autoclose
-    def write(
-        self,
-        auto_close: bool = True,
-    ):
-        """Writes the 2DA data to a binary file.
-
-        Args:
-        ----
-            auto_close: {Whether to close the writer after writing is complete}
-
-        Returns:
-        -------
-            None: {Nothing is returned}
-
-        Processing Logic:
-        ----------------
-            - Get the headers and row labels from the 2DA
-            - Write the header string and version
-            - Write the headers and row labels
-            - Loop through each cell and writes the value offsets and data
-            - Close the writer if auto_close is True
-        """
+    def write(self, auto_close: bool = True):
         headers = self._twoda.get_headers()
-
-        self._writer.write_string("2DA ")
-        self._writer.write_string("V2.b")
-
-        self._writer.write_string("\n")
+        self._writer.write_bytes(b"2DA V2.b\n")
         for header in headers:
-            self._writer.write_string(header + "\t")
-        self._writer.write_string("\0")
+            self._writer.write_bytes((header + "\t").encode("latin-1"))
+        self._writer.write_bytes(b"\0")
 
         self._writer.write_uint32(self._twoda.get_height())
-        for row_label in self._twoda.get_labels():
-            self._writer.write_string(str(row_label) + "\t")
+        for label in self._twoda.get_labels():
+            self._writer.write_bytes((str(label) + "\t").encode("latin-1"))
 
-        values: list[str] = []
-        value_offsets: list[int] = []
-        cell_offsets: list[int] = []
-        data_size = 0
+        offsets: dict[bytes, int] = {}
+        data = bytearray()
+        for index in range(self._twoda.get_height()):
+            for header in headers:
+                # Serialization uses physical storage, not case-insensitive lookup.
+                value = self._twoda.get_cell(index, header).encode("latin-1")
+                if b"\0" in value:
+                    raise ValueError("A binary 2DA cell cannot contain a null byte.")
+                if value not in offsets:
+                    offsets[value] = len(data)
+                    data.extend(value + b"\0")
+                self._writer.write_uint16(offsets[value])
 
-        for row in self._twoda:
-            for header in self._twoda.get_headers():
-                value = row.get_string(header) + "\0"
-                if value not in values:
-                    value_offset = len(values[-1]) + value_offsets[-1] if value_offsets else 0
-                    values.append(value)
-                    value_offsets.append(value_offset)
-                    data_size += len(value)
-                cell_offset = value_offsets[values.index(value)]
-                cell_offsets.append(cell_offset)
-
-        for cell_offset in cell_offsets:
-            self._writer.write_uint16(cell_offset)
-        self._writer.write_uint16(data_size)
-
-        for value in values:
-            self._writer.write_string(value)
+        # Only cell starts are addressed by the on-disk offsets. The final string
+        # may extend beyond 64 KiB; the engine does not use this word as a length.
+        self._writer.write_uint16(len(data) & 0xFFFF)
+        self._writer.write_bytes(data)

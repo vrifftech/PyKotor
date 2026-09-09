@@ -30,7 +30,6 @@ class FileResource:
         offset: int,
         filepath: os.PathLike | str,
     ):
-        assert resname == resname.strip(), f"FileResource cannot be constructed, resource name '{resname}' cannot start/end with whitespace."
         self._identifier: ResourceIdentifier = ResourceIdentifier(resname, restype)
 
         self._resname: str = resname
@@ -114,10 +113,10 @@ class FileResource:
         return self._resname
 
     def resref(self) -> ResRef:
-        """Returns ResRef(self.resname())."""
+        """Returns the fixed-width resource reference without normalizing stored bytes."""
         from pykotor.common.misc import ResRef
 
-        return ResRef(self._resname)
+        return ResRef.from_bytes(self._resname.encode("ascii", "surrogateescape")[:ResRef.MAX_LENGTH].ljust(ResRef.MAX_LENGTH, b"\0"))
 
     def restype(
         self,
@@ -147,7 +146,7 @@ class FileResource:
         """Returns a pathlib.Path identifier for this resource.
 
         More specifically:
-        - if inside ERF/BIF/RIM/MOD/SAV, i.e. if the check `any((self.inside_capsule, self.inside_bif))` passes:
+        - if inside ERF/BIF/RIM/MOD, i.e. if the check `any((self.inside_capsule, self.inside_bif))` passes:
             return self.filepath().joinpath(self.filename())
         - else:
             return self.filepath()

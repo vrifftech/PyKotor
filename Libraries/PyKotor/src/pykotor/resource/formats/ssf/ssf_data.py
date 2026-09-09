@@ -15,7 +15,12 @@ class SSF:
     def __init__(
         self,
     ):
+        # Only the first 28 entries are engine sound events. Later words are
+        # optional stored data, retained for editing existing soundsets.
         self._sounds: list[int] = [-1] * len(SSFSound)
+        self._entry_count: int = 28
+        self._padding: bytes = b""
+        self._trailing_data: bytes = b""
 
     def __getitem__(
         self,
@@ -46,6 +51,7 @@ class SSF:
             stringref: The new stringref for the sound.
         """
         self._sounds[sound] = stringref
+        self._entry_count = max(self._entry_count, int(sound) + 1)
 
     def get(
         self,

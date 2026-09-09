@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from pykotor.resource.formats.rim.rim_data import RIM
+from pykotor.common.misc import ResRef
+from pykotor.resource.formats.rim.rim_data import RIM, RIMResource
 from pykotor.resource.type import ResourceReader, ResourceType, ResourceWriter, autoclose
 
 if TYPE_CHECKING:
@@ -42,23 +43,25 @@ class RIMBinaryReader(ResourceReader):
         offset_to_keys = self._reader.read_uint32()
         self._rim.reserved = self._reader.read_bytes(100)
 
-        resrefs: list[str] = []
+        resrefs: list[ResRef] = []
         resids: list[int] = []
         restypes: list[int] = []
         resoffsets: list[int] = []
         ressizes: list[int] = []
         self._reader.seek(offset_to_keys)
         for _ in range(entry_count):
-            resrefs.append(self._reader.read_string(16))
+            resrefs.append(ResRef.from_bytes(self._reader.read_bytes(16)))
             restypes.append(self._reader.read_uint32())
             resids.append(self._reader.read_uint32())
             resoffsets.append(self._reader.read_uint32())
             ressizes.append(self._reader.read_uint32())
 
-        for i in range(entry_count):
-            self._reader.seek(resoffsets[i])
-            resdata = self._reader.read_bytes(ressizes[i])
-            self._rim.set_data(resrefs[i], ResourceType.from_id(restypes[i]), resdata)
+        for i, resid in enumerate(resids):
+            if resid >= entry_count:
+                raise ValueError(f"RIM resource ID {resid} has no payload record.")
+            self._reader.seek(resoffsets[resid])
+            resdata = self._reader.read_bytes(ressizes[resid])
+            self._rim.append(RIMResource(resrefs[i], ResourceType.from_id(restypes[i]), resdata))
 
         return self._rim
 
@@ -72,6 +75,9 @@ class RIMBinaryWriter(ResourceWriter):
         rim: RIM,
         target: TARGET_TYPES,
     ):
+        for resource in rim:
+            if not 0 <= resource.restype.type_id <= 0xFFFFFFFF:
+                raise ValueError(f"Invalid RIM resource type ID: {resource.restype.type_id}")
         super().__init__(target)
         self._rim: RIM = rim
 
@@ -92,7 +98,7 @@ class RIMBinaryWriter(ResourceWriter):
 
         data_offset = offset_to_keys + RIMBinaryWriter.KEY_ELEMENT_SIZE * entry_count
         for resid, resource in enumerate(self._rim):
-            self._writer.write_string(str(resource.resref), string_length=16)
+            self._writer.write_bytes(resource.resref.to_bytes())
             self._writer.write_uint32(resource.restype.type_id)
             self._writer.write_uint32(resid)
             self._writer.write_uint32(data_offset)

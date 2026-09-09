@@ -6,7 +6,7 @@ import re
 
 from abc import ABC, abstractmethod
 from copy import copy, deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from pykotor.common.geometry import Vector3, Vector4
@@ -374,10 +374,19 @@ class LocalizedStringDelta(LocalizedString):
         return changed
 
 
+@dataclass
+class GFFPatchResult:
+    """Track applicable operations separately from changes to the GFF data."""
+
+    applied: bool = False
+    changed: bool = False
+
+
 @dataclass(frozen=True)
 class GFFModifierContext:
     path: PureWindowsPath = PureWindowsPath("")
     list_index: int | None = None
+    result: GFFPatchResult = field(default_factory=GFFPatchResult, compare=False)
 
 
 class ModifyGFF(ABC):
@@ -449,6 +458,31 @@ class ModifyGFF(ABC):
         return changed
 
 
+class AddFieldGFFReference(ModifyGFF):
+    """Select an AddField section using the tokens available at this operation."""
+
+    def __init__(
+        self,
+        identifier: str,
+        section: FieldValue,
+        resolve_section: Callable[[str], ModifyGFF],
+    ):
+        self.identifier = identifier
+        self.section = section
+        self.resolve_section = resolve_section
+
+    def apply(
+        self,
+        root_struct: GFFStruct,
+        memory: PatcherMemory,
+        logger: PatchLogger,
+        context: GFFModifierContext | None = None,
+    ) -> bool:
+        section_name = str(self.section.resolve(memory))
+        modifier = self.resolve_section(section_name)
+        return modifier.apply(root_struct, memory, logger, context)
+
+
 class AddStructToListGFF(ModifyGFF):
     def __init__(
         self,
@@ -512,7 +546,9 @@ class AddStructToListGFF(ModifyGFF):
         if self._index_to_token is not None:
             memory.memory_2da[self._index_to_token] = str(list_index)
 
-        child_context = GFFModifierContext(path / str(list_index), list_index)
+        child_context = GFFModifierContext(
+            path / str(list_index), list_index, context.result if context else GFFPatchResult(),
+        )
         self._apply_modifiers(self.modifiers, root_struct, memory, logger, child_context)
         return True
 
@@ -546,9 +582,17 @@ class AddFieldGFF(ModifyGFF):
     ) -> bool:
         path = self._resolve_path(self.path, self.relative_path, context)
         struct_container = self._navigate_containers(root_struct, path)
+        if isinstance(struct_container, GFFList) and self.field_type is GFFFieldType.Struct:
+            return AddStructToListGFF(
+                self.identifier, self.value, path, modifiers=self.modifiers,
+            ).apply(root_struct, memory, logger, context)
         if not isinstance(struct_container, GFFStruct):
             reason = "does not exist" if struct_container is None else f"is a {type(struct_container).__name__}, not a GFFStruct"
             logger.add_error(f"Unable to add GFF field '{self.label}' at '{path}' in [{self.identifier}]: path {reason}.")
+            return False
+
+        if not self.label:
+            logger.add_error(f"Label must be set when adding a field to a Struct in [{self.identifier}].")
             return False
 
         existing_field = struct_container._fields.get(self.label)
@@ -626,7 +670,11 @@ class AddFieldGFF(ModifyGFF):
                 FIELD_TYPE_TO_SETTER[self.field_type](struct_container, self.label, parsed_value, memory)
                 changed = True
 
-        child_context = GFFModifierContext(field_path, context.list_index if context else None)
+        child_context = GFFModifierContext(
+            field_path,
+            context.list_index if context else None,
+            context.result if context else GFFPatchResult(),
+        )
         return self._apply_modifiers(self.modifiers, root_struct, memory, logger, child_context) or changed
 
 
@@ -682,6 +730,8 @@ class Memory2DAModifierGFF(ModifyGFF):
             parsed_value = _coerce_scalar(source_value, field.field_type(), existing=field.value(), new_field=False)
             if parsed_value is _INVALID:
                 return False
+            if context is not None:
+                context.result.applied = True
             if field.value() != parsed_value:
                 field._value = parsed_value
                 return True
@@ -734,6 +784,10 @@ class ModifyFieldGFF(ModifyGFF):
             logger.add_error(f"Unable to modify missing GFF field '{path}' in [{self.identifier}].")
             return False
 
+        # ChangeFieldValue counts a found field even if its value is unchanged
+        # or its literal value is rejected. Keep that distinct from data changes.
+        if context is not None:
+            context.result.applied = True
         field_type = field.field_type()
         if field_type in {GFFFieldType.Struct, GFFFieldType.List}:
             return False
@@ -780,6 +834,7 @@ class ModificationsGFF(PatcherModifications):
     ):
         super().__init__(filename, replace)
         self.modifiers = [] if modifiers is None else modifiers
+        self.result = GFFPatchResult()
 
     def patch_resource(
         self,
@@ -803,10 +858,13 @@ class ModificationsGFF(PatcherModifications):
         logger: PatchLogger,
         game: Game,
     ) -> bool:
-        changed = False
+        self.result = GFFPatchResult()
+        context = GFFModifierContext(result=self.result)
         for modifier in self.modifiers:
             try:
-                changed = modifier.apply(gff.root, memory, logger) or changed
+                changed = modifier.apply(gff.root, memory, logger, context)
+                self.result.changed = changed or self.result.changed
+                self.result.applied = changed or self.result.applied
             except Exception as exc:  # noqa: BLE001 - TSLPatcher continues after individual GFF operation failures.
                 logger.add_error(f"Unable to apply GFF modifier [{getattr(modifier, 'identifier', '')}]: {exc}")
-        return changed
+        return self.result.changed

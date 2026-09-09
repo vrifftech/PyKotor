@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from pykotor.resource.formats.gff.gff_data import GFFFieldType
+from pykotor.resource.generics._gff import (remember_gff, preserve_gff)
 from pykotor.common.language import LocalizedString
 from pykotor.common.misc import Game, ResRef
 from pykotor.resource.formats.gff import GFF, GFFContent, write_gff
@@ -84,6 +86,10 @@ class UTD:
         self,
     ):
         self.resref: ResRef = ResRef.from_blank()
+        self.linked_to_module: ResRef = ResRef.from_blank()
+        self.linked_to_flags: int = 0
+        self.linked_to: str = ""
+        self.portrait: ResRef = ResRef.from_blank()
         self.conversation: ResRef = ResRef.from_blank()
         self.tag: str = ""
         self.comment: str = ""
@@ -174,62 +180,71 @@ def construct_utd(
     utd = UTD()
 
     root = gff.root
-    utd.tag = root.acquire("Tag", "")
-    utd.name = root.acquire("LocName", LocalizedString.from_invalid())
-    utd.resref = root.acquire("TemplateResRef", ResRef.from_blank())
-    utd.auto_remove_key = bool(root.acquire("AutoRemoveKey", 0))
-    utd.conversation = root.acquire("Conversation", ResRef.from_blank())
-    utd.faction_id = root.acquire("Faction", 0)
-    utd.plot = bool(root.acquire("Plot", 0))
-    utd.min1_hp = bool(root.acquire("Min1HP", 0))
-    utd.key_required = bool(root.acquire("KeyRequired", 0))
-    utd.lockable = bool(root.acquire("Lockable", 0))
-    utd.locked = bool(root.acquire("Locked", 0))
-    utd.unlock_dc = root.acquire("OpenLockDC", 0)
-    utd.key_name = root.acquire("KeyName", "")
-    utd.animation_state = root.acquire("AnimationState", 0)
-    utd.maximum_hp = root.acquire("HP", 0)
-    utd.current_hp = root.acquire("CurrentHP", 0)
-    utd.hardness = root.acquire("Hardness", 0)
-    utd.fortitude = root.acquire("Fort", 0)
-    utd.on_closed = root.acquire("OnClosed", ResRef.from_blank())
-    utd.on_damaged = root.acquire("OnDamaged", ResRef.from_blank())
-    utd.on_death = root.acquire("OnDeath", ResRef.from_blank())
-    utd.on_heartbeat = root.acquire("OnHeartbeat", ResRef.from_blank())
-    utd.on_lock = root.acquire("OnLock", ResRef.from_blank())
-    utd.on_melee = root.acquire("OnMeleeAttacked", ResRef.from_blank())
-    utd.on_open = root.acquire("OnOpen", ResRef.from_blank())
-    utd.on_unlock = root.acquire("OnUnlock", ResRef.from_blank())
-    utd.on_user_defined = root.acquire("OnUserDefined", ResRef.from_blank())
-    utd.appearance_id = root.acquire("GenericType", 0)
-    utd.static = bool(root.acquire("Static", 0))
-    utd.open_state = root.acquire("OpenState", 0)
-    utd.on_click = root.acquire("OnClick", ResRef.from_blank())
-    utd.on_open_failed = root.acquire("OnFailToOpen", ResRef.from_blank())
-    utd.comment = root.acquire("Comment", "")
-    utd.unlock_diff = root.acquire("OpenLockDiff", 0)
-    utd.unlock_diff_mod = root.acquire("OpenLockDiffMod", 0)
-    utd.description = root.acquire("Description", LocalizedString.from_invalid())
-    utd.lock_dc = root.acquire("CloseLockDC", 0)
-    utd.interruptable = bool(root.acquire("Interruptable", 0))
-    utd.portrait_id = root.acquire("PortraitId", 0)
-    utd.trap_detectable = bool(root.acquire("TrapDetectable", 0))
-    utd.trap_detect_dc = root.acquire("TrapDetectDC", 0)
-    utd.trap_disarmable = bool(root.acquire("TrapDisarmable", 0))
-    utd.trap_disarm_dc = root.acquire("DisarmDC", 0)
-    utd.trap_flag = root.acquire("TrapFlag", 0)
-    utd.trap_one_shot = bool(root.acquire("TrapOneShot", 0))
-    utd.trap_type = root.acquire("TrapType", 0)
-    utd.unused_appearance = root.acquire("Appearance", 0)
-    utd.reflex = root.acquire("Ref", 0)
-    utd.willpower = root.acquire("Will", 0)
-    utd.on_disarm = root.acquire("OnDisarm", ResRef.from_blank())
-    utd.on_power = root.acquire("OnSpellCastAt", ResRef.from_blank())
-    utd.on_trap_triggered = root.acquire("OnTrapTriggered", ResRef.from_blank())
-    utd.loadscreen_id = root.acquire("LoadScreenID", 0)
-    utd.palette_id = root.acquire("PaletteID", 0)
-    utd.not_blastable = bool(root.acquire("NotBlastable", 0))
+    utd.tag = root.acquire("Tag", "", field_type=GFFFieldType.String)
+    utd.name = root.acquire("LocName", LocalizedString.from_invalid(), field_type=GFFFieldType.LocalizedString)
+    utd.resref = root.acquire("TemplateResRef", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+    utd.auto_remove_key = bool(root.acquire("AutoRemoveKey", 0, field_type=GFFFieldType.UInt8))
+    utd.conversation = root.acquire("Conversation", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+    utd.faction_id = root.acquire("Faction", 0, field_type=GFFFieldType.UInt32)
+    utd.plot = bool(root.acquire("Plot", 0, field_type=GFFFieldType.UInt8))
+    utd.min1_hp = bool(root.acquire("Min1HP", 0, field_type=GFFFieldType.UInt8))
+    utd.key_required = bool(root.acquire("KeyRequired", 0, field_type=GFFFieldType.UInt8))
+    utd.lockable = bool(root.acquire("Lockable", 0, field_type=GFFFieldType.UInt8))
+    utd.locked = bool(root.acquire("Locked", 0, field_type=GFFFieldType.UInt8))
+    utd.unlock_dc = root.acquire("OpenLockDC", 0, field_type=GFFFieldType.UInt8)
+    utd.key_name = root.acquire("KeyName", "", field_type=GFFFieldType.String)
+    utd.animation_state = root.acquire("AnimationState", 0, field_type=GFFFieldType.UInt8)
+    utd.maximum_hp = root.acquire("HP", 0, field_type=GFFFieldType.Int16)
+    utd.current_hp = root.acquire("CurrentHP", 0, field_type=GFFFieldType.Int16)
+    utd.hardness = root.acquire("Hardness", 0, field_type=GFFFieldType.UInt8)
+    utd.fortitude = root.acquire("Fort", 0, field_type=GFFFieldType.UInt8)
+    utd.on_closed = root.acquire("OnClosed", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+    utd.on_damaged = root.acquire("OnDamaged", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+    utd.on_death = root.acquire("OnDeath", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+    utd.on_heartbeat = root.acquire("OnHeartbeat", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+    utd.on_lock = root.acquire("OnLock", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+    utd.on_melee = root.acquire("OnMeleeAttacked", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+    utd.on_open = root.acquire("OnOpen", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+    utd.on_unlock = root.acquire("OnUnlock", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+    utd.on_user_defined = root.acquire("OnUserDefined", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+    utd.appearance_id = root.acquire("GenericType", 0, field_type=GFFFieldType.UInt8)
+    utd.static = bool(root.acquire("Static", 0, field_type=GFFFieldType.UInt8))
+    utd.open_state = root.acquire("OpenState", 0, field_type=GFFFieldType.UInt8)
+    utd.on_click = root.acquire("OnClick", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+    utd.on_open_failed = root.acquire("OnFailToOpen", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+    utd.comment = root.acquire("Comment", "", field_type=GFFFieldType.String)
+    utd.unlock_diff = root.acquire("OpenLockDiff", 0, field_type=GFFFieldType.UInt8)
+    utd.unlock_diff_mod = root.acquire("OpenLockDiffMod", 0, field_type=GFFFieldType.Int8)
+    utd.description = root.acquire("Description", LocalizedString.from_invalid(), field_type=GFFFieldType.LocalizedString)
+    utd.lock_dc = root.acquire("CloseLockDC", 0, field_type=GFFFieldType.UInt8)
+    utd.interruptable = bool(root.acquire("Interruptable", 0, field_type=GFFFieldType.UInt8))
+    utd.portrait_id = root.acquire("PortraitId", 0, field_type=GFFFieldType.UInt16)
+    utd.trap_detectable = bool(root.acquire("TrapDetectable", 0, field_type=GFFFieldType.UInt8))
+    utd.trap_detect_dc = root.acquire("TrapDetectDC", 0, field_type=GFFFieldType.UInt8)
+    utd.trap_disarmable = bool(root.acquire("TrapDisarmable", 0, field_type=GFFFieldType.UInt8))
+    utd.trap_disarm_dc = root.acquire("DisarmDC", 0, field_type=GFFFieldType.UInt8)
+    utd.trap_flag = root.acquire("TrapFlag", 0, field_type=GFFFieldType.UInt8)
+    utd.trap_one_shot = bool(root.acquire("TrapOneShot", 0, field_type=GFFFieldType.UInt8))
+    utd.trap_type = root.acquire("TrapType", 0, field_type=GFFFieldType.UInt8)
+    utd.unused_appearance = root.acquire("Appearance", 0, field_type=GFFFieldType.UInt32)
+    utd.reflex = root.acquire("Ref", 0, field_type=GFFFieldType.UInt8)
+    utd.willpower = root.acquire("Will", 0, field_type=GFFFieldType.UInt8)
+    utd.on_disarm = root.acquire("OnDisarm", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+    utd.on_power = root.acquire("OnSpellCastAt", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+    utd.on_trap_triggered = root.acquire("OnTrapTriggered", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+    utd.loadscreen_id = root.acquire("LoadScreenID", 0, field_type=GFFFieldType.UInt16)
+    utd.palette_id = root.acquire("PaletteID", 0, field_type=GFFFieldType.UInt8)
+    utd.not_blastable = bool(root.acquire("NotBlastable", 0, field_type=GFFFieldType.UInt8))
 
+    utd.portrait = root.acquire("Portrait", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+
+    utd.linked_to = root.acquire("LinkedTo", "", field_type=GFFFieldType.String)
+
+    utd.linked_to_flags = root.acquire("LinkedToFlags", 0, field_type=GFFFieldType.UInt8)
+
+    utd.linked_to_module = root.acquire("LinkedToModule", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+
+    remember_gff(utd, gff)
     return utd
 
 
@@ -302,7 +317,15 @@ def dismantle_utd(
         root.set_uint16("LoadScreenID", utd.loadscreen_id)
         root.set_uint8("PaletteID", utd.palette_id)
 
-    return gff
+    root.set_resref("Portrait", utd.portrait)
+
+    root.set_string("LinkedTo", utd.linked_to)
+
+    root.set_uint8("LinkedToFlags", utd.linked_to_flags)
+
+    root.set_resref("LinkedToModule", utd.linked_to_module)
+
+    return preserve_gff(utd, gff, lambda original: dismantle_utd(original, game=game, use_deprecated=use_deprecated))
 
 
 def read_utd(

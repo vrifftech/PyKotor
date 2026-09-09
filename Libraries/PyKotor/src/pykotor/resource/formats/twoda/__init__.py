@@ -4,6 +4,10 @@ from pykotor.resource.formats.twoda.io_twoda import (
     TwoDABinaryReader,
     TwoDABinaryWriter,
 )
+from pykotor.resource.formats.twoda.io_twoda_text import (
+    TwoDATextReader,
+    TwoDATextWriter,
+)
 from pykotor.resource.formats.twoda.io_twoda_csv import (
     TwoDACSVReader,
     TwoDACSVWriter,

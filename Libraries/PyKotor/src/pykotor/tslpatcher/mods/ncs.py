@@ -19,6 +19,7 @@ class ModificationsNCS(PatcherModifications):
     def __init__(self, filename, replace=None, modifiers=None):
         super().__init__(filename, replace, modifiers)
         self.action: str = "Hack "
+        self.skip_if_not_replace = True
         self.hackdata: list[tuple[str, int, int]] = []
 
     def patch_resource(
@@ -104,9 +105,13 @@ class ModificationsNCS(PatcherModifications):
         default_destination=PatcherModifications.DEFAULT_DESTINATION,
         default_sourcefolder=".",
     ):
+        first_key = next(iter(file_section_dict), "")
+        replace_file = (
+            len(file_section_dict) > 1
+            and first_key.lower() == "replacefile"
+            and str(file_section_dict[first_key]).lower() in {"1", "true"}
+        )
+        file_section_dict.pop("ReplaceFile", None)
+        file_section_dict.pop("!ReplaceFile", None)
         super().pop_tslpatcher_vars(file_section_dict, default_destination, default_sourcefolder)
-        replace_file: bool | str = file_section_dict.pop("ReplaceFile", self.replace_file)
-        if isinstance(replace_file, bool):
-            self.replace_file = replace_file
-        elif replace_file in {"0", "1"}:
-            self.replace_file = replace_file == "1"
+        self.replace_file = replace_file

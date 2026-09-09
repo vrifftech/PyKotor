@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from pykotor.resource.formats.gff.gff_data import GFFFieldType
+from pykotor.resource.generics._gff import (remember_gff, preserve_gff)
 from pykotor.common.geometry import Vector2, Vector3
 from pykotor.common.language import LocalizedString
 from pykotor.common.misc import Game, ResRef
@@ -112,49 +114,52 @@ def construct_ifo(
     ifo = IFO()
 
     root = gff.root
-    ifo.mod_id = root.acquire("Mod_ID", b"")
-    ifo.vo_id = root.acquire("Mod_VO_ID", "")
-    ifo.mod_name = root.acquire("Mod_Name", LocalizedString.from_invalid())
-    ifo.tag = root.acquire("Mod_Tag", "")
-    ifo.resref = root.acquire("Mod_Entry_Area", ResRef.from_blank())
-    ifo.entry_position.x = root.acquire("Mod_Entry_X", 0.0)
-    ifo.entry_position.y = root.acquire("Mod_Entry_Y", 0.0)
-    ifo.entry_position.z = root.acquire("Mod_Entry_Z", 0.0)
-    ifo.on_heartbeat = root.acquire("Mod_OnHeartbeat", ResRef.from_blank())
-    ifo.on_load = root.acquire("Mod_OnModLoad", ResRef.from_blank())
-    ifo.on_start = root.acquire("Mod_OnModStart", ResRef.from_blank())
-    ifo.on_enter = root.acquire("Mod_OnClientEntr", ResRef.from_blank())
-    ifo.on_leave = root.acquire("Mod_OnClientLeav", ResRef.from_blank())
-    ifo.on_activate_item = root.acquire("Mod_OnActvtItem", ResRef.from_blank())
-    ifo.on_acquire_item = root.acquire("Mod_OnAcquirItem", ResRef.from_blank())
-    ifo.on_user_defined = root.acquire("Mod_OnUsrDefined", ResRef.from_blank())
-    ifo.on_unacquire_item = root.acquire("Mod_OnUnAqreItem", ResRef.from_blank())
-    ifo.on_player_death = root.acquire("Mod_OnPlrDeath", ResRef.from_blank())
-    ifo.on_player_dying = root.acquire("Mod_OnPlrDying", ResRef.from_blank())
-    ifo.on_player_levelup = root.acquire("Mod_OnPlrLvlUp", ResRef.from_blank())
-    ifo.on_player_respawn = root.acquire("Mod_OnSpawnBtnDn", ResRef.from_blank())
-    ifo.expansion_id = root.acquire("Expansion_Pack", 0)
-    ifo.hak = root.acquire("Mod_Hak", "")
-    ifo.description = root.acquire("Mod_Description", LocalizedString.from_invalid())
-    ifo.on_player_rest = root.acquire("Mod_OnPlrRest", ResRef.from_blank())
-    ifo.dawn_hour = root.acquire("Mod_DawnHour", 0)
-    ifo.dusk_hour = root.acquire("Mod_DuskHour", 0)
-    ifo.time_scale = root.acquire("Mod_MinPerHour", 0)
-    ifo.start_month = root.acquire("Mod_StartMonth", 0)
-    ifo.start_day = root.acquire("Mod_StartDay", 0)
-    ifo.start_hour = root.acquire("Mod_StartHour", 0)
-    ifo.start_year = root.acquire("Mod_StartYear", 0)
-    ifo.xp_scale = root.acquire("Mod_XPScale", 0)
-    ifo.start_movie = root.acquire("Mod_StartMovie", ResRef.from_blank())
-    ifo.creator_id = root.acquire("Mod_Creator_ID", 0)
-    ifo.version = root.acquire("Mod_Version", 0)
+    ifo.mod_id = root.acquire("Mod_ID", b"", field_type=GFFFieldType.Binary)
+    ifo.vo_id = root.acquire("Mod_VO_ID", "", field_type=GFFFieldType.String)
+    ifo.mod_name = root.acquire("Mod_Name", LocalizedString.from_invalid(), field_type=GFFFieldType.LocalizedString)
+    ifo.tag = root.acquire("Mod_Tag", "", field_type=GFFFieldType.String)
+    ifo.resref = root.acquire("Mod_Entry_Area", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+    ifo.entry_position.x = root.acquire("Mod_Entry_X", 0.0, field_type=GFFFieldType.Single)
+    ifo.entry_position.y = root.acquire("Mod_Entry_Y", 0.0, field_type=GFFFieldType.Single)
+    ifo.entry_position.z = root.acquire("Mod_Entry_Z", 0.0, field_type=GFFFieldType.Single)
+    ifo.on_heartbeat = root.acquire("Mod_OnHeartbeat", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+    ifo.on_load = root.acquire("Mod_OnModLoad", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+    ifo.on_start = root.acquire("Mod_OnModStart", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+    ifo.on_enter = root.acquire("Mod_OnClientEntr", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+    ifo.on_leave = root.acquire("Mod_OnClientLeav", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+    ifo.on_activate_item = root.acquire("Mod_OnActvtItem", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+    ifo.on_acquire_item = root.acquire("Mod_OnAcquirItem", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+    ifo.on_user_defined = root.acquire("Mod_OnUsrDefined", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+    ifo.on_unacquire_item = root.acquire("Mod_OnUnAqreItem", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+    ifo.on_player_death = root.acquire("Mod_OnPlrDeath", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+    ifo.on_player_dying = root.acquire("Mod_OnPlrDying", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+    ifo.on_player_levelup = root.acquire("Mod_OnPlrLvlUp", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+    ifo.on_player_respawn = root.acquire("Mod_OnSpawnBtnDn", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+    ifo.expansion_id = root.acquire("Expansion_Pack", 0, field_type=GFFFieldType.UInt16)
+    ifo.hak = root.acquire("Mod_Hak", "", field_type=GFFFieldType.String)
+    ifo.description = root.acquire("Mod_Description", LocalizedString.from_invalid(), field_type=GFFFieldType.LocalizedString)
+    ifo.on_player_rest = root.acquire("Mod_OnPlrRest", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+    ifo.dawn_hour = root.acquire("Mod_DawnHour", 0, field_type=GFFFieldType.UInt8)
+    ifo.dusk_hour = root.acquire("Mod_DuskHour", 0, field_type=GFFFieldType.UInt8)
+    ifo.time_scale = root.acquire("Mod_MinPerHour", 0, field_type=GFFFieldType.UInt8)
+    ifo.start_month = root.acquire("Mod_StartMonth", 0, field_type=GFFFieldType.UInt8)
+    ifo.start_day = root.acquire("Mod_StartDay", 0, field_type=GFFFieldType.UInt8)
+    ifo.start_hour = root.acquire("Mod_StartHour", 0, field_type=GFFFieldType.UInt8)
+    ifo.start_year = root.acquire("Mod_StartYear", 0, field_type=GFFFieldType.UInt32)
+    ifo.xp_scale = root.acquire("Mod_XPScale", 0, field_type=GFFFieldType.UInt8)
+    ifo.start_movie = root.acquire("Mod_StartMovie", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+    ifo.creator_id = root.acquire("Mod_Creator_ID", 0, field_type=GFFFieldType.Int32)
+    ifo.version = root.acquire("Mod_Version", 0, field_type=GFFFieldType.UInt32)
 
-    dir_x = root.acquire("Mod_Entry_Dir_X", 0.0)
-    dir_y = root.acquire("Mod_Entry_Dir_Y", 0.0)
+    dir_x = root.acquire("Mod_Entry_Dir_X", 0.0, field_type=GFFFieldType.Single)
+    dir_y = root.acquire("Mod_Entry_Dir_Y", 0.0, field_type=GFFFieldType.Single)
     ifo.entry_direction = Vector2(dir_x, dir_y).angle()
 
-    ifo.area_name = root.acquire("Mod_Area_list", GFFList()).at(0).acquire("Area_Name", ResRef.from_blank())
+    areas = root.acquire("Mod_Area_list", GFFList(), field_type=GFFFieldType.List)
+    if areas:
+        ifo.area_name = areas.at(0).acquire("Area_Name", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
 
+    remember_gff(ifo, gff)
     return ifo
 
 
@@ -219,7 +224,7 @@ def dismantle_ifo(
         root.set_list("Mod_Expan_List", GFFList())
         root.set_list("Mod_CutSceneList", GFFList())
 
-    return gff
+    return preserve_gff(ifo, gff, lambda original: dismantle_ifo(original, game=game, use_deprecated=use_deprecated))
 
 
 def read_ifo(

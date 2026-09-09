@@ -55,7 +55,7 @@ def detect_ssf(
             with BinaryReader.from_file(source, offset) as reader:
                 file_format = check(reader.read_string(4))
         elif isinstance(source, (memoryview, bytes, bytearray)):
-            file_format = check(bytes(source[:4]).decode("ascii", "ignore"))
+            file_format = check(bytes(source[offset:offset + 4]).decode("ascii", "ignore"))
         elif isinstance(source, BinaryReader):
             file_format = check(source.read_string(4))
             source.skip(-4)
@@ -98,14 +98,14 @@ def read_ssf(
     file_format: ResourceType = detect_ssf(source, offset)
 
     if file_format is ResourceType.INVALID:
-        msg = "Failed to determine the format of the GFF file."
+        msg = "Failed to determine the format of the SSF file."
         raise ValueError(msg)
 
     if file_format is ResourceType.SSF:
         return SSFBinaryReader(source, offset, size or 0).load()
     if file_format is ResourceType.SSF_XML:
         return SSFXMLReader(source, offset, size or 0).load()
-    msg = "Failed to determine the format of the GFF file."
+    msg = "Failed to determine the format of the SSF file."
     raise ValueError(msg)
 
 

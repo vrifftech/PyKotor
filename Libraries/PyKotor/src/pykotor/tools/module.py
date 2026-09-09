@@ -3,9 +3,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from pykotor.common.language import LocalizedString
+from pykotor.common.misc import ResRef
 from pykotor.common.module import Module
 from pykotor.extract.installation import Installation, SearchLocation
-from pykotor.resource.formats.erf import ERF, ERFType, read_erf, write_erf
+from pykotor.resource.formats.erf import ERF, ERFResource, ERFType, read_erf, write_erf
 from pykotor.resource.formats.gff import write_gff
 from pykotor.resource.formats.lyt import write_lyt
 from pykotor.resource.formats.rim import read_rim
@@ -28,7 +29,7 @@ from utility.string_util import ireplace
 if TYPE_CHECKING:
     import os
 
-    from pykotor.common.misc import Game, ResRef
+    from pykotor.common.misc import Game
     from pykotor.resource.formats.tpc.tpc_data import TPCConvertResult
     from pykotor.resource.generics.pth import PTH
     from pykotor.resource.generics.utd import UTD
@@ -335,16 +336,19 @@ def rim_to_mod(
     filepath_rim_s = CaseAwarePath.get_case_sensitive_path(r_rim_folderpath / f"{module_root}_s.rim")
     filepath_dlg_erf = CaseAwarePath.get_case_sensitive_path(r_rim_folderpath / f"{module_root}_dlg.erf")
 
-    mod = ERF(ERFType.MOD)
-    for res in read_rim(filepath_rim):
-        mod.set_data(str(res.resref), res.restype, res.data)
-
+    sources = [read_rim(filepath_rim)]
     if filepath_rim_s.safe_isfile():
-        for res in read_rim(filepath_rim_s):
-            mod.set_data(str(res.resref), res.restype, res.data)
-
+        sources.append(read_rim(filepath_rim_s))
     if (game is None or game.is_k2()) and filepath_dlg_erf.safe_isfile():
-        for res in read_erf(filepath_dlg_erf):
-            mod.set_data(str(res.resref), res.restype, res.data)
+        sources.append(read_erf(filepath_dlg_erf))
+
+    mod = ERF(ERFType.MOD)
+    for source in sources:
+        # Later source archives retain their existing precedence. Within each
+        # source, keep the physical order and its first matching record.
+        for identifier in {resource.identifier() for resource in source}:
+            mod.remove(identifier.resname, identifier.restype)
+        for resource in source:
+            mod.append(ERFResource(ResRef.from_bytes(resource.resref.to_bytes()), resource.restype, resource.data))
 
     write_erf(mod, filepath, ResourceType.MOD)

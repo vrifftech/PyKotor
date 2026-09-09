@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from pykotor.resource.formats.gff.gff_data import GFFFieldType
+from pykotor.resource.generics._gff import (remember_gff, preserve_gff, remember_gff_struct, bind_gff_struct)
 from pykotor.common.language import LocalizedString
 from pykotor.common.misc import Game, ResRef
 from pykotor.resource.formats.gff import GFF, GFFContent, GFFList, read_gff, write_gff
@@ -42,8 +44,8 @@ class UTS:
         palette_id: "PaletteID" field. Used in toolset only.
 
         name: "LocName" field. Not used by the game engine.
-        hours: "Hours" field. Not used by the game engine.
-        times: "Times" field. Not used by the game engine.
+        hours: "Hours" scheduling field.
+        times: "Times" scheduling field.
     """
 
     BINARY_TYPE = ResourceType.UTS
@@ -92,35 +94,37 @@ def construct_uts(
     uts = UTS()
 
     root: GFFStruct = gff.root
-    uts.tag = root.acquire("Tag", "")
-    uts.resref = root.acquire("TemplateResRef", ResRef.from_blank())
-    uts.active = bool(root.acquire("Active", 0))
-    uts.continuous = bool(root.acquire("Continuous", 0))
-    uts.looping = bool(root.acquire("Looping", 0))
-    uts.positional = bool(root.acquire("Positional", 0))
-    uts.random_position = bool(root.acquire("RandomPosition", 0))
-    uts.random_pick = bool(root.acquire("Random", 0))
-    uts.elevation = root.acquire("Elevation", 0.0)
-    uts.max_distance = root.acquire("MaxDistance", 0.0)
-    uts.min_distance = root.acquire("MinDistance", 0.0)
-    uts.random_range_x = root.acquire("RandomRangeX", 0.0)
-    uts.random_range_y = root.acquire("RandomRangeY", 0.0)
-    uts.interval = root.acquire("Interval", 0)
-    uts.interval_variation = root.acquire("IntervalVrtn", 0)
-    uts.pitch_variation = root.acquire("PitchVariation", 0.0)
-    uts.priority = root.acquire("Priority", 0)
-    uts.volume = root.acquire("Volume", 0)
-    uts.volume_variation = root.acquire("VolumeVrtn", 0)
-    uts.comment = root.acquire("Comment", "")
-    uts.name = root.acquire("LocName", LocalizedString.from_invalid())
-    uts.hours = root.acquire("Hours", 0)
-    uts.times = root.acquire("Times", 0)
-    uts.palette_id = root.acquire("PaletteID", 0)
+    uts.tag = root.acquire("Tag", "", field_type=GFFFieldType.String)
+    uts.resref = root.acquire("TemplateResRef", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+    uts.active = bool(root.acquire("Active", 0, field_type=GFFFieldType.UInt8))
+    uts.continuous = bool(root.acquire("Continuous", 0, field_type=GFFFieldType.UInt8))
+    uts.looping = bool(root.acquire("Looping", 0, field_type=GFFFieldType.UInt8))
+    uts.positional = bool(root.acquire("Positional", 0, field_type=GFFFieldType.UInt8))
+    uts.random_position = bool(root.acquire("RandomPosition", 0, field_type=GFFFieldType.UInt8))
+    uts.random_pick = bool(root.acquire("Random", 0, field_type=GFFFieldType.UInt8))
+    uts.elevation = root.acquire("Elevation", 0.0, field_type=GFFFieldType.Single)
+    uts.max_distance = root.acquire("MaxDistance", 0.0, field_type=GFFFieldType.Single)
+    uts.min_distance = root.acquire("MinDistance", 0.0, field_type=GFFFieldType.Single)
+    uts.random_range_x = root.acquire("RandomRangeX", 0.0, field_type=GFFFieldType.Single)
+    uts.random_range_y = root.acquire("RandomRangeY", 0.0, field_type=GFFFieldType.Single)
+    uts.interval = root.acquire("Interval", 0, field_type=GFFFieldType.UInt32)
+    uts.interval_variation = root.acquire("IntervalVrtn", 0, field_type=GFFFieldType.UInt32)
+    uts.pitch_variation = root.acquire("PitchVariation", 0.0, field_type=GFFFieldType.Single)
+    uts.priority = root.acquire("Priority", 0, field_type=GFFFieldType.UInt8)
+    uts.volume = root.acquire("Volume", 0, field_type=GFFFieldType.UInt8)
+    uts.volume_variation = root.acquire("VolumeVrtn", 0, field_type=GFFFieldType.UInt8)
+    uts.comment = root.acquire("Comment", "", field_type=GFFFieldType.String)
+    uts.name = root.acquire("LocName", LocalizedString.from_invalid(), field_type=GFFFieldType.LocalizedString)
+    uts.hours = root.acquire("Hours", 0, field_type=GFFFieldType.UInt32)
+    uts.times = root.acquire("Times", 0, field_type=GFFFieldType.UInt8)
+    uts.palette_id = root.acquire("PaletteID", 0, field_type=GFFFieldType.UInt8)
 
-    for sound_struct in root.acquire("Sounds", GFFList()):
-        sound = sound_struct.acquire("Sound", ResRef.from_blank())
+    for sound_struct in root.acquire("Sounds", GFFList(), field_type=GFFFieldType.List):
+        sound = sound_struct.acquire("Sound", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+        remember_gff_struct(sound, sound_struct)
         uts.sounds.append(sound)
 
+    remember_gff(uts, gff)
     return uts
 
 
@@ -156,7 +160,9 @@ def dismantle_uts(
 
     sound_list = root.set_list("Sounds", GFFList())
     for sound in uts.sounds:
-        sound_list.add(0).set_resref("Sound", sound)
+        sound_struct = sound_list.add(0)
+        bind_gff_struct(sound_struct, sound)
+        sound_struct.set_resref("Sound", sound)
 
     root.set_uint8("PaletteID", uts.palette_id)
 
@@ -165,7 +171,7 @@ def dismantle_uts(
         root.set_uint32("Hours", uts.hours)
         root.set_uint8("Times", uts.times)  # TODO: double check this. Some files have this field as uint8 others as uint32?
 
-    return gff
+    return preserve_gff(uts, gff, lambda original: dismantle_uts(original, game=game, use_deprecated=use_deprecated))
 
 
 def read_uts(

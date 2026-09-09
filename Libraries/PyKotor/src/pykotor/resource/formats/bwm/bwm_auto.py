@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import os
+import shutil
+import tempfile
+
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from pykotor.resource.formats.bwm.io_bwm import BWMBinaryReader, BWMBinaryWriter
@@ -15,7 +20,7 @@ def read_bwm(
     offset: int = 0,
     size: int | None = None,
 ) -> BWM:
-    """Returns an WOK instance from the source.
+    """Returns a BWM instance from the source.
 
     Args:
     ----
@@ -32,7 +37,7 @@ def read_bwm(
 
     Returns:
     -------
-        An WOK instance.
+        A BWM instance.
     """
     return BWMBinaryReader(source, offset, size or 0).load()
 
@@ -42,7 +47,7 @@ def write_bwm(
     target: TARGET_TYPES,
     file_format: ResourceType = ResourceType.WOK,
 ):
-    """Writes the WOK data to the target location with the specified format (WOK only).
+    """Writes the WOK data to the target location with the specified format (WOK, PWK or DWK).
 
     Args:
     ----
@@ -56,18 +61,32 @@ def write_bwm(
         PermissionError: If the file could not be written to the specified destination.
         ValueError: If the specified format was unsupported.
     """
-    if file_format is ResourceType.WOK:
+    if file_format not in (ResourceType.WOK, ResourceType.PWK, ResourceType.DWK):
+        raise ValueError("Unsupported format specified; use WOK, PWK or DWK.")
+    if not isinstance(target, (str, os.PathLike)):
         BWMBinaryWriter(wok, target).write()
-    else:
-        msg = "Unsupported format specified; use WOK."
-        raise ValueError(msg)
+        return
+    path = Path(target)
+    if path.is_dir():
+        error = PermissionError if os.name == "nt" else IsADirectoryError
+        raise error(f"Cannot write a walkmesh to directory '{path}'.")
+    with tempfile.NamedTemporaryFile(dir=path.parent, prefix=f".{path.name.lower()}.", suffix=".tmp", delete=False) as temp:
+        temporary_path = Path(temp.name)
+    try:
+        BWMBinaryWriter(wok, temporary_path).write()
+        if path.exists():
+            shutil.copymode(path, temporary_path)
+        os.replace(temporary_path, path)
+    finally:
+        if temporary_path.exists():
+            temporary_path.unlink()
 
 
 def bytes_bwm(
     bwm: BWM,
     file_format: ResourceType = ResourceType.WOK,
 ) -> bytes:
-    """Returns the BWM data in the specified format (WOK only) as a bytes object.
+    """Returns the BWM data in the specified format (WOK, PWK or DWK) as a bytes object.
 
     This is a convenience method that wraps the write_bwm() method.
 
@@ -86,4 +105,4 @@ def bytes_bwm(
     """
     data = bytearray()
     write_bwm(bwm, data, file_format)
-    return data
+    return bytes(data)

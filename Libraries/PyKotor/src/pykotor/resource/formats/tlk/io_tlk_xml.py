@@ -12,7 +12,6 @@ except (ImportError, ModuleNotFoundError):
 
 from typing import TYPE_CHECKING
 
-from pykotor.common.language import Language
 from pykotor.common.misc import ResRef
 from pykotor.resource.formats.tlk.tlk_data import TLK
 from pykotor.resource.type import ResourceReader, ResourceWriter, autoclose
@@ -43,7 +42,7 @@ class TLKXMLReader(ResourceReader):
         data = decode_bytes_with_fallbacks(self._reader.read_bytes(self._reader.size()))
         xml = ElementTree.fromstring(data)  # noqa: S314
 
-        self._tlk.language = Language(int(xml.get("language")))
+        self._tlk.language_id = int(xml.get("language"))
         self._tlk.resize(len(xml))
         for string in xml:
             index = int(string.get("id"))
@@ -69,7 +68,7 @@ class TLKXMLWriter(ResourceWriter):
         auto_close: bool = True,
     ):
         self._xml.tag = "tlk"
-        self._xml.set("language", str(self._tlk.language.value))
+        self._xml.set("language", str(self._tlk.language_id))
 
         for stringref, entry in self._tlk:
             element = ElementTree.Element("string")

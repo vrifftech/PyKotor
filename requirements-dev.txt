@@ -1,21 +1,16 @@
--r Tools/BatchPatcher/requirements.txt
--r Tools/HolocronToolset/requirements.txt
--r Tools/HoloPatcher/requirements.txt
--r Tools/HoloPatcher/recommended.txt
 -r Libraries/PyKotor/requirements.txt
 -r Libraries/PyKotor/recommended.txt
 -r Libraries/PyKotorGL/requirements.txt
-#-r Libraries/PyKotorGL/optional.txt
 -r Libraries/PyKotorFont/requirements.txt
+-r Libraries/Utility/requirements.txt
+
+build
 mypy
-ruff
 pylint
-snakeviz
-autoflake
 pytest
-pytest-xdist
 pytest-html
-#aqtinstall
+pytest-xdist
+ruff
+send2trash
 types-Pillow
 types-Send2Trash
-send2trash

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+
 from enum import IntEnum
 from typing import TYPE_CHECKING
 
 from pykotor.common.geometry import SurfaceMaterial, Vector3, Vector4
-from pykotor.common.misc import Color
+from pykotor.common.misc import Color, Game
 from pykotor.resource.type import ResourceType
 
 if TYPE_CHECKING:
@@ -33,6 +34,17 @@ class MDL:
         self.name: str = ""
         self.fog: bool = False
         self.supermodel: str = ""
+        self.game: Game = Game.K1
+        self.model_type: int = 0
+        self.bb_min: Vector3 = Vector3.from_null()
+        self.bb_max: Vector3 = Vector3.from_null()
+        self.radius: float = 0.0
+        self.anim_scale: float = 1.0
+        self._source_mdl: bytes = b""
+        self._source_mdx: bytes | None = b""
+        self._source_game: Game = Game.K1
+        self._source_names: list[str] = []
+        self._source_name_offsets: list[int] = []
 
     def get(
         self,
@@ -88,13 +100,7 @@ class MDL:
             - Repeat until scan is empty
             - Return the nodes list with all nodes
         """
-        nodes: list[MDLNode] = []
-        scan: list[MDLNode] = [self.root]
-        while scan:
-            node: MDLNode = scan.pop()
-            nodes.append(node)
-            scan.extend(node.children)
-        return nodes
+        return list(walk_nodes(self.root))
 
     def find_parent(
         self,
@@ -141,15 +147,22 @@ class MDL:
 
         Processing Logic:
         ----------------
-            - Traverse up the parent chain of the node and add each parent's position to a running total
+            - Compose each parent rotation and translation without modifying the node
             - Start with the node's local position
             - Keep traversing up parents until the parent is None (root node reached)
             - Return the final global position
         """
-        position: Vector3 = node.position
-        parent: MDLNode | None = self.find_parent(node)
+        position = Vector3(node.position.x, node.position.y, node.position.z)
+        parent = self.find_parent(node)
+        seen = {id(node)}
         while parent is not None:
-            position += parent.position
+            if id(parent) in seen:
+                raise ValueError("Cycle in model parent graph")
+            seen.add(id(parent))
+            position = rotate_vector(parent.orientation, position)
+            position = Vector3(position.x + parent.position.x,
+                               position.y + parent.position.y,
+                               position.z + parent.position.z)
             parent = self.find_parent(parent)
         return position
 
@@ -242,6 +255,7 @@ class MDLAnimation:
         self.transition_length: float = 0.0
         self.events: list[MDLEvent] = []
         self.root: MDLNode = MDLNode()
+        self._source: dict = {}
 
     def all_nodes(
         self,
@@ -264,13 +278,7 @@ class MDLAnimation:
             - Repeat until scan is empty
             - Return the nodes list containing all nodes.
         """
-        nodes = []
-        scan = [self.root]
-        while scan:
-            node = scan.pop()
-            nodes.append(node)
-            scan.extend(node.children)
-        return nodes
+        return list(walk_nodes(self.root))
 
 
 class MDLEvent:
@@ -279,6 +287,7 @@ class MDLEvent:
     ):
         self.activation_time: float = 0.0
         self.name: str = ""
+        self._source: bytes = b""
 
 
 # endregion
@@ -340,6 +349,8 @@ class MDLNode:
         self.controllers: list[MDLController] = []
         self.name: str = ""
         self.node_id: int = -1
+        self.camera: bool = False
+        self._source: dict = {}
         self.position: Vector3 = Vector3.from_null()
         self.orientation: Vector4 = Vector4(0, 0, 0, 1)
 
@@ -434,7 +445,10 @@ class MDLLight:
         self.flare_sizes: list = []
         self.flare_positions: list = []
         self.flare_color_shifts: list = []
-        self.flare_textures: list = []
+        self.flare_textures: list[str] = []
+        self.affect_dynamic: int = 0
+        self._header: bytes = bytes(92)
+        self._unknown: bytes = b""
 
 
 class MDLEmitter:
@@ -485,6 +499,7 @@ class MDLEmitter:
         self.frame_blender: int = 0
         self.depth_texture: str = ""
         self.flags: int = 0
+        self._header: bytes = bytes(224)
 
 
 class MDLReference:
@@ -502,6 +517,7 @@ class MDLReference:
         # TODO: docs
         self.model: str = ""
         self.reattachable: bool = False
+        self._header: bytes = bytes(36)
 
 
 class MDLMesh:
@@ -512,6 +528,14 @@ class MDLMesh:
     ):
         # TODO: look at mesh inverted counter array, rename boolean flags
         self.faces: list[MDLFace] = []
+        self.indices: list[list[int]] = []
+        self.inverted_counters: list[int] = []
+        self.texture_count: int = 1
+        self.mdx_stride: int = 0
+        self.mdx_bitmap: int = 0
+        self.mdx_offsets: list[int] = [0xFFFFFFFF] * 11
+        self.mdx_data: bytes = b""
+        self._source: dict = {}
         self.diffuse: Color = Color.WHITE
         self.ambient: Color = Color.WHITE
         self.transparency_hint: int = 0
@@ -552,7 +576,22 @@ class MDLMesh:
 
     def gen_normals(
         self,
-    ): ...
+    ):
+        normals = [Vector3.from_null() for _ in self.vertex_positions]
+        for face in self.faces:
+            a, b, c = (self.vertex_positions[i] for i in (face.v1, face.v2, face.v3))
+            u, v = b - a, c - a
+            n = Vector3(u.y * v.z - u.z * v.y, u.z * v.x - u.x * v.z, u.x * v.y - u.y * v.x)
+            face.normal = Vector3(n.x, n.y, n.z)
+            if n.magnitude():
+                face.normal.normalize()
+            face.coefficient = -face.normal.dot(a)
+            for i in (face.v1, face.v2, face.v3):
+                normals[i] = normals[i] + n
+        for n in normals:
+            if n.magnitude():
+                n.normalize()
+        self.vertex_normals = normals
 
 
 class MDLSkin:
@@ -562,23 +601,56 @@ class MDLSkin:
         self,
     ):
         self.bone_indices: tuple[int, int, int, int, int, int, int, int, int, int, int, int, int, int, int, int] = (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
-        self.qbones: list[Vector3] = []
+        self.qbones: list[Vector4] = []
         self.tbones: list[Vector3] = []
-        self.bonemap: list[int] = []
+        self.bonemap: list[float] = []
+        self._header: bytes = bytes(100)
+        self._unknown: bytes = b""
 
         self.vertex_bones: list[MDLBoneVertex] = []
 
 
 class MDLDangly:
-    """Dangly data that can be attached to a node."""
+    """Dangly-mesh constraints and rest vertices."""
+
+    def __init__(self):
+        self.constraints: list[float] = []
+        self.displacement: float = 0.0
+        self.tightness: float = 0.0
+        self.period: float = 0.0
+        self.vertices: list[Vector3] = []
+        self._header: bytes = bytes(28)
+
+
+class MDLAABB:
+    """A model collision-tree record; children are record identities, not names."""
+
+    def __init__(self):
+        self.bb_min = Vector3.from_null()
+        self.bb_max = Vector3.from_null()
+        self.face: int = 0xFFFFFFFF
+        self.plane: int = 0
+        self.left: MDLAABB | None = None
+        self.right: MDLAABB | None = None
+        self._offset: int = 0
+        self._header: bytes = bytes(40)
 
 
 class MDLWalkmesh:
-    """AABB data that can be attached to a node."""
+    """A model's collision-tree root."""
+
+    def __init__(self):
+        self.root: MDLAABB | None = None
 
 
 class MDLSaber:
-    """Saber data that can be attached to a node."""
+    """The fixed 176-element saber vertex/UV/normal arrays."""
+
+    def __init__(self):
+        self.vertices: list[Vector3] = []
+        self.texcoords: list[Vector2] = []
+        self.normals: list[Vector3] = []
+        self._header: bytes = bytes(20)
 
 
 # endregion
@@ -600,11 +672,11 @@ class MDLFace:
         self.v1: int = 0
         self.v2: int = 0
         self.v3: int = 0
-        self.material: SurfaceMaterial = SurfaceMaterial.GRASS
+        self.material: SurfaceMaterial | int = SurfaceMaterial.GRASS
         self.a1: int = 0
         self.a2: int = 0
         self.a3: int = 0
-        self.coefficient: int = 0
+        self.coefficient: float = 0.0
         self.normal: Vector3 = Vector3.from_null()
 
 
@@ -632,6 +704,10 @@ class MDLController:
     ):
         self.controller_type: MDLControllerType = MDLControllerType.INVALID
         self.rows: list[MDLControllerRow] = []
+        self.columns: int | None = None
+        self.part_offset: int = 0xFFFF
+        self.padding: bytes = bytes(3)
+        self._source: dict = {}
 
 
 class MDLControllerRow:
@@ -655,3 +731,34 @@ class MDLControllerRow:
 
 
 # endregion
+
+
+def walk_nodes(root: MDLNode):
+    """Walk a tree in source order, rejecting cycles and shared-parent nodes."""
+    pending, seen = [root], set()
+    while pending:
+        node = pending.pop()
+        if id(node) in seen:
+            raise ValueError("A model node occurs more than once in the same tree")
+        seen.add(id(node))
+        yield node
+        pending.extend(reversed(node.children))
+
+
+def rotate_vector(q: Vector4, v: Vector3) -> Vector3:
+    """Rotate a vector without modifying either argument."""
+    length = q.x*q.x + q.y*q.y + q.z*q.z + q.w*q.w
+    if not length:
+        raise ValueError("A zero quaternion does not define an orientation")
+    s = 2.0 / length
+    tx, ty, tz = s*(q.y*v.z-q.z*v.y), s*(q.z*v.x-q.x*v.z), s*(q.x*v.y-q.y*v.x)
+    return Vector3(v.x+q.w*tx+q.y*tz-q.z*ty,
+                   v.y+q.w*ty+q.z*tx-q.x*tz,
+                   v.z+q.w*tz+q.x*ty-q.y*tx)
+
+
+def multiply_quaternions(a: Vector4, b: Vector4) -> Vector4:
+    return Vector4(a.w*b.x+a.x*b.w+a.y*b.z-a.z*b.y,
+                   a.w*b.y-a.x*b.z+a.y*b.w+a.z*b.x,
+                   a.w*b.z+a.x*b.y-a.y*b.x+a.z*b.w,
+                   a.w*b.w-a.x*b.x-a.y*b.y-a.z*b.z)

@@ -1,16 +1,17 @@
 from __future__ import annotations
 
 import os
+import pathlib
+import tempfile
 import shutil
 
 from datetime import datetime
 from tkinter import messagebox
 from typing import TYPE_CHECKING
+from threading import Event
 
 from pykotor.common.misc import Game
-from pykotor.common.stream import BinaryReader
 from pykotor.resource.formats.tlk import read_tlk, write_tlk
-from pykotor.tools.encoding import decode_bytes_with_fallbacks
 from pykotor.tools.misc import is_mod_file
 from pykotor.tools.path import CaseAwarePath
 from pykotor.tslpatcher.logger import PatchLogger
@@ -82,10 +83,11 @@ class ModUninstaller:
             Uninstalls the selected mod using the most recent backup folder created during the last install.
     """
 
-    def __init__(self, backups_location_path: Path, game_path: Path, logger: PatchLogger | None = None):
-        self.backups_location_path: Path = backups_location_path
-        self.game_path: Path = game_path
-        self.log: PatchLogger = logger or PatchLogger()
+    def __init__(self, backups_location_path: Path, game_path: Path, logger: PatchLogger | None = None, *, dialogs=messagebox):
+        self.backups_location_path = Path.pathify(backups_location_path)
+        self.game_path = Path.pathify(game_path)
+        self.log = logger or PatchLogger()
+        self.dialogs = dialogs
 
     @staticmethod
     def is_valid_backup_folder(folder: Path, datetime_pattern="%Y-%m-%d_%H.%M.%S") -> bool:
@@ -115,163 +117,138 @@ class ModUninstaller:
 
     @staticmethod
     def get_most_recent_backup(backup_folder: os.PathLike | str) -> Path | None:
-        """Returns the most recent valid backup folder.
-
-        Args:
-        ----
-            backup_folder: os.PathLike | str - Path to the backup folder.
-
-        Returns:
-        -------
-            Path | None: Path to the most recent valid backup folder or None
-
-        Processing Logic:
-        ----------------
-            - Filter subfolders to only valid backup folders
-            - Return None if no valid backups found
-            - Otherwise return the subfolder with the maximum datetime parsed from folder name.
-        """
-        backup_folder_path = Path.pathify(backup_folder)
-        valid_backups: list[Path] = [
-            subfolder
-            for subfolder in backup_folder_path.iterdir()  # type: ignore[attr-defined]
-            if subfolder.iterdir() and ModUninstaller.is_valid_backup_folder(subfolder)
-        ]
-        if not valid_backups:
-            messagebox.showerror(
-                "No backups found!",
-                f"No backups found at '{backup_folder_path}'!{os.linesep}" "HoloPatcher cannot uninstall TSLPatcher.exe installations.",
-            )
+        """Find the newest nonempty backup without displaying dialogs during discovery."""
+        root = pathlib.Path(backup_folder)
+        if not root.is_dir():
             return None
-        return max(valid_backups, key=lambda x: datetime.strptime(x.name, "%Y-%m-%d_%H.%M.%S").astimezone())
+        valid = [p for p in root.iterdir() if p.is_dir() and not p.is_symlink()
+                 and ModUninstaller.is_valid_backup_folder(p) and any(p.iterdir())]
+        if not valid:
+            return None
+        return Path(max(valid, key=lambda p: datetime.strptime(p.name, "%Y-%m-%d_%H.%M.%S")))
 
-    def restore_backup(
-        self,
-        backup_folder: Path,
-        existing_files: set[str],
-        files_in_backup: list[Path],
-    ):
-        """Restores a game backup folder to the existing game files.
-
-        Args:
-        ----
-            backup_folder: Path to the backup folder
-            existing_files: set of existing file paths
-            files_in_backup: list of file paths in the backup
-
-        Processing Logic:
-        ----------------
-            - Remove any existing files not in the backup
-            - Copy each file from the backup folder to the destination restoring the file structure
-            - Log each file operation
-
-        Examples:
-        --------
-            restore_backup(Path('backup'), {'file1.txt', 'file2.txt'}, [Path('backup/file1.txt'), Path('backup/file2.txt')])
-        """
-        for file_str in existing_files:
-            file_path = Path(file_str)
-            rel_filepath: Path = file_path.relative_to(self.game_path)  # type: ignore[attr-defined]
-            file_path.unlink(missing_ok=True)  # type: ignore[attr-defined]
-            self.log.add_note(f"Removed {rel_filepath}...")
+    def restore_backup(self, backup_folder: Path, existing_files: set[str], files_in_backup: list[Path], *, should_cancel: Event | None = None):
+        """Validate all paths first, retain the backup, and commit one complete file at a time."""
+        root = pathlib.Path(backup_folder).resolve()
+        game = pathlib.Path(self.game_path).resolve()
+        copies = []
+        destinations = set()
         for file in files_in_backup:
-            file_path = Path.pathify(file)
-            if file_path.name == "remove these files.txt":
+            source = pathlib.Path(file)
+            if source == root / "remove these files.txt":
                 continue
-            destination_path = self.game_path / file_path.relative_to(backup_folder)  # type: ignore[attr-defined]
-            destination_path.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy(file_path, destination_path)
-            self.log.add_note(f"Restoring backup of '{file_path.name}' to '{destination_path.relative_to(self.game_path.parent)}'...")  # type: ignore[attr-defined]
+            source.resolve().relative_to(root)
+            relative = source.relative_to(root)
+            destination = pathlib.Path(CaseAwarePath.get_case_sensitive_path(game / relative))
+            destination.resolve().relative_to(game)
+            if not source.is_file():
+                raise FileNotFoundError(source)
+            copies.append((source, destination))
+            destinations.add(destination.resolve())
+        removals = []
+        for filename in existing_files:
+            target = pathlib.Path(filename)
+            if not target.is_absolute():
+                raise ValueError(f"Invalid removal path: {filename}")
+            target.resolve().relative_to(game)
+            if target.exists() and not target.is_file():
+                raise ValueError(f"Removal target is not a file: {target}")
+            if target.resolve() not in destinations:
+                removals.append(target)
+        # Restore old files before deleting newly installed ones. If any step fails,
+        # the caller reports partial restoration and never offers to delete the backup.
+        for source, destination in copies:
+            if should_cancel is not None and should_cancel.is_set():
+                raise InterruptedError("Restoration stopped between files; the backup is retained.")
+            source.resolve().relative_to(root)
+            destination.resolve().relative_to(game)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            temporary = None
+            try:
+                with tempfile.NamedTemporaryFile(dir=destination.parent, prefix=".restore-", suffix=".tmp", delete=False) as stream:
+                    temporary = pathlib.Path(stream.name)
+                shutil.copy2(source, temporary)
+                destination.resolve().relative_to(game)
+                os.replace(temporary, destination)
+            finally:
+                if temporary is not None:
+                    temporary.unlink(missing_ok=True)
+            self.log.add_note(f"Restored '{destination.relative_to(game)}'.")
+        for target in removals:
+            if should_cancel is not None and should_cancel.is_set():
+                raise InterruptedError("Restoration stopped between files; the backup is retained.")
+            target.resolve().relative_to(game)
+            target.unlink(missing_ok=True)
+            self.log.add_note(f"Removed '{target.relative_to(game)}'.")
 
     def get_backup_info(self) -> tuple[Path | None, set[str], list[Path], int]:
-        """Get info about the most recent valid backup."""
-        most_recent_backup_folder: Path | None = self.get_most_recent_backup(self.backups_location_path)
-        if not most_recent_backup_folder:
+        folder = self.get_most_recent_backup(self.backups_location_path)
+        if folder is None:
+            self.dialogs.showerror("No backups found", f"No nonempty HoloPatcher backup exists at '{self.backups_location_path}'. No game files were changed.")
             return None, set(), [], 0
-
-        delete_list_file = most_recent_backup_folder / "remove these files.txt"
-        files_to_delete: set[str] = set()
-        existing_files: set[str] = set()
-        if delete_list_file.is_file():
-            with BinaryReader.from_file(delete_list_file) as f:
-                lines: list[str] = decode_bytes_with_fallbacks(f.read_all()).split("\n")
-            files_to_delete = {line.strip() for line in lines if line.strip()}
-            existing_files = {line.strip() for line in files_to_delete if line.strip() and Path(line.strip()).is_file()}
-            if len(existing_files) < len(files_to_delete) and not messagebox.askyesno(
-                "Backup out of date or mismatched",
-                (
-                    f"This backup doesn't match your current KOTOR installation. Files are missing/changed in your KOTOR install.{os.linesep}"
-                    f"It is important that you uninstall all mods in their installed order when utilizing this feature.{os.linesep}"
-                    f"Also ensure you selected the right mod, and the right KOTOR folder.{os.linesep}"
-                    "Continue anyway?"
-                ),
-            ):
-                return None, set(), [], 0
-
-        files_in_backup = list(filter(Path.is_file, most_recent_backup_folder.rglob("*")))
-        folder_count: int = len(list(most_recent_backup_folder.rglob("*"))) - len(files_in_backup)
-
-        return most_recent_backup_folder, existing_files, files_in_backup, folder_count
-
-    def uninstall_selected_mod(self) -> bool:
-        """Uninstalls the selected mod using the most recent backup folder created during the last install.
-
-        Processing Logic:
-        ----------------
-            - Check if an install is already running
-            - Get the selected namespace option
-            - Check for valid namespace and game path
-            - Get the backup folder path
-            - Sort backup folders by date
-            - Get the most recent backup folder
-            - Check for required files in backup
-            - Confirm uninstall with user
-            - Delete existing files
-            - Restore files from backup
-            - Offer to delete restored backup.
-        """
-        most_recent_backup_folder, existing_files, files_in_backup, folder_count = self.get_backup_info()
-        if not most_recent_backup_folder:
-            return False
-        self.log.add_note(f"Using backup folder '{most_recent_backup_folder}'")
-
-        if len(files_in_backup) < 6:  # noqa: PLR2004[6 represents a small number of files to display]
-            for item in files_in_backup:
-                self.log.add_note(f"Would restore file '{item.relative_to(most_recent_backup_folder)}'")
-        if not messagebox.askyesno(
-            "Confirmation",
-            f"Really uninstall {len(existing_files)} files and restore the most recent backup (containing {len(files_in_backup)} files and {folder_count} folders)?\nNote: This uses the most recent mod-specific backup, the namespace option displayed does not affect this tool.",
+        root = pathlib.Path(folder).resolve()
+        delete_list = root / "remove these files.txt"
+        files_to_delete = set()
+        if delete_list.is_file():
+            # Reading backup metadata must not follow a symlink outside the backup.
+            delete_list.resolve().relative_to(root)
+            files_to_delete = {line.strip() for line in delete_list.read_text(encoding="utf-8").splitlines() if line.strip()}
+        game_root = pathlib.Path(self.game_path).resolve()
+        for name in files_to_delete:
+            target = pathlib.Path(name)
+            if not target.is_absolute():
+                raise ValueError(f"Invalid removal path in backup: {name}")
+            target.resolve().relative_to(game_root)
+        existing = {name for name in files_to_delete if pathlib.Path(name).is_file()}
+        if len(existing) != len(files_to_delete) and not self.dialogs.askyesno(
+            "Backup out of date or mismatched",
+            "Some files listed by this backup are absent. Restore mods in reverse installation order, and verify the selected package and game directory. Continue?",
         ):
-            return False
+            return None, set(), [], 0
+        files = []
+        folder_count = 0
+        for directory, folders, names in os.walk(root, followlinks=False):
+            for name in folders:
+                child = pathlib.Path(directory, name)
+                if child.is_symlink():
+                    raise ValueError(f"Backup directory cannot be a symbolic link: {child}")
+            folder_count += len(folders)
+            for name in names:
+                item = pathlib.Path(directory, name)
+                item.resolve().relative_to(root)
+                if item != delete_list:
+                    files.append(Path(item))
+        return folder, existing, files, folder_count
+
+    def uninstall_selected_mod(self, *, should_cancel: Event | None = None) -> bool:
+        """Return failure immediately after any restore error; retain failed backups."""
         try:
-            self.restore_backup(most_recent_backup_folder, existing_files, files_in_backup)
-        except Exception as e:  # pylint: disable=W0718  # noqa: BLE001
-            error_name, msg = universal_simplify_exception(e)
-            messagebox.showerror(
-                error_name,
-                f"Failed to restore backup because of exception.{os.linesep * 2}{msg}",
-            )
-        while messagebox.askyesno(
-            "Uninstall completed!",
-            f"Deleted {len(existing_files)} files and successfully restored backup created on {most_recent_backup_folder.name}{os.linesep * 2}"
-            f"Would you like to delete the backup created on {most_recent_backup_folder.name} since it now has been restored?",
+            folder, existing, files, folder_count = self.get_backup_info()
+            if folder is None:
+                return False
+            self.log.add_note(f"Using backup '{folder}'.")
+            if should_cancel is not None and should_cancel.is_set():
+                return False
+            if not self.dialogs.askyesno(
+                "Restore this backup?",
+                f"Restore {len(files)} files and remove {len(existing)} installed files in '{self.game_path}'?\n\n"
+                f"Backup: {folder}\nUninstall in reverse installation order. This selects the most recent package backup, not a namespace-specific backup.",
+            ):
+                return False
+            self.restore_backup(folder, existing, files, should_cancel=should_cancel)
+        except Exception as exc:
+            title, message = universal_simplify_exception(exc)
+            # The error dialog must still be shown if the operation logger is unavailable.
+            self.dialogs.showerror(title, f"Backup restoration did not complete. Some earlier files may already have been restored.\n\n{message}\n\nThe backup is retained. Do not delete it.")
+            return False
+        if should_cancel is not None and should_cancel.is_set():
+            return True  # Restoration finished; cancellation still prevents backup removal.
+        if self.dialogs.askyesno(
+            "Uninstall completed",
+            f"Successfully restored backup '{folder.name}'. Delete this restored backup?",
         ):
             try:
-                shutil.rmtree(most_recent_backup_folder)
-                self.log.add_note(f"Deleted restored backup '{most_recent_backup_folder.name}'")
-            except PermissionError:  # noqa: PERF203
-                result: bool | None = messagebox.askyesnocancel(
-                    "Permission Error",
-                    "Unable to delete the restored backup due to permission issues. Would you like to gain permission and try again?",
-                )
-                if result is True:
-                    print("Gaining permission, please wait...")
-                    most_recent_backup_folder.gain_access(recurse=True)
-                    continue
-                if result is False:
-                    continue
-                if result is None:
-                    break
-            else:
-                break
+                shutil.rmtree(folder)
+            except OSError as exc:
+                self.dialogs.showwarning("Backup retained", f"Restoration succeeded, but the backup could not be deleted: {exc}")
         return True

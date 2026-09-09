@@ -1,9 +1,7 @@
 # Code taken from https://thepythoncode.com/code/create-rich-text-editor-with-tkinter-python
 from __future__ import annotations
 
-import ctypes
 import json
-import os
 import re
 import tkinter as tk
 
@@ -14,12 +12,9 @@ from typing import Any
 
 from utility.system.path import Path
 
-if os.name == "nt":
-    ctypes.windll.shcore.SetProcessDpiAwareness(True)  # noqa: FBT003
-
 class RichTextEditor:
-    def __init__(self, master: tk.Tk, initialdir: Path | None = None):
-        self.root: tk.Tk = master
+    def __init__(self, master: tk.Tk | tk.Toplevel, initialdir: Path | None = None):
+        self.root: tk.Tk | tk.Toplevel = master
         self.root.title("Rich Text Editor")
         self.initialdir = Path.cwd() if initialdir is None else initialdir
         self.root.geometry("800x600")
@@ -97,10 +92,8 @@ class RichTextEditor:
         file_menu.add_command(label="Save", command=self.save_file, accelerator="Ctrl+S")
         file_menu.add_command(label="Save As...", command=self.save_as_file)
         file_menu.add_separator()
-        file_menu.add_command(label="Exit", command=self.root.quit)
+        file_menu.add_command(label="Exit", command=self.root.destroy)
         self.menu_bar.add_cascade(label="File", menu=file_menu)
-        self.root.bind_all("<Control-o>", lambda e: self.open_file())
-        self.root.bind_all("<Control-s>", lambda e: self.save_file())
 
         for category, options in self.tag_categories.items():
             submenu = tk.Menu(self.menu_bar, tearoff=0)
@@ -111,21 +104,15 @@ class RichTextEditor:
                     submenu.add_checkbutton(label=option, command=partial(self.toggle_format, tag_name, properties))
                 else:
                     submenu.add_command(label=option, command=lambda c=category, o=option: self.apply_tag_from_category(c, o))
-                # Update check status when opening the menu
-                self.menu_bar.bind("<Enter>", lambda event, menu=submenu, tag=tag_name, index=submenu.index(option): self.check_menu_item(menu, index, tag), add="+")
 
         edit_menu = tk.Menu(self.menu_bar, tearoff=0)
-        edit_menu.add_command(label="Undo", command=self.text_area.edit_undo, accelerator="Ctrl+Z")
-        edit_menu.add_command(label="Redo", command=self.text_area.edit_redo, accelerator="Ctrl+Y")
+        edit_menu.add_command(label="Undo", command=self.undo, accelerator="Ctrl+Z")
+        edit_menu.add_command(label="Redo", command=self.redo, accelerator="Ctrl+Y")
         self.menu_bar.add_cascade(label="Edit", menu=edit_menu)
-        self.root.bind_all("<Control-z>", lambda _e: self.text_area.edit_undo())
-        self.root.bind_all("<Control-y>", lambda _e: self.text_area.edit_redo())
-        self.root.bind_all("<Control-Shift-z>", lambda _event: self.text_area.edit_redo())
-        self.root.bind_all("<Control-Shift-Z>", lambda _event: self.text_area.edit_redo())  # different keyboard layouts ig
 
         font_menu = tk.Menu(self.menu_bar, tearoff=0)
         for family in self.font_families:
-            font_menu.add_command(label=family, command=lambda f=family: self.apply_font(family))
+            font_menu.add_command(label=family, command=lambda f=family: self.apply_font(f))
         self.menu_bar.add_cascade(label="Font", menu=font_menu)
         # Context (right-click) menu setup
         def show_context_menu(event):
@@ -160,7 +147,7 @@ class RichTextEditor:
         self.text_area.tag_add(tag_name, "sel.first", "sel.last")
 
     def apply_color(self, color_type):
-        color_code = colorchooser.askcolor(title=f"Choose {color_type} Color")[1]
+        color_code = colorchooser.askcolor(title=f"Choose {color_type} Color", parent=self.root)[1]
         if color_code:
             tag_name = f"{color_type}_{color_code}"
             # Ensure color_type is correctly passed as a keyword argument
@@ -242,7 +229,7 @@ class RichTextEditor:
         if category in ["Text Colors", "Background Colors"] and option == "Custom Color...":
             self.apply_color(color_type=(category == "Text Colors"))
         elif category == "Lists":
-            raise
+            self.apply_list("bullet" if option == "Bullet List" else "number")
         else:
             # General case for applying tags
             properties = self.tag_categories[category][option]
@@ -258,6 +245,8 @@ class RichTextEditor:
         """
         if properties:
             self.text_area.tag_configure(tag, **properties)
+        if not self.text_area.tag_ranges("sel"):
+            return
         current_tags = self.text_area.tag_names("sel.first")
         if tag in current_tags:
             self.text_area.tag_remove(tag, "sel.first", "sel.last")
@@ -268,21 +257,14 @@ class RichTextEditor:
         rgb = args
         return "#{:02x}{:02x}{:02x}".format(*rgb)
 
-    def check_menu_item(self, menu, index, tag):
-        """Check or uncheck the menu item based on whether the tag is applied to the current selection."""
-        current_tags = self.text_area.tag_names("sel.first")
-        if tag in current_tags:
-            menu.entryconfig(index, onvalue=1)
-        else:
-            menu.entryconfig(index, onvalue=0)
 
     def open_file(self):
-        filePath: str = filedialog.askopenfilename(filetypes=self.valid_file_types, initialdir=self.initialdir)
+        filePath: str = filedialog.askopenfilename(filetypes=self.valid_file_types, initialdir=self.initialdir, parent=self.root)
         if not filePath:
             return
 
         self.file_path = Path(filePath)
-        with self.file_path.open() as f:
+        with self.file_path.open(encoding="utf-8") as f:
             document: dict[str, Any] = json.loads(f.read())
 
         self.text_area.delete("1.0", tk.END)
@@ -337,7 +319,7 @@ class RichTextEditor:
         self.save_file_content()
 
     def save_as_file(self):
-        file_path = filedialog.asksaveasfilename(defaultextension=".txt", filetypes=[("All Files", "*.*"), ("Rich Text (JSON)", "*.rte")])
+        file_path = filedialog.asksaveasfilename(defaultextension=".rte", filetypes=self.valid_file_types, initialdir=self.initialdir, parent=self.root)
         if file_path:
             self.file_path = Path(file_path)
             self.save_file_content()

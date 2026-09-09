@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import os
+import shutil
+import tempfile
+
+from pathlib import Path
 from typing import TYPE_CHECKING
 
-from pykotor.resource.formats.erf.erf_data import ERFType
 from pykotor.resource.formats.erf.io_erf import ERFBinaryReader, ERFBinaryWriter
 from pykotor.resource.type import ResourceType
 
@@ -59,10 +63,34 @@ def write_erf(
         PermissionError: If the file could not be written to the specified destination.
         ValueError: If the specified format was unsupported.
     """
-    if hasattr(file_format, "name") and file_format in (ResourceType.ERF, ResourceType.MOD, ResourceType.SAV):
-        ERFBinaryWriter(erf, target).write()
+    if hasattr(file_format, "name") and file_format in (ResourceType.ERF, ResourceType.MOD):
+        if not isinstance(target, (str, os.PathLike)):
+            ERFBinaryWriter(erf, target).write()
+            return
+
+        target_path = Path(target)
+        if target_path.is_dir():
+            error_type = PermissionError if os.name == "nt" else IsADirectoryError
+            raise error_type(f"Cannot write an archive to directory '{target_path}'.")
+        if target_path.suffix.lower() == ".sav":
+            raise ValueError("SAV archives are not supported.")
+        with tempfile.NamedTemporaryFile(
+            dir=target_path.parent,
+            prefix=f".{target_path.name.lower()}.",
+            suffix=".tmp",
+            delete=False,
+        ) as temporary:
+            temporary_path = Path(temporary.name)
+        try:
+            ERFBinaryWriter(erf, temporary_path).write()
+            if target_path.exists():
+                shutil.copymode(target_path, temporary_path)
+            os.replace(temporary_path, target_path)
+        finally:
+            if temporary_path.exists():
+                temporary_path.unlink()
     else:
-        msg = f"Unsupported format specified: '{file_format!r}'; expected one of {', '.join(f'ResourceType.{member.name}' for member in (ResourceType.ERF, ResourceType.MOD, ResourceType.SAV))}."
+        msg = f"Unsupported format specified: '{file_format!r}'; expected ResourceType.ERF or ResourceType.MOD."
         raise ValueError(msg)
 
 
@@ -87,10 +115,10 @@ def bytes_erf(
     -------
         The ERF data.
     """
-    if hasattr(file_format, "name") and file_format in (ResourceType.ERF, ResourceType.MOD, ResourceType.SAV):
+    if hasattr(file_format, "name") and file_format in (ResourceType.ERF, ResourceType.MOD):
         data = bytearray()
         write_erf(erf, data, file_format)
         return data
 
-    msg = f"Unsupported format specified: '{file_format!r}'; expected one of [SAV, {', '.join(member.name for member in ERFType)}]"
+    msg = f"Unsupported format specified: '{file_format!r}'; expected ResourceType.ERF or ResourceType.MOD."
     raise ValueError(msg)

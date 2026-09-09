@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from contextlib import suppress
 from copy import copy
 from typing import TYPE_CHECKING, Any, TypeVar
@@ -23,7 +25,14 @@ class TwoDA:
     def __init__(
         self,
         headers: list[str] | None = None,
+        *,
+        version: str = "V2.b",
+        default: str = "",
     ):
+        if version not in ("V2.b", "V2.0"):
+            raise ValueError(f"Unsupported 2DA version: {version}")
+        self.version: str = version
+        self.default: str = default
         self._rows: list[dict[str, str]] = []
         self._headers: list[str] = [] if headers is None else headers  # for columns
         self._labels: list[str] = []  # for rows
@@ -38,7 +47,7 @@ class TwoDA:
     ):
         """Iterates through each row yielding a new linked TwoDARow instance."""
         for i, row in enumerate(self._rows):
-            yield TwoDARow(self.get_label(i), row)
+            yield TwoDARow(self.get_label(i), row, version=self.version)
 
     def get_headers(
         self,
@@ -183,7 +192,7 @@ class TwoDA:
         except IndexError as e:
             e.args = (f"Row index {row_index} not found in the 2DA." + (f" Context: {context}" if context is not None else ""),)
             raise
-        return TwoDARow(label_row, self._rows[row_index])
+        return TwoDARow(label_row, self._rows[row_index], version=self.version)
 
     def find_row(
         self,
@@ -318,7 +327,8 @@ class TwoDA:
 
         Returns:
         -------
-            The cell value.
+            The cell value, using the exact stored column spelling rather than
+            case-insensitive patch-target lookup.
         """
         return self._rows[row_index][column]
 
@@ -477,11 +487,9 @@ class TwoDA:
             if index is None:
                 log_func("Row mismatch")
                 return False
-            old_row: TwoDARow = self.get_row(index)
-            new_row: TwoDARow = other.get_row(index)
             for header in common_headers:
-                old_value: str = old_row.get_string(header)
-                new_value: str = new_row.get_string(header)
+                old_value: str = self.get_cell(index, header)
+                new_value: str = other.get_cell(index, header)
                 if old_value != new_value:
                     log_func(f"Cell mismatch at RowIndex '{index}' Header '{header}': '{old_value}' --> '{new_value}'")
                     ret = False
@@ -494,7 +502,10 @@ class TwoDARow:
         self,
         row_label: str,
         row_data: dict[str, str],
+        *,
+        version: str = "V2.b",
     ):
+        self._version: str = version
         self._row_label: str = row_label
         self._data: dict[str, str] = row_data
 
@@ -572,7 +583,11 @@ class TwoDARow:
         header: str,
         default: int | T = None,
     ) -> int | T:
-        """Returns the integer value for the cell under the specified header. If the value of the cell is an invalid integer then a default value is used instead.
+        """Returns the engine integer interpretation for this table's native version.
+
+        Empty cells return the caller's default. Nonempty cells use the numeric
+        prefix (octal/hex/decimal in binary, decimal or leading 0x in text); a
+        nonnumeric value is zero. INI operators such as high() use separate rules.
 
         Args:
         ----
@@ -591,11 +606,31 @@ class TwoDARow:
             msg = f"The header '{header}' does not exist."
             raise KeyError(msg)
 
-        value: int | T = default
-        with suppress(ValueError):
-            cell = self._data[header]
-            return int(cell, 16) if cell.startswith("0x") else int(cell)
-        return value
+        cell = self._data[header]
+        if not cell:
+            return default
+
+        # The engine uses %i for binary tables and decimal conversion (with
+        # an explicit 0x branch) for text tables. Both consume a numeric prefix.
+        if self._version == "V2.b":
+            match = re.match(r"[ \t\r\n\v\f]*([+-]?)(0[xX][0-9a-fA-F]+|0[0-7]*|[1-9][0-9]*)", cell)
+            if match is None:
+                return 0
+            sign, digits = match.groups()
+            base = 16 if digits.lower().startswith("0x") else 8 if digits.startswith("0") else 10
+        elif len(cell) >= 3 and cell[:2].lower() == "0x":
+            match = re.match(r"0[xX]([0-9a-fA-F]+)", cell)
+            if match is None:
+                return 0
+            sign, digits, base = "", match.group(1), 16
+        else:
+            match = re.match(r"[ \t\r\n\v\f]*([+-]?)([0-9]+)", cell)
+            if match is None:
+                return 0
+            sign, digits = match.groups()
+            base = 10
+        value = int(digits, base) * (-1 if sign == "-" else 1)
+        return (value + 0x80000000) % 0x100000000 - 0x80000000
 
     def get_float(
         self,

@@ -159,7 +159,16 @@ def create_case_insensitive_pathlib_class(cls: type[CaseAwarePath]):
     for parent in parent_classes:
         for attr_name, attr_value in parent.__dict__.items():
             # Check if it's a method and hasn't been wrapped before
-            if callable(attr_value) and attr_name not in wrapped_methods and attr_name not in ignored_methods:
+            # Private pathlib machinery includes callable classes (e.g. its
+            # glob selector). Rebinding those as instance methods adds a bogus
+            # `self` argument and breaks resource discovery on Python 3.13.
+            if (
+                not attr_name.startswith("_")
+                and callable(attr_value)
+                and not isinstance(attr_value, type)
+                and attr_name not in wrapped_methods
+                and attr_name not in ignored_methods
+            ):
                 cls._original_methods[attr_name] = attr_value  # type: ignore[attr-defined]  # pylint: disable=protected-access
                 setattr(cls, attr_name, simple_wrapper(attr_name, cls))
                 wrapped_methods.add(attr_name)

@@ -74,6 +74,11 @@ def read_resource(
     -------
         bytes: The resource data as bytes
     """
+    if resource_type == ResourceType.SAV or (
+        isinstance(source, (os.PathLike, str)) and PurePath.pathify(source).suffix.lower() == ".sav"
+    ):
+        raise ValueError("SAV archives are not supported.")
+
     source_path: os.PathLike | str | None = None
     with suppress(Exception):
         if isinstance(source, (os.PathLike, str)):
@@ -90,14 +95,14 @@ def read_resource(
         if resource_type.category == "Talk Tables":
             return bytes_tlk(read_tlk(source))
         if resource_type in {ResourceType.TGA, ResourceType.TPC}:
-            return bytes_tpc(read_tpc(source))
+            return bytes_tpc(read_tpc(source, file_format=resource_type))
         if resource_ext == "ssf":
             return bytes_ssf(read_ssf(source))
         if resource_ext == "2da":
             return bytes_2da(read_2da(source))
         if resource_ext == "lip":
             return bytes_lip(read_lip(source))
-        if ResourceType.from_extension(resource_ext) in (ResourceType.ERF, ResourceType.MOD, ResourceType.SAV):
+        if ResourceType.from_extension(resource_ext) in (ResourceType.ERF, ResourceType.MOD):
             return bytes_erf(read_erf(source))
         if resource_ext == "rim":
             return bytes_rim(read_rim(source))
@@ -125,6 +130,8 @@ def read_resource(
 
 
 def read_unknown_resource(source: SOURCE_TYPES) -> bytes:  # noqa: PLR0911
+    if isinstance(source, (os.PathLike, str)) and PurePath.pathify(source).suffix.lower() == ".sav":
+        raise ValueError("SAV archives are not supported.")
     with suppress(OSError, ValueError):
         return bytes_tlk(read_tlk(source))
     with suppress(OSError, ValueError):

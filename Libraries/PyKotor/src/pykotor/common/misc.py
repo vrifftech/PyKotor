@@ -25,7 +25,7 @@ class ResRef:
 
     Used in:
     -------
-        - Encapsulated Resource Files (ERF/MOD/SAV)
+        - Encapsulated Resource Files (ERF/MOD)
         - RIM/BIF archives
         - Filenames in the Override folder
 
@@ -69,6 +69,7 @@ class ResRef:
         text: str,
     ):
         self._value = ""
+        self._raw_data: bytes | None = None
         self.set_data(text)
 
     def __len__(
@@ -89,7 +90,7 @@ class ResRef:
         if isinstance(other, ResRef):
             other_value = str(other).lower()
         elif isinstance(other, str):
-            other_value = other.lower().strip()
+            other_value = other.lower()
         else:
             return NotImplemented
         return other_value == self._value.lower()
@@ -106,6 +107,25 @@ class ResRef:
         self,
     ):
         return self._value
+
+    @classmethod
+    def from_bytes(cls, data: bytes, *, fixed_width: bool = True) -> ResRef:
+        """Loads a fixed-width resource reference without normalizing its bytes."""
+        if fixed_width and len(data) != cls.MAX_LENGTH:
+            raise ValueError("A stored ResRef must contain exactly 16 bytes.")
+        value = cls("")
+        value._value = data.split(b"\0", 1)[0].decode("ascii", "surrogateescape")
+        value._raw_data = bytes(data)
+        return value
+
+    def to_bytes(self, *, fixed_width: bool = True) -> bytes:
+        """Returns the original representation or strictly encodes an assigned name."""
+        data = self._raw_data if self._raw_data is not None else self._value.encode("ascii", "strict")
+        if not fixed_width:
+            return data
+        if len(data) > self.MAX_LENGTH:
+            raise self.ExceedsMaxLengthError(self._value)
+        return data.ljust(self.MAX_LENGTH, b"\0")
 
     @classmethod
     def from_blank(cls) -> ResRef:
@@ -196,6 +216,7 @@ class ResRef:
                 # raise self.InvalidFormatError(msg)  # FIXME: pykotor isn't stable enough to enforce this yet.
 
         self._value = parsed_text.strip()
+        self._raw_data = None
 
     def get(self) -> str:
         """Returns a case-insensitive wrapped string."""
@@ -517,6 +538,8 @@ class InventoryItem:
         self.resref: ResRef = resref
         self.droppable: bool = droppable
         self.infinite: bool = infinite
+        self.pos_x: int | None = None
+        self.pos_y: int | None = None
 
     def __str__(
         self,

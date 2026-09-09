@@ -1181,8 +1181,10 @@ class Face:
         dx2 = self.v2.x - self.v1.x
         dy2 = self.v2.y - self.v1.y
         dx3 = self.v3.x - self.v1.x
-        dy3 = self.v3.z - self.v1.y
+        dy3 = self.v3.y - self.v1.y
         scale = dx3 * dy2 - dx2 * dy3
+        if scale == 0:
+            raise ValueError("The triangle does not define a unique height in the XY plane.")
         nx = (dx1 * dy2 - dy1 * dx2) / scale
         ny = (dy1 * dx3 - dx1 * dy3) / scale
         return self.v1.z + ny * (self.v2.z - self.v1.z) + nx * (self.v3.z - self.v1.z)

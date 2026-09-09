@@ -66,29 +66,29 @@ class GFFXMLReader(ResourceReader):
         label: str | None = xml_field.get("label")
 
         if xml_field.tag == "byte":
-            gff_struct.set_uint8(label, int(xml_field.text))
+            gff_struct.add_field(label, GFFFieldType.UInt8, int(xml_field.text))
         elif xml_field.tag == "char":
-            gff_struct.set_int8(label, int(xml_field.text))
+            gff_struct.add_field(label, GFFFieldType.Int8, int(xml_field.text))
         elif xml_field.tag == "uint16":
-            gff_struct.set_uint16(label, int(xml_field.text))
+            gff_struct.add_field(label, GFFFieldType.UInt16, int(xml_field.text))
         elif xml_field.tag == "sint16":
-            gff_struct.set_int16(label, int(xml_field.text))
+            gff_struct.add_field(label, GFFFieldType.Int16, int(xml_field.text))
         elif xml_field.tag == "uint32":
-            gff_struct.set_uint32(label, int(xml_field.text))
+            gff_struct.add_field(label, GFFFieldType.UInt32, int(xml_field.text))
         elif xml_field.tag == "sint32":
-            gff_struct.set_int32(label, int(xml_field.text))
+            gff_struct.add_field(label, GFFFieldType.Int32, int(xml_field.text))
         elif xml_field.tag == "uint64":
-            gff_struct.set_uint64(label, int(xml_field.text))
-        elif xml_field.tag == "sint65":
-            gff_struct.set_int64(label, int(xml_field.text))
+            gff_struct.add_field(label, GFFFieldType.UInt64, int(xml_field.text))
+        elif xml_field.tag == "sint64":
+            gff_struct.add_field(label, GFFFieldType.Int64, int(xml_field.text))
         elif xml_field.tag == "float":
-            gff_struct.set_single(label, float(xml_field.text))
+            gff_struct.add_field(label, GFFFieldType.Single, float(xml_field.text))
         elif xml_field.tag == "double":
-            gff_struct.set_double(label, float(xml_field.text))
+            gff_struct.add_field(label, GFFFieldType.Double, float(xml_field.text))
         elif xml_field.tag == "exostring":
-            gff_struct.set_string(label, xml_field.text)
+            gff_struct.add_field(label, GFFFieldType.String, xml_field.text or "")
         elif xml_field.tag == "resref":
-            gff_struct.set_resref(label, ResRef(xml_field.text))
+            gff_struct.add_field(label, GFFFieldType.ResRef, ResRef.from_bytes((xml_field.text or "").encode("ascii", "surrogateescape"), fixed_width=False))
         elif xml_field.tag == "locstring":
             locstring = LocalizedString(-1)
             locstring.stringref = -1 if xml_field.get("strref") == "4294967295" else int(xml_field.get("strref"))
@@ -96,11 +96,11 @@ class GFFXMLReader(ResourceReader):
                 language, gender = LocalizedString.substring_pair(
                     int(substring.get("language")),
                 )
-                locstring.set_data(language, gender, substring.text)
-            gff_struct.set_locstring(label, locstring)
+                locstring.set_data(language, gender, substring.text or "")
+            gff_struct.add_field(label, GFFFieldType.LocalizedString, locstring)
         elif xml_field.tag == "data":
-            data = base64.b64decode(xml_field.text)
-            gff_struct.set_binary(label, data)
+            data = base64.b64decode(xml_field.text or "")
+            gff_struct.add_field(label, GFFFieldType.Binary, data)
         elif xml_field.tag == "orientation":
             coords = xml_field.findall("double")
             v4 = Vector4(
@@ -109,7 +109,7 @@ class GFFXMLReader(ResourceReader):
                 float(coords[2].text),
                 float(coords[3].text),
             )
-            gff_struct.set_vector4(label, v4)
+            gff_struct.add_field(label, GFFFieldType.Vector4, v4)
         elif xml_field.tag == "vector":
             coords = xml_field.findall("double")
             v3 = Vector3(
@@ -117,18 +117,18 @@ class GFFXMLReader(ResourceReader):
                 float(coords[1].text),
                 float(coords[2].text),
             )
-            gff_struct.set_vector3(label, v3)
+            gff_struct.add_field(label, GFFFieldType.Vector3, v3)
         elif xml_field.tag == "struct":
             child_struct = GFFStruct()
             self._load_struct(child_struct, xml_field)
-            gff_struct.set_struct(label, child_struct)
+            gff_struct.add_field(label, GFFFieldType.Struct, child_struct)
         elif xml_field.tag == "list":
             gff_list = GFFList()
             for xml_struct in xml_field:
                 gff_list.add(0)
                 child_struct = gff_list.at(len(gff_list) - 1)
                 self._load_struct(child_struct, xml_struct)
-            gff_struct.set_list(label, gff_list)
+            gff_struct.add_field(label, GFFFieldType.List, gff_list)
 
 
 class GFFXMLWriter(ResourceWriter):
@@ -153,7 +153,7 @@ class GFFXMLWriter(ResourceWriter):
         self._build_struct(self.gff.root, xml_struct)
 
         indent(self.xml_root)
-        self._writer.write_bytes(ElementTree.tostring(self.xml_root))
+        self._writer.write_bytes(ElementTree.tostring(self.xml_root, encoding="unicode").encode("utf-8"))
 
     def _build_struct(
         self,

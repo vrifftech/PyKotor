@@ -38,10 +38,14 @@ class SSFBinaryReader(ResourceReader):
             raise ValueError(msg)
 
         sounds_offset = self._reader.read_uint32()
-        self._reader.seek(sounds_offset)
+        if sounds_offset < 12 or sounds_offset + 28 * 4 > self._size:
+            raise ValueError("The SSF data offset must address all 28 sound entries.")
 
-        for sound in SSFSound:
-            self._ssf.set_data(sound, self._reader.read_uint32(max_neg1=True))
+        self._ssf._padding = self._reader.read_bytes(sounds_offset - 12)
+        entry_count = min(len(SSFSound), (self._size - sounds_offset) // 4)
+        for index in range(entry_count):
+            self._ssf.set_data(SSFSound(index), self._reader.read_uint32(max_neg1=True))
+        self._ssf._trailing_data = self._reader.read_bytes(self._size - sounds_offset - entry_count * 4)
 
         return self._ssf
 
@@ -62,7 +66,9 @@ class SSFBinaryWriter(ResourceWriter):
     ):
         self._writer.write_string("SSF ")
         self._writer.write_string("V1.1")
-        self._writer.write_uint32(12)
+        self._writer.write_uint32(12 + len(self._ssf._padding))
+        self._writer.write_bytes(self._ssf._padding)
 
-        for sound in SSFSound:
-            self._writer.write_uint32(self._ssf.get(sound), max_neg1=True)
+        for index in range(self._ssf._entry_count):
+            self._writer.write_uint32(self._ssf.get(SSFSound(index)), max_neg1=True)
+        self._writer.write_bytes(self._ssf._trailing_data)

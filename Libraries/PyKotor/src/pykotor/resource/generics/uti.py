@@ -3,6 +3,8 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import TYPE_CHECKING
 
+from pykotor.resource.formats.gff.gff_data import GFFFieldType
+from pykotor.resource.generics._gff import (remember_gff, preserve_gff, remember_gff_struct, bind_gff_struct)
 from pykotor.common.language import LocalizedString
 from pykotor.common.misc import Game, ResRef
 from pykotor.resource.formats.gff import GFF, GFFContent, GFFList, read_gff, write_gff
@@ -54,7 +56,7 @@ class UTI:
         self.description: LocalizedString = LocalizedString.from_invalid()
         self.description2: LocalizedString = LocalizedString.from_invalid()
         self.tag: str = ""
-        self.charges: int = 0
+        self.charges: int = 50
         self.cost: int = 0
         self.stack_size: int = 0
         self.plot: int = 0
@@ -69,11 +71,12 @@ class UTI:
         # Armor Items Only:
         self.body_variation: int = 0
         self.model_variation: int = 0
+        self._model_variation_field: str = "ModelVariation"
         self.texture_variation: int = 0
 
         # Deprecated:
         self.stolen: int = 0
-        self.identified: int = 0
+        self.identified: int = 1
 
     def is_armor(
         self,
@@ -109,40 +112,43 @@ def construct_uti(
     uti = UTI()
 
     root = gff.root
-    uti.resref = root.acquire("TemplateResRef", ResRef.from_blank())
-    uti.base_item = root.acquire("BaseItem", 0)
-    uti.name = root.acquire("LocalizedName", LocalizedString.from_invalid())
-    uti.description = root.acquire("DescIdentified", LocalizedString.from_invalid())
-    uti.description2 = root.acquire("Description", LocalizedString.from_invalid())
-    uti.tag = root.acquire("Tag", "")
-    uti.charges = root.acquire("Charges", 0)
-    uti.cost = root.acquire("Cost", 0)
-    uti.stack_size = root.acquire("StackSize", 0)
-    uti.plot = root.acquire("Plot", 0)
-    uti.add_cost = root.acquire("AddCost", 0)
-    uti.palette_id = root.acquire("PaletteID", 0)
-    uti.comment = root.acquire("Comment", "")
-    uti.model_variation = root.acquire("ModelVariation", 0)
-    uti.body_variation = root.acquire("BodyVariation", 0)
-    uti.texture_variation = root.acquire("TextureVar", 0)
-    uti.upgrade_level = root.acquire("UpgradeLevel", 0)
-    uti.stolen = root.acquire("Stolen", 0)
-    uti.identified = root.acquire("Identified", 0)
+    uti.resref = root.acquire("TemplateResRef", ResRef.from_blank(), field_type=GFFFieldType.ResRef)
+    uti.base_item = root.acquire("BaseItem", 0, field_type=GFFFieldType.Int32)
+    uti.name = root.acquire("LocalizedName", LocalizedString.from_invalid(), field_type=GFFFieldType.LocalizedString)
+    uti.description = root.acquire("DescIdentified", LocalizedString.from_invalid(), field_type=GFFFieldType.LocalizedString)
+    uti.description2 = root.acquire("Description", LocalizedString.from_invalid(), field_type=GFFFieldType.LocalizedString)
+    uti.tag = root.acquire("Tag", "", field_type=GFFFieldType.String)
+    uti.charges = root.acquire("Charges", 50, field_type=GFFFieldType.UInt8)
+    uti.cost = root.acquire("Cost", 0, field_type=GFFFieldType.UInt32)
+    uti.stack_size = root.acquire("StackSize", 0, field_type=GFFFieldType.UInt16)
+    uti.plot = root.acquire("Plot", 0, field_type=GFFFieldType.UInt8)
+    uti.add_cost = root.acquire("AddCost", 0, field_type=GFFFieldType.UInt32)
+    uti.palette_id = root.acquire("PaletteID", 0, field_type=GFFFieldType.UInt8)
+    uti.comment = root.acquire("Comment", "", field_type=GFFFieldType.String)
+    uti._model_variation_field = "ModelVariation" if root.exists("ModelVariation") else "ModelPart1"
+    uti.model_variation = root.acquire(uti._model_variation_field, 0, field_type=GFFFieldType.UInt8)
+    uti.body_variation = root.acquire("BodyVariation", 0, field_type=GFFFieldType.UInt8)
+    uti.texture_variation = root.acquire("TextureVar", 0, field_type=GFFFieldType.UInt8)
+    uti.upgrade_level = root.acquire("UpgradeLevel", 0, field_type=GFFFieldType.UInt8)
+    uti.stolen = root.acquire("Stolen", 0, field_type=GFFFieldType.UInt8)
+    uti.identified = root.acquire("Identified", 1, field_type=GFFFieldType.UInt8)
 
-    for property_struct in root.acquire("PropertiesList", GFFList()):
+    for property_struct in root.acquire("PropertiesList", GFFList(), field_type=GFFFieldType.List):
         prop = UTIProperty()
+        remember_gff_struct(prop, property_struct)
         uti.properties.append(prop)
-        prop.cost_table = property_struct.acquire("CostTable", 0)
-        prop.cost_value = property_struct.acquire("CostValue", 0)
-        prop.param1 = property_struct.acquire("Param1", 0)
-        prop.param1_value = property_struct.acquire("Param1Value", 0)
-        prop.property_name = property_struct.acquire("PropertyName", 0)
-        prop.subtype = property_struct.acquire("Subtype", 0)
-        prop.chance_appear = property_struct.acquire("ChanceAppear", 100)
+        prop.cost_table = property_struct.acquire("CostTable", 0, field_type=GFFFieldType.UInt8)
+        prop.cost_value = property_struct.acquire("CostValue", 0, field_type=GFFFieldType.UInt16)
+        prop.param1 = property_struct.acquire("Param1", 0, field_type=GFFFieldType.UInt8)
+        prop.param1_value = property_struct.acquire("Param1Value", 0, field_type=GFFFieldType.UInt8)
+        prop.property_name = property_struct.acquire("PropertyName", 0, field_type=GFFFieldType.UInt16)
+        prop.subtype = property_struct.acquire("Subtype", 0, field_type=GFFFieldType.UInt16)
+        prop.chance_appear = property_struct.acquire("ChanceAppear", 100, field_type=GFFFieldType.UInt8)
 
         if property_struct.exists("UpgradeType"):
-            prop.upgrade_type = property_struct.acquire("UpgradeType", 0)
+            prop.upgrade_type = property_struct.acquire("UpgradeType", 0, field_type=GFFFieldType.UInt8)
 
+    remember_gff(uti, gff)
     return uti
 
 
@@ -172,6 +178,7 @@ def dismantle_uti(
     properties_list: GFFList = root.set_list("PropertiesList", GFFList())
     for prop in uti.properties:
         properties_struct = properties_list.add(0)
+        bind_gff_struct(properties_struct, prop)
         properties_struct.set_uint8("CostTable", prop.cost_table)
         properties_struct.set_uint16("CostValue", prop.cost_value)
         properties_struct.set_uint8("Param1", prop.param1)
@@ -182,7 +189,7 @@ def dismantle_uti(
         if prop.upgrade_type is not None:
             properties_struct.set_uint8("UpgradeType", prop.upgrade_type)
 
-    root.set_uint8("ModelVariation", uti.model_variation)
+    root.set_uint8(uti._model_variation_field, uti.model_variation)
     root.set_uint8("BodyVariation", uti.body_variation)
     root.set_uint8("TextureVar", uti.texture_variation)
 
@@ -193,7 +200,7 @@ def dismantle_uti(
         root.set_uint8("Stolen", uti.stolen)
         root.set_uint8("Identified", uti.identified)
 
-    return gff
+    return preserve_gff(uti, gff, lambda original: dismantle_uti(original, game=game, use_deprecated=use_deprecated))
 
 
 def read_uti(

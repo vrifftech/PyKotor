@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import os
+import shutil
+import tempfile
 
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from pykotor.common.stream import BinaryReader
@@ -127,13 +130,26 @@ def write_gff(
         PermissionError: If the file could not be written to the specified destination.
         ValueError: If the specified format was unsupported.
     """
-    if file_format is ResourceType.GFF:
-        GFFBinaryWriter(gff, target).write()
-    elif file_format is ResourceType.GFF_XML:
-        GFFXMLWriter(gff, target).write()
-    else:
-        msg = "Unsupported format specified; use GFF or GFF_XML."
-        raise ValueError(msg)
+    if file_format not in (ResourceType.GFF, ResourceType.GFF_XML):
+        raise ValueError("Unsupported format specified; use GFF or GFF_XML.")
+    writer = GFFBinaryWriter if file_format is ResourceType.GFF else GFFXMLWriter
+    if not isinstance(target, (str, os.PathLike)):
+        writer(gff, target).write()
+        return
+    path = Path(target)
+    if path.is_dir():
+        error = PermissionError if os.name == "nt" else IsADirectoryError
+        raise error(f"Cannot write a GFF to directory '{path}'.")
+    with tempfile.NamedTemporaryFile(dir=path.parent, prefix=f".{path.name.lower()}.", suffix=".tmp", delete=False) as temp:
+        temporary_path = Path(temp.name)
+    try:
+        writer(gff, temporary_path).write()
+        if path.exists():
+            shutil.copymode(path, temporary_path)
+        os.replace(temporary_path, path)
+    finally:
+        if temporary_path.exists():
+            temporary_path.unlink()
 
 
 def bytes_gff(

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from os import PathLike
 from typing import TYPE_CHECKING
 
-from pykotor.resource.formats.erf.erf_data import ERF, ERFLocalizedString, ERFType
+from pykotor.common.misc import ResRef
+from pykotor.resource.formats.erf.erf_data import ERF, ERFResource, ERFLocalizedString, ERFType
 from pykotor.resource.type import ResourceReader, ResourceType, ResourceWriter, autoclose
 from utility.logger_util import RobustRootLogger
+from utility.system.path import PurePath
 
 if TYPE_CHECKING:
     from pykotor.resource.type import SOURCE_TYPES, TARGET_TYPES
@@ -17,6 +20,8 @@ class ERFBinaryReader(ResourceReader):
         offset: int = 0,
         size: int = 0,
     ):
+        if isinstance(source, (str, PathLike)) and PurePath.pathify(source).suffix.lower() == ".sav":
+            raise ValueError("SAV archives are not supported.")
         super().__init__(source, offset, size)
         self._erf: ERF | None = None
 
@@ -69,12 +74,8 @@ class ERFBinaryReader(ResourceReader):
         offset_to_resources = self._reader.read_uint32()
         self._erf.build_year = self._reader.read_uint32()
         self._erf.build_day = self._reader.read_uint32()
-        description_strref = self._reader.read_uint32()
-        self._erf.description_strref = description_strref
+        self._erf.description_strref = self._reader.read_uint32()
         self._erf.reserved = self._reader.read_bytes(116)
-        if description_strref == 0 and file_type == ERFType.MOD.value:
-            RobustRootLogger().debug("Assuming this is a SAV file")
-            self._erf.is_save_erf = True
 
         if localized_string_count:
             self._reader.seek(offset_to_localized_strings)
@@ -93,12 +94,12 @@ class ERFBinaryReader(ResourceReader):
                     bytes_read,
                 )
 
-        resrefs: list[str] = []
+        resrefs: list[ResRef] = []
         resids: list[int] = []
         restypes: list[int] = []
         self._reader.seek(offset_to_keys)
         for _ in range(entry_count):
-            resrefs.append(self._reader.read_string(16))
+            resrefs.append(ResRef.from_bytes(self._reader.read_bytes(16)))
             resids.append(self._reader.read_uint32())
             restypes.append(self._reader.read_uint16())
             self._reader.skip(2)
@@ -110,10 +111,12 @@ class ERFBinaryReader(ResourceReader):
             resoffsets.append(self._reader.read_uint32())
             ressizes.append(self._reader.read_uint32())
 
-        for i in range(entry_count):
-            self._reader.seek(resoffsets[i])
-            resdata = self._reader.read_bytes(ressizes[i])
-            self._erf.set_data(resrefs[i], ResourceType.from_id(restypes[i]), resdata)
+        for i, resid in enumerate(resids):
+            if resid >= entry_count:
+                raise ValueError(f"ERF resource ID {resid} has no payload record.")
+            self._reader.seek(resoffsets[resid])
+            resdata = self._reader.read_bytes(ressizes[resid])
+            self._erf.append(ERFResource(resrefs[i], ResourceType.from_id(restypes[i]), resdata))
 
         return self._erf
 
@@ -128,6 +131,11 @@ class ERFBinaryWriter(ResourceWriter):
         erf: ERF,
         target: TARGET_TYPES,
     ):
+        if isinstance(target, (str, PathLike)) and PurePath.pathify(target).suffix.lower() == ".sav":
+            raise ValueError("SAV archives are not supported.")
+        for resource in erf:
+            if not 0 <= resource.restype.type_id <= 0xFFFF:
+                raise ValueError(f"Invalid ERF resource type ID: {resource.restype.type_id}")
         super().__init__(target)
         self.erf: ERF = erf
 
@@ -161,7 +169,7 @@ class ERFBinaryWriter(ResourceWriter):
             self._writer.write_bytes(localized_string.data)
 
         for resid, resource in enumerate(self.erf):
-            self._writer.write_string(str(resource.resref), string_length=16)
+            self._writer.write_bytes(resource.resref.to_bytes())
             self._writer.write_uint32(resid)
             self._writer.write_uint16(resource.restype.type_id)
             self._writer.write_uint16(0)

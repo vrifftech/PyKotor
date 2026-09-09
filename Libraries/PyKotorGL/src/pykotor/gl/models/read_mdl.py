@@ -17,6 +17,25 @@ if TYPE_CHECKING:
     from pykotor.gl.scene import Scene
 
 
+def _element_data(mdl: BinaryReader, mesh_offset: int) -> bytes:
+    """Read each declared draw group instead of assuming one contiguous index array."""
+    mdl.seek(mesh_offset + 176)
+    counts_offset, count = mdl.read_uint32(), mdl.read_uint32()
+    mdl.seek(mesh_offset + 188)
+    pointers_offset, groups = mdl.read_uint32(), mdl.read_uint32()
+    if count != groups:
+        raise ValueError("Model draw-group count and pointer arrays disagree")
+    mdl.seek(counts_offset)
+    sizes = [mdl.read_uint32() for _ in range(count)]
+    mdl.seek(pointers_offset)
+    pointers = [mdl.read_uint32() for _ in range(groups)]
+    data = bytearray()
+    for pointer, size in zip(pointers, sizes):
+        mdl.seek(pointer)
+        data.extend(mdl.read_bytes(size * 2))
+    return bytes(data)
+
+
 def _load_node(
     scene: Scene,
     node: Node | None,
@@ -51,7 +70,7 @@ def _load_node(
     mdl.seek(offset)
     node_type = mdl.read_uint16()
     mdl.read_uint16()  # supernode id
-    name_id = mdl.read_uint16()
+    name_id = mdl.read_uint32()
     node = Node(scene, node, names[name_id])
 
     mdl.seek(offset + 16)
@@ -88,15 +107,7 @@ def _load_node(
         mdx_offset = mdl.read_uint32()
         mdl.read_uint32()  # offset_to_vertices
 
-        element_data: list | bytes = []
-        mdl.seek(offset + 80 + 184)
-        element_offsets_count = mdl.read_uint32()
-        offset_to_element_offsets = mdl.read_int32()
-        if offset_to_element_offsets != -1 and element_offsets_count > 0:
-            mdl.seek(offset_to_element_offsets)
-            offset_to_elements = mdl.read_uint32()
-            mdl.seek(offset_to_elements)
-            element_data = mdl.read_bytes(face_count * 2 * 3)
+        element_data = _element_data(mdl, offset + 80)
 
         mdl.seek(offset + 80 + 252)
         mdx_block_size = mdl.read_uint32()
@@ -110,7 +121,7 @@ def _load_node(
         mdl.seek(offset + 80 + 313)
         render = mdl.read_uint8()
 
-        if render and not walkmesh and element_offsets_count > 0:
+        if render and not walkmesh and element_data:
             mdx.seek(mdx_offset)
             vertex_data = mdx.read_bytes(mdx_block_size * vertex_count)
             node.mesh = Mesh(
@@ -224,7 +235,7 @@ def gl_load_stitched_model(scene: Scene, mdl: BinaryReader, mdx: BinaryReader) -
         mdl.seek(offset)
         node_type = mdl.read_uint16()
         _supernode_id = mdl.read_uint16()
-        name_list_index = mdl.read_uint16()
+        name_list_index = mdl.read_uint32()
 
         mdl.seek(offset + 16)
         position = glm.vec3(mdl.read_single(), mdl.read_single(), mdl.read_single())
@@ -254,12 +265,14 @@ def gl_load_stitched_model(scene: Scene, mdl: BinaryReader, mdx: BinaryReader) -
             glm.decompose(transform, vec3(), node._rotation, node._position, vec3(), vec4())  # noqa: SLF001  # type: ignore[call-overload, reportCallIssue, reportArgumentType]
             node._recalc_transform()
 
-    merged: dict[str, list[tuple[int, mat4x4]]] = {}
+    merged: dict[tuple[str, str, int], list[tuple[int, mat4x4]]] = {}
     for offset, transform in offsets:
         mdl.seek(offset + 80 + 88)
         texture = mdl.read_terminated_string("\0", 32)
         lightmap = mdl.read_terminated_string("\0", 32)
-        key = texture + "\n" + lightmap
+        mdl.seek(offset + 80 + 256)
+        streams = mdl.read_uint32()
+        key = (texture, lightmap, streams & 0x27)
         if key not in merged:
             merged[key] = []
         merged[key].append((offset, transform))
@@ -285,17 +298,8 @@ def gl_load_stitched_model(scene: Scene, mdl: BinaryReader, mdx: BinaryReader) -
             mdx_texture_offset = mdl.read_int32()
             mdx_lightmap_offset = mdl.read_int32()
 
-            mdl.seek(offset + 80 + 8)
-            mdl.read_uint32()  # offset_to_faces
-            face_count = mdl.read_uint32()
-            mdl.seek(offset + 80 + 184)
-            element_offsets_count = mdl.read_uint32()
-            offset_to_element_offsets = mdl.read_int32()
-            if offset_to_element_offsets != -1 and element_offsets_count > 0:
-                mdl.seek(offset_to_element_offsets)
-                offset_to_elements = mdl.read_uint32()
-                mdl.seek(offset_to_elements)
-                elements.extend(mdl.read_uint16() + last_element for _ in range(face_count * 3))
+            element_data = _element_data(mdl, offset + 80)
+            elements.extend(v[0] + last_element for v in struct.iter_unpack("<H", element_data))
             mdl.seek(offset + 80 + 304)
             vertex_count = mdl.read_uint16()
             if k2:
@@ -310,19 +314,23 @@ def gl_load_stitched_model(scene: Scene, mdl: BinaryReader, mdx: BinaryReader) -
                 vertex = transform * vertex
                 vertex_data += struct.pack("fff", vertex.x, vertex.y, vertex.z)
 
-                if mdx_normal_offset == -1:
+                if mdx_normal_offset == -1 or not mdx_data_bitflags & 0x20:
                     vertex_data += bytes(12)
                 else:
                     mdx.seek(mdx_offset + i * mdx_block_size + mdx_normal_offset)
-                    vertex_data += mdx.read_bytes(12)
+                    normal = glm.vec3(mdx.read_single(), mdx.read_single(), mdx.read_single())
+                    normal = glm.transpose(glm.inverse(glm.mat3(transform))) * normal
+                    if glm.length(normal):
+                        normal = glm.normalize(normal)
+                    vertex_data += struct.pack("fff", normal.x, normal.y, normal.z)
 
-                if mdx_texture_offset == -1:
+                if mdx_texture_offset == -1 or not mdx_data_bitflags & 0x02:
                     vertex_data += bytes(8)
                 else:
                     mdx.seek(mdx_offset + i * mdx_block_size + mdx_texture_offset)
                     vertex_data += mdx.read_bytes(8)
 
-                if mdx_lightmap_offset == -1:
+                if mdx_lightmap_offset == -1 or not mdx_data_bitflags & 0x04:
                     vertex_data += bytes(8)
                 else:
                     mdx.seek(mdx_offset + i * mdx_block_size + mdx_lightmap_offset)
@@ -334,7 +342,7 @@ def gl_load_stitched_model(scene: Scene, mdl: BinaryReader, mdx: BinaryReader) -
         for element in elements:
             element_data += struct.pack("H", element)
 
-        texture, lightmap = key.split("\n")
+        texture, lightmap, mdx_data_bitflags = key
         child.mesh = Mesh(scene, child, texture, lightmap, vertex_data, element_data, 40, mdx_data_bitflags, 0, 12, 24, 32)
 
     return Model(scene, root)
