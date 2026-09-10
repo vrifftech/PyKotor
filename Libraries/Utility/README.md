@@ -1,11 +1,14 @@
-# PyKotorGL
+# PyKotorUtility
 
-The `pykotor.gl` namespace extension used by Holocron Toolset. It requires the
-matching PyKotor library plus NumPy, PyOpenGL and PyGLM. The `accelerate` extra
-is optional. Setuptools is a build tool, not a rendering/runtime dependency.
+The shared `utility` Python package used by the separately maintained PyKotor,
+HoloPatcher and Holocron Toolset repositories. The distribution is named
+**PyKotorUtility** to distinguish it from unrelated packages called Utility.
+Its import name remains `utility`; no application imports need changing.
 
-This wheel owns only `pykotor.gl` and its children. It does not contain a second
-copy of the core `pykotor` packages or replace their namespace initializer.
+It includes the maintained path, platform-dialog, logging, error, tooltip and
+RTF/RTE helpers. The unused updater/crypto and alternate GUI communication
+frameworks are no longer part of this distribution. Tcl/Tk is provided by the
+Python/system installation, not by a pip dependency.
 
 ## Build and installation
 

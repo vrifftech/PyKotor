@@ -1,11 +1,11 @@
-# PyKotorGL
+# PyKotorFont
 
-The `pykotor.gl` namespace extension used by Holocron Toolset. It requires the
-matching PyKotor library plus NumPy, PyOpenGL and PyGLM. The `accelerate` extra
-is optional. Setuptools is a build tool, not a rendering/runtime dependency.
+The `pykotor.font` namespace extension for bitmap-font/TXI generation. Its
+runtime dependencies are the matching PyKotor distribution and Pillow. It does
+not require Django, PLY directly, OpenGL or a GUI framework.
 
-This wheel owns only `pykotor.gl` and its children. It does not contain a second
-copy of the core `pykotor` packages or replace their namespace initializer.
+Font binaries are not included. Supply appropriately licensed fonts locally for
+font generation and the retained manual font-fixture tests.
 
 ## Build and installation
 

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import os
+from tempfile import TemporaryDirectory
 import unittest
 
 from PIL import Image
@@ -9,22 +9,19 @@ from pykotor.common.language import Language
 from pykotor.font.draw import write_bitmap_font, write_bitmap_fonts
 from utility.system.path import Path
 
-os.chdir("./Libraries/PyKotorFont")
-FONT_PATH_FILE = Path("tests/files/roboto/Roboto-Black.ttf")
-THAI_FONT_PATH_FILE = Path("tests/files/TH Sarabun New Regular/TH Sarabun New Regular.ttf").resolve()
-print(THAI_FONT_PATH_FILE)
+FIXTURE_ROOT = Path(__file__).resolve().parent / "files"
+FONT_PATH_FILE = FIXTURE_ROOT / "roboto/Roboto-Black.ttf"
+THAI_FONT_PATH_FILE = FIXTURE_ROOT / "TH Sarabun New Regular/TH Sarabun New Regular.ttf"
 
 
 class TestWriteBitmapFont(unittest.TestCase):
     def setUp(self):
-        self.output_path = Path("output")
-        self.output_path.mkdir(exist_ok=True)
-
-    def cleanUp(self):
-        self.output_path.unlink()
+        output = TemporaryDirectory(prefix="pykotor-font-")
+        self.addCleanup(output.cleanup)
+        self.output_path = Path(output.name)
 
     def test_bitmap_font(self):
-        write_bitmap_fonts(self.output_path, r"C:\Windows\Fonts\Inkfree.ttf", (2048, 2048), Language.ENGLISH, draw_box=True, custom_scaling=1.0)
+        write_bitmap_fonts(self.output_path, FONT_PATH_FILE, (2048, 2048), Language.ENGLISH, draw_box=True, custom_scaling=1.0)
 
     # def test_bitmap_font_chinese(self):
     def test_bitmap_font_thai(self):
@@ -32,7 +29,7 @@ class TestWriteBitmapFont(unittest.TestCase):
 
     def test_valid_inputs(self):
         # Test with valid inputs
-        target_path = Path("output/font2.tga").resolve()
+        target_path = self.output_path / "font2.tga"
         resolution = (1024, 1024)
         lang = Language.ENGLISH
 

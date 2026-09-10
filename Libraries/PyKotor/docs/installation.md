@@ -31,7 +31,7 @@ To fetch the data for a singular resource use the ```resource``` method. This re
 ```python
 resource = installation.resource("appearance", ResourceType.TwoDA)
 resname, restype, filepath, data = resource
-twoda = load_2da(data)
+twoda = read_2da(data)
 ```
 
 You can narrow your search down and customize the order to look in.
@@ -53,8 +53,8 @@ If you wish to look for multiple resources it is more efficient to use the ```re
 search = [ResourceIdentifier("appearance", ResourceType.TwoDA), ResourceIdentifier("heads", ResourceType.TwoDA)]
 results = installation.resources(search)
 
-appearance = load_2da(results[ResourceIdentifier("appearance", ResourceType.TwoDA)].data)
-heads = load_2da(results[ResourceIdentifier("heads", ResourceType.TwoDA)].data)
+appearance = read_2da(results[ResourceIdentifier("appearance", ResourceType.TwoDA)].data)
+heads = read_2da(results[ResourceIdentifier("heads", ResourceType.TwoDA)].data)
 ```
 
 ### Finding filepaths

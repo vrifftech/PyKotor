@@ -1,1 +1,3 @@
-ply>=3.11,<4                    # required for the nss compiler lexer
+# Third-party runtime requirements for source-checkout use.
+# Installed distributions additionally require the matching local PyKotorUtility.
+ply>=3.11,<4

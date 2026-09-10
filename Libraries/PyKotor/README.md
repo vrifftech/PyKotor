@@ -1,11 +1,14 @@
-# PyKotorGL
+# PyKotor
 
-The `pykotor.gl` namespace extension used by Holocron Toolset. It requires the
-matching PyKotor library plus NumPy, PyOpenGL and PyGLM. The `accelerate` extra
-is optional. Setuptools is a build tool, not a rendering/runtime dependency.
+The audited core game-resource library and TSLPatcher-compatible installation
+backend. This package retains the engine-verified format and preservation repairs;
+it is not the unmodified upstream 1.7 source despite retaining that base version.
+See the repository's `SOURCE_SNAPSHOT.json` for exact provenance.
 
-This wheel owns only `pykotor.gl` and its children. It does not contain a second
-copy of the core `pykotor` packages or replace their namespace initializer.
+The wheel requires the matching **PyKotorUtility** distribution and PLY for the
+NSS compiler. `secure_xml`, `encodings`, `images` and `font` are optional extras.
+No graphics or GUI toolkit is required by the core distribution. Individual
+platform/Tk helper operations still require their host facilities.
 
 ## Build and installation
 

@@ -1,0 +1,13 @@
+# Full-library source development. CI has an explicit core job below.
+-r Libraries/PyKotor/requirements.txt
+-r Libraries/PyKotor/recommended.txt
+-r Libraries/PyKotorGL/requirements.txt
+-r Libraries/PyKotorFont/requirements.txt
+-r Libraries/Utility/requirements.txt
+
+build>=1
+setuptools>=68
+wheel
+pytest>=7
+ruff>=0.6,<1
+typing-extensions>=4.8

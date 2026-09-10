@@ -1,62 +1,99 @@
 # PyKotor
 
-PyKotor is the shared Python implementation for reading, modifying, and writing resources used by *Star Wars: Knights of the Old Republic* and *The Sith Lords*.
+Shared resource libraries and the audited HoloPatcher backend for Knights of the
+Old Republic and The Sith Lords. HoloPatcher **2.0b** and Holocron Toolset
+**4.0.0b** remain separate repositories; no frontend is embedded here.
 
-This repository contains reusable libraries and their tests. End-user applications are maintained separately:
+## Workspace and distributions
 
-- **HoloPatcher** — TSLPatcher-compatible mod installer.
-- **Holocron Toolset** — graphical resource editor.
+| Directory | Distribution | Import namespace |
+|---|---|---|
+| `Libraries/Utility` | `PyKotorUtility` | `utility` |
+| `Libraries/PyKotor` | `PyKotor` | `pykotor` core packages |
+| `Libraries/PyKotorGL` | `PyKotorGL` | `pykotor.gl` |
+| `Libraries/PyKotorFont` | `PyKotorFont` | `pykotor.font` |
 
-## Repository layout
+All four distributions retain version `1.7`; the exact audited contents are
+identified by `SOURCE_SNAPSHOT.json` and `SOURCE_FILES.sha256`, not that inherited
+number alone. Build components from the same snapshot. The runtime import
+names and frontend backend-selection paths are unchanged.
+
+Python **3.10 or newer** is required. CI targets 3.10–3.13 on Windows, Linux and
+macOS for the core suite. That configured matrix is not a claim that every native
+GUI/platform combination was executed during this cleanup.
+
+## Source development
+
+Create/activate a virtual environment, then install `requirements-dev.txt`.
+To work offline, provide the dependency wheels locally:
 
 ```text
-Libraries/PyKotor/      Core game-resource library and HoloPatcher backend
-Libraries/Utility/      Shared platform and utility code
-Libraries/PyKotorGL/    Rendering support used by graphical tools
-Libraries/PyKotorFont/  Bitmap-font generation support
-tests/                  PyKotor library and patcher tests
+python -m pip install --no-index --find-links /path/to/wheels -r requirements-dev.txt
+python -m pytest tests -ra
+python -m ruff check Libraries tests
 ```
 
-Application-specific source, build scripts, release workflows, and GUI tests do not belong in this repository.
+Pytest registers the four source directories through the root `pyproject.toml`.
+Ruff is the only configured formatter/linter. Its default gate checks syntax-level
+errors without rewriting legacy style. `ruff format` may be used deliberately on
+files being edited; a whole-repository formatting diff is not part of cleanup.
+Type stubs and `typing-extensions` remain available for development.
 
-## Development setup
+The core CI job installs only the core/decoding test requirements. The separate
+wheel job builds all four libraries and installs their actual runtime dependencies.
+It does not silently skip failing tests or use a source-directory `.pth` to conceal
+missing wheel contents.
 
-Create a virtual environment and install the repository development requirements:
+### Optional local font fixtures
 
-```bash
-python -m venv .venv
+The retained font tests live under `Libraries/PyKotorFont/src/tests`. Supply your
+own licensed fonts at the `files/roboto/Roboto-Black.ttf` and
+`files/TH Sarabun New Regular/TH Sarabun New Regular.ttf` paths relative to that
+file. No font binaries are included. The tests now use file-relative inputs and
+temporary outputs, not a global working-directory change or Windows font path.
+They are manual fixture tests, outside the root core-suite path; no skips or test
+assertions were added or weakened during cleanup.
+
+## Building distributable libraries
+
+With `build`, setuptools and wheel already installed, run from this root:
+
+```text
+python -m build --no-isolation --outdir dist Libraries/Utility
+python -m build --no-isolation --outdir dist Libraries/PyKotor
+python -m build --no-isolation --outdir dist Libraries/PyKotorGL
+python -m build --no-isolation --outdir dist Libraries/PyKotorFont
 ```
 
-Windows PowerShell:
+The commands use each library's explicit PEP 517/621 metadata, not a custom
+`setup.py` parser. No GUI/test packages are included in the core wheels, and the
+core/GL/font wheels do not overlap in owned files.
 
-```powershell
-.\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-python -m pip install -r requirements-dev.txt
-$env:PYTHONPATH = "$PWD\Libraries\PyKotor\src;$PWD\Libraries\Utility\src;$PWD\Libraries\PyKotorGL\src;$PWD\Libraries\PyKotorFont\src"
-python -m pytest tests
+For offline installation into a separate environment, include both these four
+matching wheels and the necessary third-party wheels in the local wheel directory:
+
+```text
+python -m pip install --no-index --find-links /path/to/wheels PyKotor PyKotorGL PyKotorFont
+python -m pip check
 ```
 
-Linux or macOS:
+`PyKotor` declares its `PyKotorUtility` dependency; GL and Font declare the matching
+core dependency. Do not obtain a different same-version backend from an index and
+assume it has these audited changes. `secure_xml`, `encodings`, `images` and `font`
+are core optional extras; GL's `accelerate` extra remains optional.
 
-```bash
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -r requirements-dev.txt
-export PYTHONPATH="$PWD/Libraries/PyKotor/src:$PWD/Libraries/Utility/src:$PWD/Libraries/PyKotorGL/src:$PWD/Libraries/PyKotorFont/src"
-python -m pytest tests
-```
+## Standalone applications
 
-Each distributable library keeps its own packaging metadata under `Libraries/<project>/`.
+Set `PYKOTOR_ROOT` to this repository and run either frontend's `run.py --backend-info` to verify selection. Application-specific
+`HOLOPATCHER_PYKOTOR_ROOT` and `HOLOCRON_PYKOTOR_ROOT` overrides take precedence.
+The frontends deliberately consume the audited source checkout (and embed it at
+PyInstaller build time) rather than silently choosing an installed copy.
 
-## HoloPatcher development
-
-Use the standalone HoloPatcher repository and point it at this checkout with `HOLOPATCHER_PYKOTOR_ROOT`. The selected directory must contain both `Libraries/PyKotor/src/pykotor` and `Libraries/Utility/src/utility`.
-
-## Holocron Toolset development
-
-Use the standalone Holocron Toolset repository. It consumes PyKotor, Utility, PyKotorGL, and PyKotorFont from this repository during source development and executable builds.
+The selected-backup restorer and all audited file-format implementations remain.
+The unused destructive `uninstall_all_mods()` helper and unused Utility updater/GUI
+frameworks have been retired. See `CLEANUP_NOTES.md` for exact scope.
 
 ## License
 
-See `LICENSE` and the license files in the individual library directories.
+Existing license texts and author attribution are retained in the root and each
+library directory. This cleanup does not change their terms.

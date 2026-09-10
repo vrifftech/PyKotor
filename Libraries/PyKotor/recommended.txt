@@ -1,3 +1,3 @@
-defusedxml>=0.7
-charset-normalizer>=2.0
-pycryptodome  # Tested with 3.20.0
+# Supported optional XML and legacy-text decoding features.
+defusedxml>=0.7,<1
+charset-normalizer>=2,<4
