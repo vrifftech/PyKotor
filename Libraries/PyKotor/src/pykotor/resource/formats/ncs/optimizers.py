@@ -82,51 +82,59 @@ class RemoveJMPToAdjacentOptimizer(NCSOptimizer):
 
 
 class RemoveUnusedBlocksOptimizer(NCSOptimizer):
+    """Remove instructions that cannot be reached from the script loader.
+
+    For compiled NSS this is equivalent to BioWare's safe dead-function
+    elimination: user functions are emitted before final reachability is known,
+    then functions that cannot be reached from the loader/call graph disappear.
+    The graph walk also removes any other truly unreachable instruction ranges.
+    """
+
     def optimize(self, ncs: NCS):
-        """Optimizes the NCS by removing unreachable instructions.
+        instructions = ncs.instructions
+        if not instructions:
+            return
 
-        Args:
-        ----
-            ncs: NCS - The NCS object to optimize
-
-        Processing Logic:
-        ----------------
-            - Find list of reachable instructions using breadth first search
-            - Instructions not in reachable list are unreachable
-            - Remove unreachable instructions from NCS.
-        """
-        # Find list of unreachable instructions
-        reachable = set()
+        index_by_instruction = {instruction: index for index, instruction in enumerate(instructions)}
+        reachable_indices: set[int] = set()
         checking: list[int] = [0]
+
         while checking:
-            check: int = checking.pop(0)
-            if check > len(ncs.instructions):
+            index = checking.pop()
+            if index < 0 or index >= len(instructions) or index in reachable_indices:
                 continue
 
-            instruction: NCSInstruction = ncs.instructions[check]
-            if instruction in reachable:
-                continue
-            reachable.add(instruction)
+            reachable_indices.add(index)
+            instruction = instructions[index]
 
-            if instruction.ins_type in {
-                NCSInstructionType.JZ,
-                NCSInstructionType.JNZ,
-                NCSInstructionType.JSR,
-            }:
-                checking.extend((ncs.instructions.index(instruction.jump), check + 1))
+            def add_jump_target() -> None:
+                if instruction.jump is not None:
+                    target = index_by_instruction.get(instruction.jump)
+                    if target is not None:
+                        checking.append(target)
+
+            if instruction.ins_type in {NCSInstructionType.JZ, NCSInstructionType.JNZ}:
+                add_jump_target()
+                checking.append(index + 1)
+            elif instruction.ins_type == NCSInstructionType.JSR:
+                # A subroutine call reaches both the callee and the instruction
+                # following the call once the callee returns.
+                add_jump_target()
+                checking.append(index + 1)
             elif instruction.ins_type == NCSInstructionType.JMP:
-                checking.append(ncs.instructions.index(instruction.jump))
+                add_jump_target()
             elif instruction.ins_type == NCSInstructionType.RETN:
-                ...
+                continue
             else:
-                checking.append(check + 1)
+                checking.append(index + 1)
 
-        unreachable: list[NCSInstruction] = [instruction for instruction in ncs.instructions if instruction not in reachable]
-        for instruction in unreachable:
-            # We do not have to worry about fixing any instructions that JMP since the target instructions here should
-            # be detached for the actual (reachable) script.
-            ncs.instructions.remove(instruction)
-            self.instructions_cleared += 1
+        original_count = len(instructions)
+        ncs.instructions = [
+            instruction
+            for index, instruction in enumerate(instructions)
+            if index in reachable_indices
+        ]
+        self.instructions_cleared += original_count - len(ncs.instructions)
 
 
 class RemoveUnusedGlobalsInStackOptimizer(NCSOptimizer):

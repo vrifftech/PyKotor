@@ -8,7 +8,7 @@ from pykotor.resource.formats.ncs.compiler.lexer import NssLexer
 from pykotor.resource.formats.ncs.compiler.parser import NssParser
 from pykotor.resource.formats.ncs.io_ncs import NCSBinaryReader, NCSBinaryWriter
 from pykotor.resource.formats.ncs.ncs_data import NCS
-from pykotor.resource.formats.ncs.optimizers import RemoveNopOptimizer
+from pykotor.resource.formats.ncs.optimizers import RemoveNopOptimizer, RemoveUnusedBlocksOptimizer
 from pykotor.resource.type import ResourceType
 
 if TYPE_CHECKING:
@@ -126,8 +126,18 @@ def compile_nss(
     block = nss_parser.parser.parse(source, tracking=True, debug=debug)
     block.compile(ncs)
 
-    if not optimizers or not any(isinstance(optimizer, RemoveNopOptimizer) for optimizer in optimizers):
-        optimizers = [RemoveNopOptimizer()] + (optimizers or [])
+    # BioWare's safe optimization level removes functions that cannot be
+    # reached from the loader/call graph. Run reachability before stripping NOP
+    # labels so JSR/JMP targets still describe the original control-flow graph.
+    optimizers = list(optimizers or [])
+    if not any(isinstance(optimizer, RemoveUnusedBlocksOptimizer) for optimizer in optimizers):
+        optimizers.insert(0, RemoveUnusedBlocksOptimizer())
+    if not any(isinstance(optimizer, RemoveNopOptimizer) for optimizer in optimizers):
+        dead_code_index = next(
+            (i for i, optimizer in enumerate(optimizers) if isinstance(optimizer, RemoveUnusedBlocksOptimizer)),
+            -1,
+        )
+        optimizers.insert(dead_code_index + 1, RemoveNopOptimizer())
 
     for optimizer in optimizers:
         optimizer.reset()

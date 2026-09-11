@@ -9,6 +9,33 @@ if TYPE_CHECKING:
     from pykotor.resource.type import SOURCE_TYPES, TARGET_TYPES
 
 
+def _decode_ncs_string(data: bytes) -> str:
+    """Decode NCS's one-byte string representation without losing undefined CP1252 bytes."""
+    result: list[str] = []
+    for byte in data:
+        raw = bytes((byte,))
+        try:
+            result.append(raw.decode("windows-1252"))
+        except UnicodeDecodeError:
+            result.append(chr(byte))
+    return "".join(result)
+
+
+def _encode_ncs_string(value: str) -> bytes:
+    """Encode an NCS string, preserving raw C1 byte values produced by NSS \\xNN escapes."""
+    result = bytearray()
+    for char in value:
+        try:
+            result.extend(char.encode("windows-1252"))
+        except UnicodeEncodeError:
+            codepoint = ord(char)
+            if 0 <= codepoint <= 0xFF:
+                result.append(codepoint)
+            else:
+                raise
+    return bytes(result)
+
+
 class NCSBinaryReader(ResourceReader):
     def __init__(
         self,
@@ -118,7 +145,7 @@ class NCSBinaryReader(ResourceReader):
 
         elif instruction.ins_type == NCSInstructionType.CONSTS:
             length = self._reader.read_uint16(big=True)
-            instruction.args.extend([self._reader.read_string(length)])
+            instruction.args.extend([_decode_ncs_string(self._reader.read_bytes(length))])
 
         elif instruction.ins_type == NCSInstructionType.CONSTO:
             instruction.args.extend([self._reader.read_uint16(big=True)])
@@ -479,8 +506,12 @@ class NCSBinaryWriter(ResourceWriter):
         elif instruction.ins_type == NCSInstructionType.CONSTI:
             self._writer.write_int32(instruction.args[0], big=True)
         elif instruction.ins_type == NCSInstructionType.CONSTS:
-            # CONSTS with string length and string data
-            self._writer.write_string(instruction.args[0], big=True, prefix_length=2)
+            # CONSTS is a two-byte big-endian byte length followed by one-byte string data.
+            data = _encode_ncs_string(instruction.args[0])
+            if len(data) >= 1 << 16:
+                raise ValueError("NCS string constant is too large for its 16-bit length prefix.")
+            self._writer.write_uint16(len(data), big=True)
+            self._writer.write_bytes(data)
 
         elif instruction.ins_type == NCSInstructionType.ACTION:
             # ACTION with routine number and argument count
