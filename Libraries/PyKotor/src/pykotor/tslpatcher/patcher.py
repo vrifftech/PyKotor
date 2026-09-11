@@ -47,6 +47,15 @@ class _PatchTarget:
     staged_capsule_path: CaseAwarePath | None = None
 
 
+@dataclass(frozen=True)
+class _PatchPaths:
+    """Resolved output locations for one patch operation."""
+
+    container_path: CaseAwarePath
+    output_path: CaseAwarePath
+    is_capsule: bool
+
+
 class ModInstaller:
     def __init__(
         self,
@@ -75,6 +84,10 @@ class ModInstaller:
             - Handle legacy changes ini path syntax (changes_ini_path used to just be a filename)
             - Initialize other attributes.
         """
+        # Canonical containment roots are stable for the lifetime of one installer.
+        # Cache their real paths so repeated safety checks only resolve the candidate.
+        self._containment_root_cache: dict[str, str] = {}
+
         self.game_path: CaseAwarePath = self._resolve_folder(os.path.expanduser(game_path))
         requested_mod_path = self._resolve_folder(os.path.expanduser(mod_path))
         requested_ini = os.path.expanduser(changes_ini_path)
@@ -110,12 +123,29 @@ class ModInstaller:
         self.mod_path: CaseAwarePath = requested_mod_path
         if self.tslpatchdata_path is not None:
             package_root = self.tslpatchdata_path.parent
-            self._ensure_within_root(requested_mod_path, package_root, "mod directory")
+            self._ensure_within_cached_root(requested_mod_path, package_root, "mod directory")
             self.mod_path = package_root
 
         self._config: PatcherConfig | None = None
         self._backup: CaseAwarePath | None = None
         self._processed_backup_files: set = set()
+        # Source trees are immutable for the duration of one installation. Cache
+        # resolved source folders/files so preflight and execution can share the
+        # same paths instead of repeating case-aware filesystem discovery.
+        self._source_folder_cache: dict[str, CaseAwarePath] = {}
+        self._source_file_cache: dict[str, CaseAwarePath] = {}
+
+        # Resolved destination folders are shared by many operations (notably
+        # hundreds of InstallList entries targeting Override). Resolve each
+        # logical destination once, then reuse it for the whole installer run.
+        self._destination_folder_cache: dict[str, CaseAwarePath] = {}
+
+        # Cache case-insensitive file discovery. The per-file cache handles
+        # repeated probes for the same output, while the directory index avoids
+        # rescanning a large directory once for every distinct filename.
+        # Installer writes/renames keep both caches synchronized.
+        self._file_lookup_cache: dict[str, CaseAwarePath | None] = {}
+        self._directory_file_cache: dict[str, dict[str, CaseAwarePath]] = {}
 
     @staticmethod
     def _find_case_insensitive_child(
@@ -146,7 +176,14 @@ class ModInstaller:
 
     @classmethod
     def _resolve_folder(cls, folder: os.PathLike | str) -> CaseAwarePath:
-        absolute_folder = CaseAwarePath.pathify(os.path.abspath(os.fspath(folder)))
+        absolute_folder = CaseAwarePath.pathify(cls._lexical_abspath(folder))
+        # Fast path: most installer paths already have the filesystem's usable
+        # spelling. Use stdlib pathlib so CaseAwarePath does not perform its own
+        # case-insensitive directory search on Unix before we decide a fallback
+        # is necessary.
+        if pathlib.Path(cls._lexical_abspath(absolute_folder)).is_dir():
+            return absolute_folder
+
         current = CaseAwarePath.pathify(absolute_folder.anchor)
 
         for part in absolute_folder.parts[1:]:
@@ -207,15 +244,22 @@ class ModInstaller:
             raise ValueError(f"Invalid {description}: a path value is required.")
         return parts
 
-    @staticmethod
-    def _ensure_within_root(
+    @classmethod
+    def _canonical_real_path(cls, path: os.PathLike | str) -> str:
+        """Resolve a path canonically without invoking CaseAwarePath discovery."""
+        return os.path.normcase(os.path.realpath(cls._lexical_abspath(path)))
+
+    @classmethod
+    def _ensure_within_real_root(
+        cls,
         path: os.PathLike | str,
         root: os.PathLike | str,
+        root_real: str,
         description: str,
     ) -> CaseAwarePath:
+        """Validate *path* against an already-canonicalized root."""
         candidate = CaseAwarePath.pathify(path)
-        root_real = os.path.normcase(os.path.realpath(os.path.abspath(os.fspath(root))))
-        candidate_real = os.path.normcase(os.path.realpath(os.path.abspath(os.fspath(candidate))))
+        candidate_real = cls._canonical_real_path(candidate)
         try:
             common_path = os.path.commonpath((root_real, candidate_real))
         except ValueError as exc:
@@ -223,6 +267,50 @@ class ModInstaller:
         if common_path != root_real:
             raise ValueError(f"Invalid {description} '{candidate}': path is outside '{root}'.")
         return candidate
+
+    @classmethod
+    def _ensure_within_root(
+        cls,
+        path: os.PathLike | str,
+        root: os.PathLike | str,
+        description: str,
+    ) -> CaseAwarePath:
+        """Validate containment, canonicalizing the root for this standalone call."""
+        return cls._ensure_within_real_root(
+            path,
+            root,
+            cls._canonical_real_path(root),
+            description,
+        )
+
+    @classmethod
+    def _containment_root_cache_key(cls, root: os.PathLike | str) -> str:
+        """Return a platform-correct lexical key for a stable containment root."""
+        return os.path.normcase(cls._lexical_abspath(root))
+
+    def _cached_containment_root(self, root: os.PathLike | str) -> str:
+        """Return the canonical form of a stable root, resolving it at most once."""
+        key = self._containment_root_cache_key(root)
+        cached = self._containment_root_cache.get(key)
+        if cached is not None:
+            return cached
+        resolved = self._canonical_real_path(root)
+        self._containment_root_cache[key] = resolved
+        return resolved
+
+    def _ensure_within_cached_root(
+        self,
+        path: os.PathLike | str,
+        root: os.PathLike | str,
+        description: str,
+    ) -> CaseAwarePath:
+        """Validate containment while reusing the canonicalized stable root."""
+        return self._ensure_within_real_root(
+            path,
+            root,
+            self._cached_containment_root(root),
+            description,
+        )
 
     @classmethod
     def _resolve_relative_folder_within(
@@ -244,13 +332,14 @@ class ModInstaller:
         description: str,
     ) -> CaseAwarePath:
         root_path = CaseAwarePath.pathify(root)
+        root_real = cls._canonical_real_path(root_path)
         parts = cls._relative_path_parts(relative_path, description, allow_empty=False)
         requested_path = root_path.joinpath(*parts)
         resolved_parent = cls._resolve_folder(requested_path.parent)
-        cls._ensure_within_root(resolved_parent, root_path, description)
+        cls._ensure_within_real_root(resolved_parent, root_path, root_real, description)
         existing_path = cls._find_case_insensitive_child(resolved_parent, requested_path.name, directory=False)
         resolved_path = existing_path if existing_path is not None else resolved_parent / requested_path.name
-        return cls._ensure_within_root(resolved_path, root_path, description)
+        return cls._ensure_within_real_root(resolved_path, root_path, root_real, description)
 
     @classmethod
     def _resolve_file_path_within(
@@ -258,28 +347,47 @@ class ModInstaller:
         root: os.PathLike | str,
         filepath: os.PathLike | str,
         description: str,
+        *,
+        root_real: str | None = None,
     ) -> CaseAwarePath:
         root_path = CaseAwarePath.pathify(root)
-        requested_path = CaseAwarePath.pathify(os.path.abspath(os.fspath(filepath)))
-        cls._ensure_within_root(requested_path, root_path, description)
+        resolved_root_real = root_real if root_real is not None else cls._canonical_real_path(root_path)
+        requested_path = CaseAwarePath.pathify(cls._lexical_abspath(filepath))
+        cls._ensure_within_real_root(requested_path, root_path, resolved_root_real, description)
         cls._relative_path_parts(os.path.relpath(requested_path, root_path), description, allow_empty=False)
+        # On the common path, the supplied spelling already resolves. Probe the
+        # literal path with stdlib pathlib; CaseAwarePath.safe_isfile() may itself
+        # enumerate the parent directory on case-sensitive platforms.
+        if pathlib.Path(cls._lexical_abspath(requested_path)).is_file():
+            return requested_path
+
         resolved_parent = cls._resolve_folder(requested_path.parent)
-        cls._ensure_within_root(resolved_parent, root_path, description)
+        cls._ensure_within_real_root(resolved_parent, root_path, resolved_root_real, description)
         existing_path = cls._find_case_insensitive_child(resolved_parent, requested_path.name, directory=False)
         resolved_path = existing_path if existing_path is not None else resolved_parent / requested_path.name
-        return cls._ensure_within_root(resolved_path, root_path, description)
+        return cls._ensure_within_real_root(resolved_path, root_path, resolved_root_real, description)
 
     def _resolve_source_folder(
         self,
         relative_path: os.PathLike | str,
         description: str,
     ) -> CaseAwarePath:
-        """Resolve an explicit INI-relative source folder within the package boundary."""
+        """Resolve and cache an INI-relative source folder within the package."""
         parts = self._relative_path_parts(relative_path, description, allow_parent=True)
         requested = self.patch_data_path.joinpath(*parts)
-        self._ensure_within_root(requested, self.mod_path, description)
-        resolved = self._resolve_folder(requested)
-        return self._ensure_within_root(resolved, self.mod_path, description)
+        key = self._lexical_abspath(requested).casefold()
+        cached = self._source_folder_cache.get(key)
+        if cached is not None:
+            return cached
+
+        self._ensure_within_cached_root(requested, self.mod_path, description)
+        if pathlib.Path(self._lexical_abspath(requested)).is_dir():
+            resolved = CaseAwarePath.pathify(requested)
+        else:
+            resolved = self._resolve_folder(requested)
+        resolved = self._ensure_within_cached_root(resolved, self.mod_path, description)
+        self._source_folder_cache[key] = resolved
+        return resolved
 
     def _resolve_patch_source(self, patch: PatcherModifications) -> CaseAwarePath:
         folder = self._resolve_source_folder(patch.sourcefolder, "patch source folder")
@@ -293,9 +401,25 @@ class ModInstaller:
         filepath: os.PathLike | str,
         description: str,
     ) -> CaseAwarePath:
+        # Source files do not change during an installation. Reuse the exact
+        # resolved spelling between preflight and execution instead of repeating
+        # case-insensitive discovery for the same source.
+        requested = CaseAwarePath.pathify(self._lexical_abspath(filepath))
+        key = self._lexical_abspath(requested).casefold()
+        cached = self._source_file_cache.get(key)
+        if cached is not None:
+            return cached
+
         # This is containment, not source discovery. Never search another option
         # or substitute a shared file for a missing namespace-local file.
-        return self._resolve_file_path_within(self.mod_path, filepath, description)
+        resolved = self._resolve_file_path_within(
+            self.mod_path,
+            requested,
+            description,
+            root_real=self._cached_containment_root(self.mod_path),
+        )
+        self._source_file_cache[key] = resolved
+        return resolved
 
     @classmethod
     def _validate_output_filename(cls, filename: str) -> str:
@@ -304,34 +428,67 @@ class ModInstaller:
             raise ValueError(f"Invalid output filename '{filename}': subdirectories are not allowed in !SaveAs/!Filename.")
         return parts[0]
 
+    @staticmethod
+    def _lexical_abspath(path: os.PathLike | str) -> str:
+        """Return an absolute path string without triggering CaseAwarePath case resolution."""
+        if isinstance(path, CaseAwarePath):
+            raw_path = pathlib.Path(*path.parts)
+            return os.path.abspath(os.fspath(raw_path))
+        return os.path.abspath(os.fspath(path))
+
+    @classmethod
+    def _destination_folder_cache_key(cls, folder: os.PathLike | str) -> str:
+        return cls._lexical_abspath(folder).casefold()
+
+    def _cached_resolve_destination_folder(self, folder: os.PathLike | str) -> CaseAwarePath:
+        """Resolve one game destination folder once and share it across patches."""
+        key = self._destination_folder_cache_key(folder)
+        cached = self._destination_folder_cache.get(key)
+        if cached is not None:
+            return cached
+
+        resolved = self._resolve_folder(folder)
+        self._ensure_within_cached_root(resolved, self.game_path, "patch destination")
+        self._destination_folder_cache[key] = resolved
+        return resolved
+
     def _resolve_patch_output_paths(
         self,
         patch: PatcherModifications,
-    ) -> tuple[CaseAwarePath, CaseAwarePath]:
+    ) -> _PatchPaths:
         patch.saveas = self._validate_output_filename(patch.saveas).lower()
         destination_parts = self._relative_path_parts(patch.destination, "patch destination")
         requested_destination = self.game_path.joinpath(*destination_parts)
+        capsule = is_capsule_file(patch.destination)
 
-        if is_capsule_file(patch.destination):
-            destination_folder = self._resolve_folder(requested_destination.parent)
-            self._ensure_within_root(destination_folder, self.game_path, "patch destination")
+        if capsule:
+            destination_folder = self._cached_resolve_destination_folder(requested_destination.parent)
             output_path = destination_folder / requested_destination.name
             container_path = output_path
         else:
-            destination_folder = self._resolve_folder(requested_destination)
-            self._ensure_within_root(destination_folder, self.game_path, "patch destination")
+            destination_folder = self._cached_resolve_destination_folder(requested_destination)
             output_path = destination_folder / patch.saveas
             container_path = destination_folder
 
-        self._ensure_within_root(output_path, self.game_path, "patch output")
-        existing_output = self._find_case_insensitive_file(output_path)
-        if existing_output is not None:
-            self._ensure_within_root(existing_output, self.game_path, "patch output")
-        return container_path, output_path
+        # The destination folder itself was already canonicalized and validated
+        # above, and output filenames are restricted to one safe path component.
+        # A regular child therefore cannot escape that folder, so avoid another
+        # realpath/commonpath pass per patch. The only static escape case worth
+        # checking here is an existing symlink that points outside the game.
+        existing_output = self._cached_find_case_insensitive_file(output_path)
+        if (
+            existing_output is not None
+            and pathlib.Path(self._lexical_abspath(existing_output)).is_symlink()
+        ):
+            self._ensure_within_cached_root(existing_output, self.game_path, "patch output")
+        return _PatchPaths(container_path, output_path, capsule)
 
-    def _validate_patch_paths(self, patches: list[PatcherModifications]) -> None:
+    def _prepare_patch_paths(self, patches: list[PatcherModifications]) -> dict[int, _PatchPaths]:
+        """Validate patches once and retain their resolved output locations."""
+        prepared: dict[int, _PatchPaths] = {}
         for patch in patches:
-            self._resolve_patch_output_paths(patch)
+            paths = self._resolve_patch_output_paths(patch)
+            prepared[id(patch)] = paths
 
             self._resolve_patch_source(patch)
 
@@ -346,20 +503,114 @@ class ModInstaller:
                 if isinstance(modifier, MergeTLK) and modifier.tlk_filepath_f is not None:
                     self._resolve_source_file_path(modifier.tlk_filepath_f, "female TLK source file")
             if isinstance(patch, ModificationsTLK) and patch.female is not None:
-                self._validate_patch_paths([patch.female])
+                prepared.update(self._prepare_patch_paths([patch.female]))
+        return prepared
+
+    def _validate_patch_paths(self, patches: list[PatcherModifications]) -> None:
+        """Compatibility wrapper for callers that only need validation."""
+        self._prepare_patch_paths(patches)
 
     @classmethod
     def _find_case_insensitive_file(cls, filepath: os.PathLike | str) -> CaseAwarePath | None:
         requested_path = CaseAwarePath.pathify(filepath)
+        # Probe the literal spelling with stdlib pathlib first. Calling
+        # CaseAwarePath.is_file()/safe_isfile() here would itself resolve case on
+        # Unix and can enumerate the parent directory, defeating this fast path.
+        if pathlib.Path(cls._lexical_abspath(requested_path)).is_file():
+            return requested_path
+
         parent = cls._resolve_folder(requested_path.parent)
         return cls._find_case_insensitive_child(parent, requested_path.name, directory=False)
 
     @classmethod
-    def _lowercase_file_path(cls, filepath: os.PathLike | str) -> CaseAwarePath:
+    def _file_lookup_cache_key(cls, filepath: os.PathLike | str) -> str:
+        return cls._lexical_abspath(filepath).casefold()
+
+    @classmethod
+    def _directory_file_cache_key(cls, folder: os.PathLike | str) -> str:
+        return cls._lexical_abspath(folder).casefold()
+
+    def _directory_file_index(self, folder: CaseAwarePath) -> dict[str, CaseAwarePath]:
+        """Return a case-folded index of files in *folder*, scanning at most once."""
+        key = self._directory_file_cache_key(folder)
+        cached = self._directory_file_cache.get(key)
+        if cached is not None:
+            return cached
+
+        index: dict[str, CaseAwarePath] = {}
+        if folder.safe_isdir():
+            try:
+                for child in folder.safe_iterdir():
+                    if not child.safe_isfile():
+                        continue
+                    child = CaseAwarePath.pathify(child)
+                    folded = child.name.casefold()
+                    previous = index.get(folded)
+                    if previous is None or child.name < previous.name:
+                        index[folded] = child
+            except OSError:
+                index = {}
+        self._directory_file_cache[key] = index
+        return index
+
+    def _invalidate_directory_file_cache(self, folder: os.PathLike | str) -> None:
+        self._directory_file_cache.pop(self._directory_file_cache_key(folder), None)
+
+    def _cached_find_case_insensitive_file(self, filepath: os.PathLike | str) -> CaseAwarePath | None:
         requested_path = CaseAwarePath.pathify(filepath)
-        parent = cls._resolve_folder(requested_path.parent)
+        key = self._file_lookup_cache_key(requested_path)
+
+        # Always try the exact spelling first. This is cheap and makes a cached
+        # miss self-healing when an earlier installer operation creates the file.
+        if pathlib.Path(self._lexical_abspath(requested_path)).is_file():
+            self._file_lookup_cache[key] = requested_path
+            directory_index = self._directory_file_cache.get(self._directory_file_cache_key(requested_path.parent))
+            if directory_index is not None:
+                directory_index[requested_path.name.casefold()] = requested_path
+            return requested_path
+
+        if key in self._file_lookup_cache:
+            cached = self._file_lookup_cache[key]
+            if cached is None:
+                return None
+            if cached.safe_isfile():
+                return cached
+            # An installer operation may have renamed/deleted this path.
+            self._file_lookup_cache.pop(key, None)
+            self._invalidate_directory_file_cache(cached.parent)
+
+        parent = self._resolve_folder(requested_path.parent)
+        directory_index = self._directory_file_index(parent)
+        result = directory_index.get(requested_path.name.casefold())
+        if result is not None and not result.safe_isfile():
+            # The directory changed since it was indexed. Refresh once.
+            self._invalidate_directory_file_cache(parent)
+            directory_index = self._directory_file_index(parent)
+            result = directory_index.get(requested_path.name.casefold())
+
+        self._file_lookup_cache[key] = result
+        return result
+
+    def _remember_file(self, filepath: os.PathLike | str) -> CaseAwarePath:
+        path = CaseAwarePath.pathify(filepath)
+        self._file_lookup_cache[self._file_lookup_cache_key(path)] = path
+        directory_index = self._directory_file_cache.get(self._directory_file_cache_key(path.parent))
+        if directory_index is not None:
+            directory_index[path.name.casefold()] = path
+        return path
+
+    def _forget_file(self, filepath: os.PathLike | str) -> None:
+        path = CaseAwarePath.pathify(filepath)
+        self._file_lookup_cache.pop(self._file_lookup_cache_key(path), None)
+        # A case-folded index may have selected this spelling over another case
+        # variant. Invalidate the directory so the next fallback is authoritative.
+        self._invalidate_directory_file_cache(path.parent)
+
+    def _lowercase_file_path(self, filepath: os.PathLike | str) -> CaseAwarePath:
+        requested_path = CaseAwarePath.pathify(filepath)
+        parent = self._resolve_folder(requested_path.parent)
         lowercase_path = parent / requested_path.name.lower()
-        existing_path = cls._find_case_insensitive_child(parent, lowercase_path.name, directory=False)
+        existing_path = self._cached_find_case_insensitive_file(lowercase_path)
 
         if existing_path is None or existing_path.name == lowercase_path.name:
             return lowercase_path
@@ -367,28 +618,35 @@ class ModInstaller:
         temp_stem = f".{lowercase_path.name}.holopatcher"
         temp_path = parent / f"{temp_stem}.tmp"
         index = 2
-        while cls._find_case_insensitive_child(parent, temp_path.name) is not None:
+        while self._cached_find_case_insensitive_file(temp_path) is not None:
             temp_path = parent / f"{temp_stem}.{index}.tmp"
             index += 1
 
         os.replace(existing_path, temp_path)
+        self._forget_file(existing_path)
+        self._remember_file(temp_path)
         try:
             os.replace(temp_path, lowercase_path)
         except Exception:
+            self._forget_file(temp_path)
             os.replace(temp_path, existing_path)
+            self._remember_file(existing_path)
             raise
+        self._forget_file(temp_path)
+        self._remember_file(lowercase_path)
         return lowercase_path
 
-    def _prepare_output_path(self, patch: PatcherModifications) -> CaseAwarePath:
-        container_path, output_path = self._resolve_patch_output_paths(patch)
-        if is_capsule_file(patch.destination):
+    def _prepare_output_path(self, patch: PatcherModifications, paths: _PatchPaths) -> CaseAwarePath:
+        """Reuse the prevalidated output plan; only resolve current filename casing."""
+        if paths.is_capsule:
             # Resolve existing spelling now; rename only when committing a write.
-            return self._resolve_file_path_within(self.game_path, output_path, "patch output")
-        lowercase_output_path = self._lowercase_file_path(output_path)
-        self._ensure_within_root(lowercase_output_path, self.game_path, "patch output")
-        return container_path
+            # Containment was validated when _PatchPaths was prepared.
+            existing = self._cached_find_case_insensitive_file(paths.output_path)
+            return existing if existing is not None else paths.output_path
+        self._lowercase_file_path(paths.output_path)
+        return paths.container_path
 
-    def _skip_protected_install(self, patch: PatcherModifications) -> bool:
+    def _skip_protected_install(self, patch: PatcherModifications, paths: _PatchPaths) -> bool:
         if (
             not isinstance(patch, InstallFile)
             or not patch.is_protected_replacement()
@@ -396,8 +654,7 @@ class ModInstaller:
         ):
             return False
 
-        _, output_path = self._resolve_patch_output_paths(patch)
-        existing_output = self._find_case_insensitive_file(output_path)
+        existing_output = self._cached_find_case_insensitive_file(paths.output_path)
         if existing_output is None:
             return False
 
@@ -416,10 +673,10 @@ class ModInstaller:
         if self._config is not None:
             return self._config
 
-        self._ensure_within_root(self.changes_ini_path, self.mod_path, "changes INI")
-        self._ensure_within_root(self.patch_data_path, self.mod_path, "namespace source folder")
+        self._ensure_within_cached_root(self.changes_ini_path, self.mod_path, "changes INI")
+        self._ensure_within_cached_root(self.patch_data_path, self.mod_path, "namespace source folder")
         if self.tslpatchdata_path is not None:
-            self._ensure_within_root(self.tslpatchdata_path, self.mod_path, "shared patch-data folder")
+            self._ensure_within_cached_root(self.tslpatchdata_path, self.mod_path, "shared patch-data folder")
         ini_file_bytes: bytes = BinaryReader.load_file(self.changes_ini_path)
         ini_text: str
         try:
@@ -501,7 +758,7 @@ class ModInstaller:
             "backup",
             "backup folder",
         )
-        backup_dir = self._ensure_within_root(
+        backup_dir = self._ensure_within_cached_root(
             backup_parent / timestamp,
             package_root,
             "backup folder",
@@ -562,13 +819,13 @@ class ModInstaller:
                 if self.game is not None and self.game.is_k2():
                     module_source_names.append(f"{module_root}_dlg.erf")
                 for module_source_name in module_source_names:
-                    module_source = self._resolve_relative_file_within(
+                    # This helper already validates containment; no second
+                    # realpath/containment pass is needed for the same path.
+                    self._resolve_relative_file_within(
                         modules_folder,
                         module_source_name,
                         "module source",
                     )
-                    if module_source.safe_exists():
-                        self._ensure_within_root(module_source, modules_folder, "module source")
 
                 output_container_path.parent.mkdir(parents=True, exist_ok=True)
                 file_descriptor, staged_name = tempfile.mkstemp(
@@ -616,6 +873,7 @@ class ModInstaller:
             is_new_file=not output_container_path.safe_isfile(),
         )
         os.replace(staged_capsule_path, output_container_path)
+        self._remember_file(output_container_path)
 
     def load_resource_file(self, source: SOURCE_TYPES) -> bytes:
         # if self._config and self._config.ignore_file_extensions:
@@ -675,7 +933,7 @@ class ModInstaller:
         mod_path = output_container_path.with_name(
             f"{Installation.get_module_root(output_container_path.name)}.mod".lower(),
         )
-        existing_mod_path = self._find_case_insensitive_file(mod_path)
+        existing_mod_path = self._cached_find_case_insensitive_file(mod_path)
         if output_container_path != mod_path and existing_mod_path is not None:
             self.log.add_warning(
                 f"This mod intends to install '{patch.saveas}' into '{patch.destination}', "
@@ -705,17 +963,19 @@ class ModInstaller:
             "override",
             "Override folder",
         )
-        override_resource_path = self._find_case_insensitive_file(override_dir / patch.saveas)
+        override_resource_path = self._cached_find_case_insensitive_file(override_dir / patch.saveas)
         if override_resource_path is not None:
             if override_type == OverrideType.RENAME:
                 renamed_file_path: CaseAwarePath = override_dir / f"old_{patch.saveas}".lower()
                 i = 2
                 filestem: str = renamed_file_path.stem
-                while self._find_case_insensitive_file(renamed_file_path) is not None:
+                while self._cached_find_case_insensitive_file(renamed_file_path) is not None:
                     renamed_file_path = renamed_file_path.parent / f"{filestem} ({i}){renamed_file_path.suffix}".lower()
                     i += 1
                 try:
                     shutil.move(str(override_resource_path), str(renamed_file_path))
+                    self._forget_file(override_resource_path)
+                    self._remember_file(renamed_file_path)
                 except Exception as e:  # pylint: disable=W0718  # noqa: BLE001
                     # Handle exceptions such as permission errors or file in use.
                     self.log.add_error(f"Could not rename '{patch.saveas}' to '{renamed_file_path.name}' in the Override folder: {universal_simplify_exception(e)}")  # noqa: E501
@@ -805,16 +1065,6 @@ class ModInstaller:
 
         memory = PatcherMemory()
         config: PatcherConfig = self.config()
-        configured_patches: list[PatcherModifications] = [
-            config.patches_tlk,
-            *config.install_list,
-            *config.patches_2da,
-            *config.patches_gff,
-            *config.patches_ncs,
-            *config.patches_nss,
-            *config.patches_ssf,
-        ]
-        self._validate_patch_paths(configured_patches)
         patches_list: list[PatcherModifications] = [
             *self.get_tlk_patches(config),
             *config.install_list,
@@ -824,7 +1074,7 @@ class ModInstaller:
             *config.patches_nss,
             *config.patches_ssf,
         ]
-        self._validate_patch_paths(patches_list)
+        prepared_paths = self._prepare_patch_paths(patches_list)
         self.log.reset_patch_counts(len(patches_list))
         installation_errors_before = len(self.log.errors)
         installation_warnings_before = len(self.log.warnings)
@@ -836,6 +1086,7 @@ class ModInstaller:
 
         try:
             for patch_index, patch in enumerate(patches_list):
+                paths = prepared_paths[id(patch)]
                 if should_cancel is not None and should_cancel.is_set():
                     remaining = len(patches_list) - patch_index
                     self.log.skip_patch(remaining)
@@ -851,17 +1102,16 @@ class ModInstaller:
                 errors_before = len(self.log.errors)
                 try:
                     if isinstance(patch, ModificationsTLK) and patch.female is not None:
-                        self._install_tlk_pair(patch, memory)
+                        self._install_tlk_pair(patch, memory, prepared_paths)
                         outcome = "completed"
                         continue
 
-                    if self._skip_protected_install(patch):
+                    if self._skip_protected_install(patch, paths):
                         outcome = "skipped"
                         continue
 
-                    if patch.skip_if_not_replace and not patch.replace_file and not is_capsule_file(patch.destination):
-                        _, output_path = self._resolve_patch_output_paths(patch)
-                        if self._find_case_insensitive_file(output_path) is not None:
+                    if patch.skip_if_not_replace and not patch.replace_file and not paths.is_capsule:
+                        if self._cached_find_case_insensitive_file(paths.output_path) is not None:
                             self.should_patch(patch, True)
                             outcome = "skipped"
                             continue
@@ -884,7 +1134,7 @@ class ModInstaller:
 
                     if is_capsule_file(patch.destination):
                         ResourceIdentifier.from_path(patch.saveas).restype.validate()
-                    output_container_path = self._prepare_output_path(patch)
+                    output_container_path = self._prepare_output_path(patch, paths)
                     target = self.handle_capsule_and_backup(patch, output_container_path)
                     if not self.should_patch(patch, target.exists, target.capsule):
                         outcome = "skipped"
@@ -927,19 +1177,26 @@ class ModInstaller:
                         if target.staged_capsule_path is None:
                             backup_subdirectory = PurePath(os.path.relpath(output_container_path.parent, self.game_path))
                             create_backup(self.log, output_container_path, *self.backup(), backup_subdirectory)
+                        # Lowercasing stays in the already-planned destination
+                        # directory, so do not repeat containment validation here.
                         lowercase_output_path = self._lowercase_file_path(output_container_path)
-                        self._ensure_within_root(lowercase_output_path, self.game_path, "patch output")
                         if target.staged_capsule_path is None and lowercase_output_path.name != output_container_path.name:
                             target.capsule = Capsule(lowercase_output_path)
                         output_container_path = lowercase_output_path
                         self.handle_modrim_shadow(patch, output_container_path)
-                        target.capsule.add(*ResourceIdentifier.from_path(patch.saveas).unpack(), patched_data)
+                        target.capsule.add(
+                            *ResourceIdentifier.from_path(patch.saveas).unpack(),
+                            patched_data,
+                            update_erf_build_time=True,
+                        )
                         if target.staged_capsule_path is not None:
                             self._commit_staged_capsule(target.staged_capsule_path, output_container_path)
                         self.handle_override_type(patch)
                     else:
                         output_container_path.mkdir(exist_ok=True, parents=True)
-                        BinaryWriter.dump(output_container_path / patch.saveas, patched_data)
+                        output_file = output_container_path / patch.saveas
+                        BinaryWriter.dump(output_file, patched_data)
+                        self._remember_file(output_file)
 
                     outcome = "failed" if len(self.log.errors) > errors_before else "completed"
                 except Exception as exc:  # pylint: disable=W0718  # noqa: BLE001
@@ -1016,7 +1273,7 @@ class ModInstaller:
         )
         output_parent.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.now(tz=timezone.utc).astimezone().strftime("%Y-%m-%d_%H.%M.%S.%f")
-        output_folder = self._ensure_within_root(
+        output_folder = self._ensure_within_cached_root(
             output_parent / timestamp,
             package_root,
             "processed CompileList output folder",
@@ -1108,7 +1365,12 @@ class ModInstaller:
                 )
         return temp_script_folder
 
-    def _install_tlk_pair(self, patch: ModificationsTLK, memory: PatcherMemory) -> None:
+    def _install_tlk_pair(
+        self,
+        patch: ModificationsTLK,
+        memory: PatcherMemory,
+        prepared_paths: dict[int, _PatchPaths],
+    ) -> None:
         """Stages both tables; a failed commit restores the pair and publishes no tokens."""
         female = patch.female
         if female is None:
@@ -1116,10 +1378,12 @@ class ModInstaller:
         paths = []
         inputs = []
         for member in (patch, female):
-            if is_capsule_file(member.destination):
+            member_paths = prepared_paths[id(member)]
+            if member_paths.is_capsule:
                 raise ValueError("Paired dialog TLKs must be loose files.")
-            folder, requested = self._resolve_patch_output_paths(member)
-            existing = self._find_case_insensitive_file(requested)
+            folder = member_paths.container_path
+            requested = member_paths.output_path
+            existing = self._cached_find_case_insensitive_file(requested)
             data = self.load_resource_file(existing) if existing is not None else self.lookup_resource(member, folder, False)
             if data is None:
                 raise FileNotFoundError(f"Cannot locate dialog table '{member.saveas}'.")
@@ -1151,14 +1415,17 @@ class ModInstaller:
                 committed.append((requested, existing, stage))
                 output_path = self._lowercase_file_path(requested)
                 os.replace(stage / "new.tlk", output_path)
+                self._remember_file(output_path)
         except Exception:
             for requested, existing, stage in reversed(committed):
                 try:
-                    current = self._find_case_insensitive_file(requested)
+                    current = self._cached_find_case_insensitive_file(requested)
                     if current is not None:
                         current.unlink()
+                        self._forget_file(current)
                     if existing is not None:
                         os.replace(stage / "original.tlk", existing)
+                        self._remember_file(existing)
                 except OSError as exc:
                     rollback_failed = True
                     self.log.add_error(f"Could not restore '{requested}'; original retained in '{stage}': {exc}")
@@ -1186,7 +1453,7 @@ class ModInstaller:
         # The companion resides beside the selected output, not in a different game folder.
         if is_capsule_file(patches_tlk.destination):
             return [patches_tlk]
-        folder, _ = self._resolve_patch_output_paths(patches_tlk)
+        folder = self._resolve_patch_output_paths(patches_tlk).container_path
         female_dialog = self._resolve_relative_file_within(folder, "dialogf.tlk", "female dialog TLK")
         if not female_dialog.safe_isfile():
             return [patches_tlk]

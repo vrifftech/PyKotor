@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 from pykotor.common.misc import ResRef
@@ -253,6 +254,8 @@ class LazyCapsule(FileResource):
         resname: str,
         restype: ResourceType,
         resdata: bytes,
+        *,
+        update_erf_build_time: bool = False,
     ):
         """Adds a resource to the capsule and writes the updated capsule to the disk.
 
@@ -261,6 +264,9 @@ class LazyCapsule(FileResource):
             resname: Name of the resource to add.
             restype: Type of the resource to add.
             resdata: Data of the resource to add.
+            update_erf_build_time: When True, stamp ERF/MOD headers with the
+                current local year/day using the same representation as
+                TSLPatcher (year minus 1900, one-based day of year).
 
         Returns:
         -------
@@ -276,6 +282,12 @@ class LazyCapsule(FileResource):
         restype.validate()
         container = self.as_cached()
         container.set_data(resname, restype, resdata)
+        if update_erf_build_time and isinstance(container, ERF):
+            # TSLPatcher's TERF_ERFHeader.GetBuildTime() uses local Now(),
+            # stores years since 1900, and a one-based day-of-year.
+            now = datetime.now()
+            container.build_year = now.year - 1900
+            container.build_day = now.timetuple().tm_yday
         self._write_container(container)
 
         self._hash_task_running = True
@@ -624,6 +636,8 @@ class Capsule(LazyCapsule):
         resname: str,
         restype: ResourceType,
         resdata: bytes,
+        *,
+        update_erf_build_time: bool = False,
     ):
         """Adds a resource to the capsule and writes the updated capsule to the disk.
 
@@ -632,6 +646,7 @@ class Capsule(LazyCapsule):
             resname: Name of the resource to add in one line.
             restype: Type of the resource to add in one line.
             resdata: Data of the resource to add in one line.
+            update_erf_build_time: Forward the ERF/MOD build-date stamping request.
 
         Returns:
         -------
@@ -644,6 +659,11 @@ class Capsule(LazyCapsule):
             - Calls set_data to add the resource
             - Writes the container back to the file.
         """
-        result = super().add(resname, restype, resdata)
+        result = super().add(
+            resname,
+            restype,
+            resdata,
+            update_erf_build_time=update_erf_build_time,
+        )
         self.reload()
         return result

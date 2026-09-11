@@ -36,7 +36,7 @@ if TYPE_CHECKING:
 _INVALID = object()
 _ASCII_DIGITS = re.compile(r"^[0-9]+$")
 _SIGNED_INTEGER = re.compile(r"^-?[0-9]+$")
-_FLOAT = re.compile(r"^-?[0-9]+(?:[.,][0-9]+)?$")
+_FLOAT = re.compile(r"^[+-]?(?:(?:[0-9]+(?:[.,][0-9]*)?)|(?:[.,][0-9]+))(?:[eE][+-]?[0-9]+)?$")
 
 _INTEGER_RANGES: dict[GFFFieldType, tuple[int, int]] = {
     GFFFieldType.UInt8: (0, 0xFF),
@@ -231,7 +231,13 @@ FIELD_TYPE_TO_SETTER: dict[GFFFieldType, Callable[[GFFStruct, str, Any, PatcherM
     GFFFieldType.Single: lambda s, lbl, v, _m: s.set_single(lbl, v),
     GFFFieldType.Double: lambda s, lbl, v, _m: s.set_double(lbl, v),
     GFFFieldType.String: lambda s, lbl, v, _m: s.set_string(lbl, v),
-    GFFFieldType.ResRef: lambda s, lbl, v, _m: s.set_resref(lbl, v),
+    # Stoffe's TSLPatcher lowercases CResRef values in TGFF_CResRef.SetString().
+    # Keep that quirk local to the patcher rather than changing PyKotor's general
+    # ResRef behavior, which intentionally preserves case.
+    GFFFieldType.ResRef: lambda s, lbl, v, _m: s.set_resref(
+        lbl,
+        ResRef(str(v).lower()) if str(v) else ResRef.from_blank(),
+    ),
     GFFFieldType.LocalizedString: set_locstring,
     GFFFieldType.Binary: lambda s, lbl, v, _m: s.set_binary(lbl, v),
     GFFFieldType.Vector3: lambda s, lbl, v, _m: s.set_vector3(lbl, v),

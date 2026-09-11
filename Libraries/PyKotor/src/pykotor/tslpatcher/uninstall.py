@@ -104,16 +104,22 @@ class ModUninstaller:
                 raise FileNotFoundError(source)
             copies.append((source, destination))
             destinations.add(destination.resolve())
-        removals = []
+        removals: list[tuple[pathlib.Path, pathlib.Path]] = []
         for filename in existing_files:
             target = pathlib.Path(filename)
             if not target.is_absolute():
                 raise ValueError(f"Invalid removal path: {filename}")
-            target.resolve().relative_to(game)
+            resolved_target = target.resolve()
+            relative_target = resolved_target.relative_to(game)
             if target.exists() and not target.is_file():
                 raise ValueError(f"Removal target is not a file: {target}")
-            if target.resolve() not in destinations:
-                removals.append(target)
+            if resolved_target not in destinations:
+                # Keep the original path for the filesystem operation (it can contain
+                # a user-visible symlink/junction), but keep the relative path derived
+                # from the resolved game root for logging. Mixing the unresolved target
+                # with the resolved game root in Path.relative_to() raises when the game
+                # directory was selected through a symlink/junction/alias.
+                removals.append((target, relative_target))
         # Restore old files before deleting newly installed ones. If any step fails,
         # the caller reports partial restoration and never offers to delete the backup.
         for source, destination in copies:
@@ -133,12 +139,18 @@ class ModUninstaller:
                 if temporary is not None:
                     temporary.unlink(missing_ok=True)
             self.log.add_note(f"Restored '{destination.relative_to(game)}'.")
-        for target in removals:
+        for target, relative_target in removals:
             if should_cancel is not None and should_cancel.is_set():
                 raise InterruptedError("Restoration stopped between files; the backup is retained.")
-            target.resolve().relative_to(game)
-            target.unlink(missing_ok=True)
-            self.log.add_note(f"Removed '{target.relative_to(game)}'.")
+            # A file that the mod created may already have been removed manually. That
+            # is already the desired uninstall state, so treat it as a harmless no-op.
+            if not target.exists():
+                self.log.add_note(f"Already absent; nothing to remove: '{relative_target}'.")
+                continue
+            if not target.is_file():
+                raise ValueError(f"Removal target is not a file: {target}")
+            target.unlink()
+            self.log.add_note(f"Removed '{relative_target}'.")
 
     def get_backup_info(self) -> tuple[Path | None, set[str], list[Path], int]:
         folder = self.get_most_recent_backup(self.backups_location_path)
@@ -158,12 +170,10 @@ class ModUninstaller:
             if not target.is_absolute():
                 raise ValueError(f"Invalid removal path in backup: {name}")
             target.resolve().relative_to(game_root)
-        existing = {name for name in files_to_delete if pathlib.Path(name).is_file()}
-        if len(existing) != len(files_to_delete) and not self.dialogs.askyesno(
-            "Backup out of date or mismatched",
-            "Some files listed by this backup are absent. Restore mods in reverse installation order, and verify the selected package and game directory. Continue?",
-        ):
-            return None, set(), [], 0
+        # Keep every validated removal entry, including files that are already absent.
+        # Newly-created mod files are expected to be deleted during uninstall; if one
+        # was removed manually beforehand, restoration should still succeed.
+        existing = files_to_delete
         files = []
         folder_count = 0
         for directory, folders, names in os.walk(root, followlinks=False):
@@ -190,7 +200,7 @@ class ModUninstaller:
                 return False
             if not self.dialogs.askyesno(
                 "Restore this backup?",
-                f"Restore {len(files)} files and remove {len(existing)} installed files in '{self.game_path}'?\n\n"
+                f"Restore {len(files)} files and remove up to {len(existing)} installed files in '{self.game_path}'?\n\n"
                 f"Backup: {folder}\nUninstall in reverse installation order. This selects the most recent package backup, not a namespace-specific backup.",
             ):
                 return False
