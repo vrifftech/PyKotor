@@ -20,8 +20,7 @@ python -m ruff check Libraries tests
 Pytest registers the four source directories through the root `pyproject.toml`.
 Ruff is the only configured formatter/linter. Its default gate checks syntax-level
 errors without rewriting legacy style. `ruff format` may be used deliberately on
-files being edited; a whole-repository formatting diff is not part of cleanup.
-Type stubs and `typing-extensions` remain available for development.
+files being edite.
 
 The core CI job installs only the core/decoding test requirements. The separate
 wheel job builds all four libraries and installs their actual runtime dependencies.
