@@ -140,8 +140,7 @@ class NssLexer:
         return t
 
     def t_COMMENT(self, t):
-        r"//[^\n]*\n"  # noqa: D300, D400, D415
-        t.lexer.lineno += 1
+        r"//[^\n]*"  # noqa: D300, D400, D415
 
     def t_MULTILINE_COMMENT(self, t):
         r"\/\*(\*(?!\/)|[^*])*\*\/"  # noqa: D300, D400, D415
@@ -494,7 +493,7 @@ class NssLexer:
                     NCSInstructionType.ADDII, DataType.INT, DataType.INT, DataType.INT
                 ),
                 BinaryOperatorMapping(
-                    NCSInstructionType.ADDIF, DataType.INT, DataType.INT, DataType.FLOAT
+                    NCSInstructionType.ADDIF, DataType.FLOAT, DataType.INT, DataType.FLOAT
                 ),
                 BinaryOperatorMapping(
                     NCSInstructionType.ADDFI, DataType.FLOAT, DataType.FLOAT, DataType.INT
@@ -524,7 +523,7 @@ class NssLexer:
                     NCSInstructionType.SUBII, DataType.INT, DataType.INT, DataType.INT
                 ),
                 BinaryOperatorMapping(
-                    NCSInstructionType.SUBIF, DataType.INT, DataType.INT, DataType.FLOAT
+                    NCSInstructionType.SUBIF, DataType.FLOAT, DataType.INT, DataType.FLOAT
                 ),
                 BinaryOperatorMapping(
                     NCSInstructionType.SUBFI, DataType.FLOAT, DataType.FLOAT, DataType.INT
@@ -548,7 +547,7 @@ class NssLexer:
                     NCSInstructionType.MULII, DataType.INT, DataType.INT, DataType.INT
                 ),
                 BinaryOperatorMapping(
-                    NCSInstructionType.MULIF, DataType.INT, DataType.INT, DataType.FLOAT
+                    NCSInstructionType.MULIF, DataType.FLOAT, DataType.INT, DataType.FLOAT
                 ),
                 BinaryOperatorMapping(
                     NCSInstructionType.MULFI, DataType.FLOAT, DataType.FLOAT, DataType.INT
@@ -575,7 +574,7 @@ class NssLexer:
                     NCSInstructionType.DIVII, DataType.INT, DataType.INT, DataType.INT
                 ),
                 BinaryOperatorMapping(
-                    NCSInstructionType.DIVIF, DataType.INT, DataType.INT, DataType.FLOAT
+                    NCSInstructionType.DIVIF, DataType.FLOAT, DataType.INT, DataType.FLOAT
                 ),
                 BinaryOperatorMapping(
                     NCSInstructionType.DIVFI, DataType.FLOAT, DataType.FLOAT, DataType.INT
@@ -585,9 +584,6 @@ class NssLexer:
                 ),
                 BinaryOperatorMapping(
                     NCSInstructionType.DIVVF, DataType.VECTOR, DataType.VECTOR, DataType.FLOAT
-                ),
-                BinaryOperatorMapping(
-                    NCSInstructionType.DIVFV, DataType.VECTOR, DataType.FLOAT, DataType.VECTOR
                 ),
             ],
         )
@@ -622,6 +618,18 @@ class NssLexer:
                 BinaryOperatorMapping(
                     NCSInstructionType.EQUALSS, DataType.INT, DataType.STRING, DataType.STRING
                 ),
+                BinaryOperatorMapping(
+                    NCSInstructionType.EQUALEFFEFF, DataType.INT, DataType.EFFECT, DataType.EFFECT
+                ),
+                BinaryOperatorMapping(
+                    NCSInstructionType.EQUALEVTEVT, DataType.INT, DataType.EVENT, DataType.EVENT
+                ),
+                BinaryOperatorMapping(
+                    NCSInstructionType.EQUALLOCLOC, DataType.INT, DataType.LOCATION, DataType.LOCATION
+                ),
+                BinaryOperatorMapping(
+                    NCSInstructionType.EQUALTALTAL, DataType.INT, DataType.TALENT, DataType.TALENT
+                ),
             ],
         )
         return t
@@ -642,6 +650,18 @@ class NssLexer:
                 ),
                 BinaryOperatorMapping(
                     NCSInstructionType.NEQUALSS, DataType.INT, DataType.STRING, DataType.STRING
+                ),
+                BinaryOperatorMapping(
+                    NCSInstructionType.NEQUALEFFEFF, DataType.INT, DataType.EFFECT, DataType.EFFECT
+                ),
+                BinaryOperatorMapping(
+                    NCSInstructionType.NEQUALEVTEVT, DataType.INT, DataType.EVENT, DataType.EVENT
+                ),
+                BinaryOperatorMapping(
+                    NCSInstructionType.NEQUALLOCLOC, DataType.INT, DataType.LOCATION, DataType.LOCATION
+                ),
+                BinaryOperatorMapping(
+                    NCSInstructionType.NEQUALTALTAL, DataType.INT, DataType.TALENT, DataType.TALENT
                 ),
             ],
         )

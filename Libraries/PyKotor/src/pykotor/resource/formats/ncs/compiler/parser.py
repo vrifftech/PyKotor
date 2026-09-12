@@ -25,16 +25,17 @@ from pykotor.resource.formats.ncs.compiler.classes import (
     ConditionalBlock,
     ContinueStatement,
     DeclarationStatement,
+    DEFAULT_MAX_INCLUDE_DEPTH,
     DefaultSwitchLabel,
     DivisionAssignment,
     DoWhileLoopBlock,
     DynamicDataType,
     EmptyStatement,
-    EngineCallExpression,
     ExpressionStatement,
     ExpressionSwitchLabel,
     FieldAccess,
     FieldAccessExpression,
+    FloatExpression,
     ForLoopBlock,
     FunctionCallExpression,
     FunctionDefinition,
@@ -45,6 +46,7 @@ from pykotor.resource.formats.ncs.compiler.classes import (
     Identifier,
     IdentifierExpression,
     IncludeScript,
+    IntExpression,
     ModuloAssignment,
     MultiplicationAssignment,
     NopStatement,
@@ -99,6 +101,7 @@ class NssParser:
         errorlog: yacc.NullLogger | None = yacc.NullLogger(),  # noqa: B008
         *,
         debug: bool = False,
+        max_include_depth: int = DEFAULT_MAX_INCLUDE_DEPTH,
     ):
         self.parser: yacc.LRParser = yacc.yacc(
             module=self,
@@ -109,6 +112,7 @@ class NssParser:
         self.functions: list[ScriptFunction] = functions
         self.constants: list[ScriptConstant] = constants
         self.library: dict[str, bytes] = library
+        self.max_include_depth = max_include_depth
         if library_lookup is None:
             lookup_items: list[str | Path] = []
         elif isinstance(library_lookup, (str, Path)):
@@ -147,11 +151,13 @@ class NssParser:
         ("left", "BITWISE_LEFT", "BITWISE_RIGHT", "BITWISE_UNSIGNED_RIGHT"),
         ("left", "ADD", "MINUS"),
         ("left", "MULTIPLY", "DIVIDE", "MOD"),
-        ("right", "BITWISE_NOT", "NOT"),
+        ("right", "UMINUS", "UPLUS", "BITWISE_NOT", "NOT"),
         ("left", "INCREMENT", "DECREMENT"),
     )
 
     def p_error(self, p) -> NoReturn:
+        if p is None:
+            raise CompileError("Syntax error: unexpected end of file")
         msg = f"Syntax error at line {p.lineno}, position {p.lexpos}, token='{p.value}'"
         raise CompileError(msg)
 
@@ -162,7 +168,11 @@ class NssParser:
         """  # noqa: D205, D415, D400, D212
         if len(p) == 3:
             code_root = cast("CodeRoot", p[1])
-            code_root.objects.append(p[2])
+            parsed_object = p[2]
+            if isinstance(parsed_object, list):
+                code_root.objects.extend(parsed_object)
+            else:
+                code_root.objects.append(parsed_object)
             p[0] = code_root
         else:
             p[0] = CodeRoot(
@@ -170,15 +180,14 @@ class NssParser:
                 functions=self.functions,
                 library_lookup=self.library_lookup,
                 library=self.library,
+                max_include_depth=self.max_include_depth,
             )
 
     def p_code_root_object(self, p):
         """
-        code_root_object : function_definition
-                         | include_script
-                         | function_forward_declaration
-                         | global_variable_declaration
-                         | global_variable_initialization
+        code_root_object : include_script
+                         | typed_top_level_object
+                         | const_global_variable_statement
                          | struct_definition
         """  # noqa: D205, D415, D400, D212
         p[0] = p[1]
@@ -195,16 +204,27 @@ class NssParser:
                        |
         """  # noqa: D415, D400, D212, D205
         if len(p) == 3:  # noqa: PLR2004
-            cast("list", p[1]).append(p[2])
+            cast("list", p[1]).extend(p[2])
             p[0] = p[1]
         else:
             p[0] = []
 
     def p_struct_member(self, p):
         """
-        struct_member : data_type IDENTIFIER ';'
+        struct_member : non_void_data_type struct_member_declarators ';'
         """  # noqa: D200, D400, D212, D415
-        p[0] = StructMember(p[1], p[2])
+        p[0] = [StructMember(p[1], identifier) for identifier in p[2]]
+
+    def p_struct_member_declarators(self, p):
+        """
+        struct_member_declarators : struct_member_declarators ',' IDENTIFIER
+                                  | IDENTIFIER
+        """  # noqa: D400, D212, D415, D205
+        if len(p) == 4:
+            p[1].append(p[3])
+            p[0] = p[1]
+        else:
+            p[0] = [p[1]]
 
     def p_include_script(self, p):
         """
@@ -212,49 +232,88 @@ class NssParser:
         """  # noqa: D200, D400, D212, D415
         p[0] = IncludeScript(p[2], library=self.library)
 
-    def p_global_variable_initialization(self, p):
-        """
-        global_variable_initialization : data_type IDENTIFIER '=' expression ';'
-        """  # noqa: D200, D400, D212, D415
-        p[0] = GlobalVariableInitialization(p[2], p[1], p[4])
+    @staticmethod
+    def _global_objects(
+        data_type: DynamicDataType,
+        identifier: Identifier,
+        tail,
+        *,
+        is_const: bool,
+    ):
+        initializer, trailing_declarators = tail
+        declarators = [
+            VariableInitializer(identifier, initializer)
+            if initializer is not None
+            else VariableDeclarator(identifier),
+            *trailing_declarators,
+        ]
+        objects = []
+        for declarator in declarators:
+            if isinstance(declarator, VariableInitializer):
+                objects.append(
+                    GlobalVariableInitialization(
+                        declarator.identifier,
+                        data_type,
+                        declarator.expression,
+                        is_const=is_const,
+                    )
+                )
+            else:
+                objects.append(
+                    GlobalVariableDeclaration(
+                        declarator.identifier,
+                        data_type,
+                        is_const=is_const,
+                    )
+                )
+        return objects
 
-    def p_global_variable_initialization_const(self, p):
+    def p_typed_top_level_object(self, p):
         """
-        global_variable_initialization : CONST data_type IDENTIFIER '=' expression ';'
-        """  # noqa: D200, D400, D212, D415
-        p[0] = GlobalVariableInitialization(p[3], p[2], p[5], is_const=True)
+        typed_top_level_object : any_data_type IDENTIFIER '(' function_definition_params ')' ';'
+                               | any_data_type IDENTIFIER '(' function_definition_params ')' '{' code_block '}'
+                               | any_data_type IDENTIFIER global_variable_tail ';'
+        """  # noqa: D400, D212, D415, D205
+        data_type = p[1]
+        identifier = p[2]
+        if p[3] == '(':
+            parameters = p[4]
+            if len(p) == 7:
+                p[0] = FunctionForwardDeclaration(data_type, identifier, parameters)
+            else:
+                block = p[7]
+                p[0] = FunctionDefinition(data_type, identifier, parameters, block, p.lineno(2))
+            return
 
-    def p_global_variable_declaration(self, p):
-        """
-        global_variable_declaration : data_type IDENTIFIER ';'
-        """  # noqa: D200, D400, D212, D415
-        p[0] = GlobalVariableDeclaration(p[2], p[1])
+        if data_type == DynamicDataType.VOID:
+            raise CompileError(
+                f"Cannot declare global variable '{identifier}' with void type\n"
+                "  void can only be used as a function return type"
+            )
+        p[0] = self._global_objects(data_type, identifier, p[3], is_const=False)
 
-    def p_global_variable_declaration_const(self, p):
+    def p_const_global_variable_statement(self, p):
         """
-        global_variable_declaration : CONST data_type IDENTIFIER ';'
+        const_global_variable_statement : CONST const_data_type IDENTIFIER global_variable_tail ';'
         """  # noqa: D200, D400, D212, D415
-        p[0] = GlobalVariableDeclaration(p[3], p[2], is_const=True)
+        p[0] = self._global_objects(p[2], p[3], p[4], is_const=True)
 
-    def p_function_forward_declaration(self, p):
+    def p_global_variable_tail(self, p):
         """
-        function_forward_declaration : data_type IDENTIFIER '(' function_definition_params ')' ';'
-        """  # noqa: D200, D400, D212, D415
-        p[0] = FunctionForwardDeclaration(p[1], p[2], p[4])
+        global_variable_tail : '=' expression global_variable_more
+                             | global_variable_more
+        """  # noqa: D400, D212, D415, D205
+        if len(p) == 4:
+            p[0] = (p[2], p[3])
+        else:
+            p[0] = (None, p[1])
 
-    def p_function_definition(self, p: yacc.YaccProduction):
+    def p_global_variable_more(self, p):
         """
-        function_definition : data_type IDENTIFIER '(' function_definition_params ')' '{' code_block '}'
-        """  # noqa: D200, D400, D212, D415
-        rtype = p[1]
-        name = p[2]
-        params = p[4]
-        block = p[7]
-        assert isinstance(rtype, DynamicDataType), f"Expected DynamicDataType, got {rtype}"
-        assert isinstance(name, Identifier), f"Expected Identifier, got {name}"
-        assert isinstance(params, list), f"Expected list[FunctionDefinitionParam], got {params}"
-        assert isinstance(block, CodeBlock), f"Expected CodeBlock, got {block}"
-        p[0] = FunctionDefinition(rtype, name, params, block, p.lineno(2))
+        global_variable_more : ',' variable_declarators
+                             |
+        """  # noqa: D400, D212, D415, D205
+        p[0] = p[2] if len(p) == 3 else []
 
     def p_function_definition_params(self, p):
         """
@@ -272,13 +331,13 @@ class NssParser:
 
     def p_function_definition_param(self, p):
         """
-        function_definition_param : data_type IDENTIFIER
+        function_definition_param : non_void_data_type IDENTIFIER
         """  # noqa: D200, D400, D212, D415
         p[0] = FunctionDefinitionParam(p[1], p[2])
 
     def p_function_definition_param_with_default(self, p):
         """
-        function_definition_param : data_type IDENTIFIER '=' expression
+        function_definition_param : non_void_data_type IDENTIFIER '=' expression
         """  # noqa: D200, D400, D212, D415
         p[0] = FunctionDefinitionParam(p[1], p[2], p[4])
 
@@ -299,30 +358,41 @@ class NssParser:
         elif len(p) == 1:
             p[0] = CodeBlock()
 
+    @staticmethod
+    def _statement_block(statement) -> CodeBlock:
+        if isinstance(statement, CodeBlock):
+            return statement
+        block = CodeBlock()
+        block.add(statement)
+        return block
+
     def p_while_loop(self, p):
         """
-        while_loop : WHILE_CONTROL '(' expression ')' '{' code_block '}'
+        while_loop : WHILE_CONTROL '(' expression ')' non_null_statement
         """  # noqa: D200, D400, D212, D415
-        p[0] = WhileLoopBlock(p[3], p[6])
+        p[0] = WhileLoopBlock(p[3], self._statement_block(p[5]))
 
     def p_do_while_loop(self, p):
         """
-        do_while_loop : DO_CONTROL '{' code_block '}' WHILE_CONTROL '(' expression ')' ';'
+        do_while_loop : DO_CONTROL non_null_statement WHILE_CONTROL '(' expression ')' ';'
         """  # noqa: D200, D400, D212, D415
-        p[0] = DoWhileLoopBlock(p[7], p[3])
+        p[0] = DoWhileLoopBlock(p[5], self._statement_block(p[2]))
 
     def p_for_loop(self, p):
         """
-        for_loop : FOR_CONTROL '(' expression ';' expression ';' expression ')' '{' code_block '}'
-                 | FOR_CONTROL '(' declaration_statement expression ';' expression ')' '{' code_block '}'
+        for_loop : FOR_CONTROL '(' optional_expression ';' optional_expression ';' optional_expression ')' statement
         """  # noqa: D200, D400, D212, D415
-        if len(p) == 12:
-            # for (expression; expression; expression)
-            p[0] = ForLoopBlock(p[3], p[5], p[7], p[10])
-        else:
-            # declaration_statement already consumes its trailing semicolon, so the
-            # second production has ten symbols: FOR '(' decl expr ';' expr ')' '{' block '}'.
-            p[0] = ForLoopBlock(p[3], p[4], p[6], p[9])
+        initial = p[3]
+        condition = p[5] if p[5] is not None else IntExpression(1)
+        iteration = p[7]
+        p[0] = ForLoopBlock(initial, condition, iteration, self._statement_block(p[9]))
+
+    def p_optional_expression(self, p):
+        """
+        optional_expression : expression
+                            |
+        """  # noqa: D400, D212, D415, D205
+        p[0] = p[1] if len(p) == 2 else None
 
     def p_scoped_block(self, p):
         """
@@ -333,25 +403,28 @@ class NssParser:
     def p_statement(self, p):
         """
         statement : ';'
-                  | declaration_statement
-                  | condition_statement
-                  | return_statement
-                  | while_loop
-                  | do_while_loop
-                  | for_loop
-                  | switch_statement
-                  | break_statement
-                  | continue_statement
-                  | scoped_block
+                  | non_null_statement
         """  # noqa: D400, D212, D403, D415, D205
-        if p[1] == ";":
-            p[0] = EmptyStatement()
-        else:
-            p[0] = p[1]
+        p[0] = EmptyStatement() if p[1] == ";" else p[1]
+
+    def p_non_null_statement(self, p):
+        """
+        non_null_statement : declaration_statement
+                           | condition_statement
+                           | return_statement
+                           | while_loop
+                           | do_while_loop
+                           | for_loop
+                           | switch_statement
+                           | break_statement
+                           | continue_statement
+                           | scoped_block
+        """  # noqa: D400, D212, D403, D415, D205
+        p[0] = p[1]
 
     def p_nop_statement(self, p):
         """
-        statement : NOP STRING_VALUE ';'
+        non_null_statement : NOP STRING_VALUE ';'
         """  # noqa: D200, D400, D403, D212, D415
         # p[2] is a StringExpression object from the lexer, access its .value attribute
         string_expr = p[2]
@@ -359,7 +432,7 @@ class NssParser:
 
     def p_expression_statement(self, p):
         """
-        statement : expression ';'
+        non_null_statement : expression ';'
         """  # noqa: D200, D400, D403, D212, D415
         p[0] = ExpressionStatement(p[1])
 
@@ -377,13 +450,13 @@ class NssParser:
 
     def p_declaration_statement(self, p):
         """
-        declaration_statement : data_type variable_declarators ';'
+        declaration_statement : non_void_data_type variable_declarators ';'
         """  # noqa: D200, D400, D212, D415
         p[0] = DeclarationStatement(p[1], p[2])
 
     def p_declaration_statement_const(self, p):
         """
-        declaration_statement : CONST data_type variable_declarators ';'
+        declaration_statement : CONST const_data_type variable_declarators ';'
         """  # noqa: D200, D400, D212, D415
         p[0] = DeclarationStatement(p[2], p[3], is_const=True)
 
@@ -485,64 +558,25 @@ class NssParser:
     # region If Statement
     def p_condition_statement(self, p):
         """
-        condition_statement : if_statement else_if_statements else_statement
+        condition_statement : if_statement else_statement
         """  # noqa: D200, D400, D212, D415
-        p[0] = ConditionalBlock(p[1], p[2], p[3])
-        # IF_CONTROL '(' expression ')' '{' code_block '}'
+        # ``else if`` is naturally represented as an ``else`` body containing
+        # another conditional statement. This keeps the grammar small and gives
+        # ``non_null_statement`` one clear meaning everywhere it is required.
+        p[0] = ConditionalBlock(p[1], [], p[2])
 
     def p_if_statement(self, p):
         """
-        if_statement : IF_CONTROL '(' expression ')' '{' code_block '}'
+        if_statement : IF_CONTROL '(' expression ')' non_null_statement
         """  # noqa: D200, D400, D212, D415
-        p[0] = ConditionAndBlock(p[3], p[6])
-
-    def p_if_statement_single(self, p):
-        """
-        if_statement : IF_CONTROL '(' expression ')' statement
-        """  # noqa: D200, D400, D212, D415
-        block = CodeBlock()
-        block.add(p[5])
-        p[0] = ConditionAndBlock(p[3], block)
+        p[0] = ConditionAndBlock(p[3], self._statement_block(p[5]))
 
     def p_else_statement(self, p):
         """
-        else_statement : ELSE_CONTROL '{' code_block '}'
+        else_statement : ELSE_CONTROL non_null_statement
                        |
         """  # noqa: D400, D212, D415, D205
-        p[0] = None if len(p) == 1 else p[3]
-
-    def p_else_statement_single(self, p):
-        """
-        else_statement : ELSE_CONTROL statement
-        """  # noqa: D200, D400, D212, D415
-        block = CodeBlock()
-        block.add(p[2])
-        p[0] = block
-
-    def p_else_if_statement(self, p):
-        """
-        else_if_statement : ELSE_CONTROL IF_CONTROL '(' expression ')' '{' code_block '}'
-        """  # noqa: D200, D400, D212, D415
-        p[0] = ConditionAndBlock(p[4], p[7])
-
-    def p_else_if_statement_single(self, p):
-        """
-        else_if_statement : ELSE_CONTROL IF_CONTROL '(' expression ')' statement
-        """  # noqa: D200, D400, D212, D415
-        block = CodeBlock()
-        block.add(p[6])
-        p[0] = ConditionAndBlock(p[4], block)
-
-    def p_else_if_statements(self, p):
-        """
-        else_if_statements : else_if_statements else_if_statement
-                           |
-        """  # noqa: D400, D212, D415, D205
-        if len(p) == 1:
-            p[0] = []
-        else:
-            p[1].append(p[2])
-            p[0] = p[1]
+        p[0] = None if len(p) == 1 else self._statement_block(p[2])
 
     # endregion
 
@@ -584,11 +618,19 @@ class NssParser:
 
     def p_unary_expression(self, p):
         """
-        expression : MINUS expression
+        expression : MINUS expression %prec UMINUS
                    | BITWISE_NOT expression
                    | NOT expression
         """  # noqa: D400, D212, D403, D415, D205
         p[0] = UnaryOperatorExpression(p[2], p[1].unary)
+
+    def p_unary_plus_expression(self, p):
+        """
+        expression : ADD expression %prec UPLUS
+        """  # noqa: D200, D400, D212, D403, D415
+        # Unary plus is a semantic no-op in NWScript. Returning the operand keeps
+        # constant folding and runtime code generation identical to the operand.
+        p[0] = p[2]
 
     def p_return_statement(self, p: yacc.YaccProduction):
         """
@@ -633,24 +675,9 @@ class NssParser:
         """
         function_call : IDENTIFIER '(' function_call_params ')'
         """  # noqa: D200, D400, D212, D415
-        identifier = p[1]
-        args: list[Expression] = p[3]
-
-        # identifier is an Identifier object, need to get its label for comparison
-        identifier_label = (
-            identifier.label if isinstance(identifier, Identifier) else str(identifier)
-        )
-        # Single pass: get (index, function) to avoid separate index() call
-        routine_id, engine_function = next(
-            ((i, x) for i, x in enumerate(self.functions) if x.name == identifier_label),
-            (None, None),
-        )
-        if engine_function is not None and routine_id is not None:
-            data_type = DynamicDataType(engine_function.returntype)
-            p[0] = EngineCallExpression(engine_function, routine_id, data_type, args)
-        else:
-            args = p[3]
-            p[0] = FunctionCallExpression(identifier, args)
+        # Parsing records source syntax only. Whether this name denotes a user
+        # function or a predefined engine routine is a semantic-resolution decision.
+        p[0] = FunctionCallExpression(p[1], p[3])
 
     def p_function_call_params(self, p):
         """
@@ -666,33 +693,38 @@ class NssParser:
         elif len(p) == 1:
             p[0] = []
 
-    def p_data_type(self, p):
+    def p_any_data_type(self, p):
         """
-        data_type : INT_TYPE
-                  | FLOAT_TYPE
-                  | OBJECT_TYPE
-                  | VOID_TYPE
-                  | EVENT_TYPE
-                  | EFFECT_TYPE
-                  | ITEMPROPERTY_TYPE
-                  | LOCATION_TYPE
-                  | STRING_TYPE
-                  | TALENT_TYPE
-                  | VECTOR_TYPE
-                  | ACTION_TYPE
-                  | STRUCT IDENTIFIER
-                  | IDENTIFIER
+        any_data_type : VOID_TYPE
+                      | non_void_data_type
         """  # noqa: D400, D212, D415, D205
-        if len(p) == 3:  # noqa: PLR2004
-            # STRUCT IDENTIFIER
-            p[0] = DynamicDataType(p[1], p[2].label)
-        elif len(p) == 2:
-            if isinstance(p[1], Identifier):
-                # IDENTIFIER (struct type)
-                p[0] = DynamicDataType(DataType.STRUCT, p[1].label)
-            else:
-                # Built-in type
-                p[0] = DynamicDataType(p[1])
+        p[0] = DynamicDataType(p[1]) if isinstance(p[1], DataType) else p[1]
+
+    def p_non_void_data_type(self, p):
+        """
+        non_void_data_type : INT_TYPE
+                           | FLOAT_TYPE
+                           | OBJECT_TYPE
+                           | EVENT_TYPE
+                           | EFFECT_TYPE
+                           | LOCATION_TYPE
+                           | STRING_TYPE
+                           | TALENT_TYPE
+                           | VECTOR_TYPE
+                           | STRUCT IDENTIFIER
+        """  # noqa: D400, D212, D415, D205
+        if len(p) == 3:
+            p[0] = DynamicDataType(DataType.STRUCT, p[2].label)
+        else:
+            p[0] = DynamicDataType(p[1])
+
+    def p_const_data_type(self, p):
+        """
+        const_data_type : INT_TYPE
+                        | FLOAT_TYPE
+                        | STRING_TYPE
+        """  # noqa: D400, D212, D415, D205
+        p[0] = DynamicDataType(p[1])
 
     def p_field_access(self, p):
         """
@@ -734,9 +766,20 @@ class NssParser:
 
     def p_vector_expression(self, p):
         """
-        expression : '[' FLOAT_VALUE ',' FLOAT_VALUE ',' FLOAT_VALUE ']'
-        """  # noqa: D200, D400, D403, D212, D415
-        p[0] = VectorExpression(p[2], p[4], p[6])
+        expression : '[' ']'
+                   | '[' FLOAT_VALUE ']'
+                   | '[' FLOAT_VALUE ',' FLOAT_VALUE ']'
+                   | '[' FLOAT_VALUE ',' FLOAT_VALUE ',' FLOAT_VALUE ']'
+        """  # noqa: D400, D212, D403, D415, D205
+        zero = FloatExpression(0.0)
+        if len(p) == 3:
+            p[0] = VectorExpression(zero, FloatExpression(0.0), FloatExpression(0.0))
+        elif len(p) == 4:
+            p[0] = VectorExpression(p[2], FloatExpression(0.0), FloatExpression(0.0))
+        elif len(p) == 6:
+            p[0] = VectorExpression(p[2], p[4], FloatExpression(0.0))
+        else:
+            p[0] = VectorExpression(p[2], p[4], p[6])
 
     # region Switch Statement
     def p_switch_statement(self, p):

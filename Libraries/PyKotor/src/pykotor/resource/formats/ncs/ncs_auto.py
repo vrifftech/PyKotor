@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 
 from pykotor.common.scriptdefs import KOTOR_CONSTANTS, KOTOR_FUNCTIONS, TSL_CONSTANTS, TSL_FUNCTIONS
 from pykotor.common.scriptlib import KOTOR_LIBRARY, TSL_LIBRARY
+from pykotor.resource.formats.ncs.compiler.classes import DEFAULT_MAX_INCLUDE_DEPTH
 from pykotor.resource.formats.ncs.compiler.lexer import NssLexer
 from pykotor.resource.formats.ncs.compiler.parser import NssParser
 from pykotor.resource.formats.ncs.io_ncs import NCSBinaryReader, NCSBinaryWriter
@@ -102,6 +103,7 @@ def compile_nss(
     *,
     errorlog: yacc.NullLogger | None = None,
     debug: bool = False,
+    max_include_depth: int = DEFAULT_MAX_INCLUDE_DEPTH,
 ) -> NCS:
     """Returns NCS object compiled from input source string.
 
@@ -110,6 +112,8 @@ def compile_nss(
         source: The source code.
         game: Target game for the NCS object.
         optimizers: What post-compilation optimizers to apply to the NCS object.
+        max_include_depth: Maximum compiler file level for nested includes. The
+            root script counts as level 1, matching BioWare's compiler.
     """
     NssLexer()
     nss_parser = NssParser(
@@ -119,6 +123,7 @@ def compile_nss(
         library_lookup=library_lookup,
         errorlog=errorlog,
         debug=debug,
+        max_include_depth=max_include_depth,
     )
 
     ncs = NCS()
