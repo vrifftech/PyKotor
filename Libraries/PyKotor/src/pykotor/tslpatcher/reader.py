@@ -113,9 +113,9 @@ class NamespaceReader:
 
             this_namespace_section = CaseInsensitiveDict(self.ini[namespace_section_key])
 
-            # required
-            ini_filename: str = this_namespace_section["IniName"]
-            info_filename: str = this_namespace_section["InfoName"]
+            # Optional filenames default within this namespace's DataPath.
+            ini_filename: str = this_namespace_section.get("IniName") or PatcherNamespace.DEFAULT_INI_FILENAME
+            info_filename: str = this_namespace_section.get("InfoName") or PatcherNamespace.DEFAULT_INFO_FILENAME
             namespace = PatcherNamespace(ini_filename, info_filename)
 
             # optional
