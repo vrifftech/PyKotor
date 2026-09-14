@@ -1,17 +1,21 @@
-"""NSS compiler AST and helpers: CompileError, expression/statement nodes, type helpers."""
+"""AST nodes, symbol resolution, and NCS instruction emission."""
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
-import math
-import struct
 from utility.system.path import Path
-from typing import TYPE_CHECKING, NamedTuple, cast
+from typing import TYPE_CHECKING, Iterator, NamedTuple, cast
 
 from pykotor.common.script import DataType
 from pykotor.resource.formats.ncs import NCS, NCSInstruction, NCSInstructionType
+from pykotor.resource.formats.ncs.compiler.numeric import (
+    canonicalize_kotor_float_constant,
+    float32 as _float32,
+    int32 as _int32,
+)
+from pykotor.resource.formats.ncs.compiler.source import CompileError, SourceLocation
 from pykotor.tools.path import CaseAwarePath
 
 if TYPE_CHECKING:
@@ -30,27 +34,6 @@ def get_logical_equality_instruction(
     raise CompileError(msg)
 
 
-class CompileError(Exception):
-    """Base exception for NSS compilation errors.
-
-    Provides detailed error messages to help debug script issues.
-
-    References:
-    ----------
-
-    """
-
-    def __init__(self, message: str, line_num: int | None = None, context: str | None = None):
-        full_message = message
-        if line_num is not None:
-            full_message = f"Line {line_num}: {message}"
-        if context:
-            full_message = f"{full_message}\n  Context: {context}"
-        super().__init__(full_message)
-        self.line_num = line_num
-        self.context = context
-
-
 class EntryPointError(CompileError):
     """Raised when script has no valid entry point (main or StartingConditional)."""
 
@@ -64,13 +47,7 @@ MAX_FUNCTION_PARAMETERS = 32
 
 
 class IncludeContext:
-    """Track BioWare-style include state for one root compilation.
-
-    The original compiler treats the root script as file level 1. With the
-    default limit of 16, at most 15 nested include files may therefore be
-    active below the root at one time. Already-completed includes are skipped
-    case-insensitively, while an include that is still active is recursive.
-    """
+    """Track active and completed includes; the root counts toward the depth limit."""
 
     def __init__(self, max_depth: int = DEFAULT_MAX_INCLUDE_DEPTH):
         if max_depth < 1:
@@ -96,9 +73,7 @@ class IncludeContext:
         if canonical_name in self.included:
             return None
 
-        # Beamdog's m_nCompileFileLevel counts the root as level 1. Rejecting
-        # here mirrors `m_nCompileFileLevel >= m_nMaxIncludeDepth` before the
-        # next include file is entered.
+        # The root counts as the first file in the include-depth limit.
         current_file_level = len(self.active) + 1
         if current_file_level >= self.max_depth:
             raise CompileError(
@@ -121,7 +96,7 @@ class IncludeContext:
 
 
 class ConstantValue(NamedTuple):
-    """A BioWare-style compile-time NSS constant."""
+    """A typed predefined constant."""
 
     datatype: DataType
     value: int | float | str
@@ -129,43 +104,10 @@ class ConstantValue(NamedTuple):
 
 @dataclass(frozen=True)
 class SourceOrigin:
-    """Source position of one top-level declaration after include expansion.
-
-    ``file_level`` mirrors BioWare's compiler file level (root script = 1,
-    includes >= 2). ``source_order`` is the depth-first declaration order after
-    includes have been expanded at their source position.
-    """
+    """Declaration order and include depth after source expansion."""
 
     file_level: int
     source_order: int
-
-
-@dataclass(frozen=True)
-class CompileTimeConstantSymbol:
-    """One predefined or source-declared compile-time constant."""
-
-    value: ConstantValue
-    origin: SourceOrigin | None = None
-
-    def is_visible_at(self, source_origin: SourceOrigin | None) -> bool:
-        """Return whether this constant is visible from ``source_origin``."""
-        if self.origin is None or source_origin is None:
-            return True
-        return self.origin.source_order <= source_origin.source_order
-
-
-def _int32(value: int) -> int:
-    """Normalize an integer to the signed 32-bit representation used by NCS."""
-    value &= 0xFFFFFFFF
-    return value - 0x100000000 if value >= 0x80000000 else value
-
-
-def _float32(value: float) -> float:
-    """Round to the 32-bit IEEE-754 representation used by NCS CONSTF."""
-    try:
-        return struct.unpack(">f", struct.pack(">f", float(value)))[0]
-    except OverflowError:
-        return math.copysign(math.inf, value)
 
 
 def _emit_constant(ncs: NCS, constant: ConstantValue) -> DynamicDataType:
@@ -180,133 +122,33 @@ def _emit_constant(ncs: NCS, constant: ConstantValue) -> DynamicDataType:
     return DynamicDataType(constant.datatype)
 
 
-def _c_int_div(left: int, right: int) -> int:
-    quotient = abs(left) // abs(right)
-    return -quotient if (left < 0) != (right < 0) else quotient
-
-
-def _fold_unary_constant(
-    instruction: NCSInstructionType,
-    operand: ConstantValue,
-) -> ConstantValue | None:
-    if operand.datatype == DataType.INT:
-        value = _int32(int(operand.value))
-        if instruction == NCSInstructionType.NEGI:
-            return ConstantValue(DataType.INT, _int32(-value))
-        if instruction == NCSInstructionType.COMPI:
-            return ConstantValue(DataType.INT, _int32(~value))
-        if instruction == NCSInstructionType.NOTI:
-            return ConstantValue(DataType.INT, int(not value))
-    elif operand.datatype == DataType.FLOAT and instruction == NCSInstructionType.NEGF:
-        return ConstantValue(DataType.FLOAT, _float32(-float(operand.value)))
-    return None
-
-
-def _fold_binary_constant(
-    mapping: BinaryOperatorMapping,
-    left: ConstantValue,
-    right: ConstantValue,
-) -> ConstantValue | None:
-    # BioWare's constant folder folds same-type operands only (except short-circuit
-    # logical expressions, handled before this helper is called).
-    if left.datatype != right.datatype:
-        return None
-    if left.datatype != mapping.lhs or right.datatype != mapping.rhs:
-        return None
-
-    op = mapping.instruction
-    if left.datatype == DataType.INT:
-        lhs = _int32(int(left.value))
-        rhs = _int32(int(right.value))
-        if op == NCSInstructionType.LOGORII:
-            result = int(bool(lhs) or bool(rhs))
-        elif op == NCSInstructionType.LOGANDII:
-            result = int(bool(lhs) and bool(rhs))
-        elif op == NCSInstructionType.INCORII:
-            result = lhs | rhs
-        elif op == NCSInstructionType.EXCORII:
-            result = lhs ^ rhs
-        elif op == NCSInstructionType.BOOLANDII:
-            result = lhs & rhs
-        elif op == NCSInstructionType.EQUALII:
-            result = int(lhs == rhs)
-        elif op == NCSInstructionType.NEQUALII:
-            result = int(lhs != rhs)
-        elif op == NCSInstructionType.GEQII:
-            result = int(lhs >= rhs)
-        elif op == NCSInstructionType.GTII:
-            result = int(lhs > rhs)
-        elif op == NCSInstructionType.LTII:
-            result = int(lhs < rhs)
-        elif op == NCSInstructionType.LEQII:
-            result = int(lhs <= rhs)
-        elif op == NCSInstructionType.SHLEFTII:
-            if not 0 <= rhs < 32:
-                return None
-            result = lhs << rhs
-        elif op == NCSInstructionType.SHRIGHTII:
-            if not 0 <= rhs < 32:
-                return None
-            result = lhs >> rhs
-        elif op == NCSInstructionType.USHRIGHTII:
-            if not 0 <= rhs < 32:
-                return None
-            result = (lhs & 0xFFFFFFFF) >> rhs
-        elif op == NCSInstructionType.ADDII:
-            result = lhs + rhs
-        elif op == NCSInstructionType.SUBII:
-            result = lhs - rhs
-        elif op == NCSInstructionType.MULII:
-            result = lhs * rhs
-        elif op in (NCSInstructionType.DIVII, NCSInstructionType.MODII):
-            if rhs == 0 or (lhs == -0x80000000 and rhs == -1):
-                return None
-            quotient = _c_int_div(lhs, rhs)
-            result = quotient if op == NCSInstructionType.DIVII else lhs - quotient * rhs
-        else:
-            return None
-        return ConstantValue(DataType.INT, _int32(result))
-
-    if left.datatype == DataType.FLOAT:
-        lhs = _float32(float(left.value))
-        rhs = _float32(float(right.value))
-        if op == NCSInstructionType.ADDFF:
-            return ConstantValue(DataType.FLOAT, _float32(lhs + rhs))
-        if op == NCSInstructionType.SUBFF:
-            return ConstantValue(DataType.FLOAT, _float32(lhs - rhs))
-        if op == NCSInstructionType.MULFF:
-            return ConstantValue(DataType.FLOAT, _float32(lhs * rhs))
-        if op == NCSInstructionType.DIVFF:
-            if rhs == 0.0:
-                if lhs == 0.0:
-                    result = math.nan
-                else:
-                    result = math.copysign(math.inf, lhs * math.copysign(1.0, rhs))
-            else:
-                result = lhs / rhs
-            return ConstantValue(DataType.FLOAT, _float32(result))
-        comparisons = {
-            NCSInstructionType.EQUALFF: lhs == rhs,
-            NCSInstructionType.NEQUALFF: lhs != rhs,
-            NCSInstructionType.GEQFF: lhs >= rhs,
-            NCSInstructionType.GTFF: lhs > rhs,
-            NCSInstructionType.LTFF: lhs < rhs,
-            NCSInstructionType.LEQFF: lhs <= rhs,
-        }
-        if op in comparisons:
-            return ConstantValue(DataType.INT, int(comparisons[op]))
-        return None
-
-    if left.datatype == DataType.STRING:
-        lhs = str(left.value)
-        rhs = str(right.value)
-        if op == NCSInstructionType.ADDSS:
-            return ConstantValue(DataType.STRING, lhs + rhs)
-        if op == NCSInstructionType.EQUALSS:
-            return ConstantValue(DataType.INT, int(lhs == rhs))
-        if op == NCSInstructionType.NEQUALSS:
-            return ConstantValue(DataType.INT, int(lhs != rhs))
-    return None
+def emit_value_reservation(ncs: NCS, root: CodeRoot, datatype: DynamicDataType) -> int:
+    """Reserve typed stack cells for a return value or aggregate member."""
+    instructions = {
+        DataType.INT: NCSInstructionType.RSADDI,
+        DataType.FLOAT: NCSInstructionType.RSADDF,
+        DataType.STRING: NCSInstructionType.RSADDS,
+        DataType.OBJECT: NCSInstructionType.RSADDO,
+        DataType.EVENT: NCSInstructionType.RSADDEVT,
+        DataType.LOCATION: NCSInstructionType.RSADDLOC,
+        DataType.TALENT: NCSInstructionType.RSADDTAL,
+        DataType.EFFECT: NCSInstructionType.RSADDEFF,
+    }
+    if datatype.builtin == DataType.VOID:
+        return 0
+    if datatype.builtin == DataType.VECTOR:
+        for _ in range(3):
+            ncs.add(NCSInstructionType.RSADDF)
+    elif datatype.builtin == DataType.STRUCT:
+        struct_type = root.struct_map.get(datatype.struct_name)
+        if struct_type is None:
+            raise CompileError(f"Unknown struct type '{datatype.struct_name}' for value storage")
+        struct_type.initialize(ncs, root)
+    elif datatype.builtin in instructions:
+        ncs.add(instructions[datatype.builtin])
+    else:
+        raise CompileError(f"Cannot reserve storage for type '{datatype.builtin.name.lower()}'")
+    return datatype.size(root)
 
 
 class TopLevelObject(ABC):
@@ -339,36 +181,30 @@ class GlobalVariableInitialization(TopLevelObject):
         identifier: Identifier,
         data_type: DynamicDataType,
         value: Expression,
-        is_const: bool = False,
     ):
         super().__init__()
         self.identifier: Identifier = identifier
         self.data_type: DynamicDataType = data_type
         self.expression: Expression = value
-        self.is_const: bool = is_const
 
     def register(self, root: CodeRoot) -> None:
         root.register_global(
             self.identifier,
             self.data_type,
-            is_const=self.is_const,
-            expression=self.expression if self.is_const else None,
             origin=self.require_source_origin(),
         )
 
     def compile(self, ncs: NCS, root: CodeRoot):
-        if self.is_const:
-            return
-
-        # Semantic registration and VM storage allocation are intentionally separate.
-        # Only globals whose storage has actually been emitted participate in BP/SP
-        # offset lookup during the global-initializer phase.
+        # Only emitted global slots participate in stack-offset lookup.
         declaration = GlobalVariableDeclaration(self.identifier, self.data_type)
         declaration._emit_storage(ncs, root)
 
         block = CodeBlock(
             CompilationContext(
-                SemanticContext(source_origin=self.require_source_origin())
+                SemanticContext(
+                    source_origin=self.require_source_origin(),
+                    global_initializer=True,
+                )
             )
         )
         expression_type = self.expression.compile(ncs, root, block)
@@ -381,7 +217,6 @@ class GlobalVariableInitialization(TopLevelObject):
             raise CompileError(msg)
 
         scoped = root.get_scoped(self.identifier, root)
-        # Global storage resides on the stack before base pointer is saved, so use stack-pointer-relative copy.
         stack_index = scoped.offset - scoped.datatype.size(root)
         ncs.instructions.append(
             NCSInstruction(
@@ -389,31 +224,25 @@ class GlobalVariableInitialization(TopLevelObject):
                 [stack_index, scoped.datatype.size(root)],
             ),
         )
-        # Remove the initializer value from the stack and mirror that in the explicit stack context.
         initializer_size = scoped.datatype.size(root)
         ncs.add(NCSInstructionType.MOVSP, args=[-initializer_size])
         block.context.stack.consume(initializer_size)
 
 
 class GlobalVariableDeclaration(TopLevelObject):
-    def __init__(self, identifier: Identifier, data_type: DynamicDataType, is_const: bool = False):
+    def __init__(self, identifier: Identifier, data_type: DynamicDataType):
         super().__init__()
         self.identifier: Identifier = identifier
         self.data_type: DynamicDataType = data_type
-        self.is_const: bool = is_const
 
     def register(self, root: CodeRoot) -> None:
         root.register_global(
             self.identifier,
             self.data_type,
-            is_const=self.is_const,
-            expression=None,
             origin=self.require_source_origin(),
         )
 
     def compile(self, ncs: NCS, root: CodeRoot):  # noqa: A003
-        if self.is_const:
-            return
         self._emit_storage(ncs, root)
 
     def _emit_storage(self, ncs: NCS, root: CodeRoot) -> None:
@@ -451,7 +280,7 @@ class GlobalVariableDeclaration(TopLevelObject):
             msg = f"Unsupported type '{self.data_type.builtin.name}' for global variable '{self.identifier}'\n  This may indicate a compiler bug or unsupported type"
             raise CompileError(msg)
 
-        root.allocate_global(self.identifier, self.data_type, is_const=self.is_const)
+        root.allocate_global(self.identifier, self.data_type)
 
 
 class Identifier:
@@ -518,8 +347,11 @@ class SemanticContext:
         function_name: str | None = None,
         return_type: DynamicDataType | None = None,
         source_origin: SourceOrigin | None = None,
+        *,
+        global_initializer: bool = False,
     ):
         self.function_name = function_name
+        self.global_initializer = global_initializer
         self.return_type = return_type
         self.source_origin = source_origin
 
@@ -638,8 +470,6 @@ class UnaryOperatorMapping:
         self.rhs: DataType = rhs
 
 
-
-
 def _format_function_type(datatype: DynamicDataType) -> str:
     """Return a source-like type name for function-signature diagnostics."""
     if datatype.builtin == DataType.STRUCT:
@@ -647,9 +477,16 @@ def _format_function_type(datatype: DynamicDataType) -> str:
     return datatype.builtin.name.lower()
 
 
+class SourceIdentifierKind(Enum):
+    """Identifier classes for predefined constants and known functions."""
+
+    FUNCTION = "function"
+    CONSTANT = "constant"
+
+
 @dataclass(frozen=True)
 class FunctionSignature:
-    """The parts of a user-function declaration that define its type signature."""
+    """The parts of a function declaration that define its type signature."""
 
     return_type: DynamicDataType
     parameter_types: tuple[DynamicDataType, ...]
@@ -664,6 +501,16 @@ class FunctionSignature:
             parameter_types=tuple(parameter.data_type for parameter in function.parameters),
         )
 
+    @classmethod
+    def from_engine_function(cls, function: ScriptFunction) -> FunctionSignature:
+        """Build the source signature of an engine function."""
+        return cls(
+            return_type=DynamicDataType(function.returntype),
+            parameter_types=tuple(
+                DynamicDataType(parameter.datatype) for parameter in function.params
+            ),
+        )
+
 
 @dataclass(frozen=True)
 class EngineFunctionReference:
@@ -675,20 +522,14 @@ class EngineFunctionReference:
 
 @dataclass
 class FunctionSymbol:
-    """Semantic state for one user-defined function name.
-
-    A declaration contributes only a signature.  An implementation contributes the
-    executable entry label.  Keeping those concepts separate prevents a prototype
-    from accidentally becoming a valid JSR destination.
-    """
+    """A function signature, declaration sites, and optional implementation entry."""
 
     name: str
     signature: FunctionSignature
     parameters: tuple[FunctionDefinitionParam, ...]
     implementation: FunctionDefinition | None = None
     entry_instruction: NCSInstruction | None = None
-    referenced: bool = False
-    unresolved_target: NCSInstruction | None = None
+    called_functions: set[str] = field(default_factory=set)
     declaration_origins: list[SourceOrigin] = field(default_factory=list)
     implementation_origin: SourceOrigin | None = None
 
@@ -718,38 +559,18 @@ class FunctionSymbol:
             )
         return self.entry_instruction
 
-    def note_reference(self) -> None:
-        """Record a semantic reference to this function without emitting a call."""
-        self.referenced = True
-
-    def mark_referenced(self) -> NCSInstruction:
-        """Record a call and return the label used by its temporary JSR.
-
-        All top-level symbols are registered before emission, so a real implementation
-        already has an entry label here.  Prototype-only calls use a non-emitted
-        placeholder solely so bytecode emission can finish and report all unresolved
-        calls in one final validation step.
-        """
-        self.note_reference()
-        if self.entry_instruction is not None:
-            return self.entry_instruction
-        if self.unresolved_target is None:
-            self.unresolved_target = NCSInstruction(NCSInstructionType.NOP)
-        return self.unresolved_target
-
 
 class GetScopedResult(NamedTuple):
     is_global: bool
     datatype: DynamicDataType
     offset: int
-    is_const: bool = False
 
 
 class Struct:
     def __init__(self, identifier: Identifier, members: list[StructMember]):
         self.identifier: Identifier = identifier
         self.members: list[StructMember] = members
-        self._cached_size: int | None = None  # Cache size for performance
+        self._cached_size: int | None = None
 
     def initialize(self, ncs: NCS, root: CodeRoot):
         for member in self.members:
@@ -768,7 +589,6 @@ class Struct:
                 break
             size += member.size(root)
         else:
-            # Provide helpful error with available members
             available = [m.identifier.label for m in self.members]
             msg = f"Unknown member '{identifier}' in struct '{self.identifier}'\n  Available members: {', '.join(available)}"
             raise CompileError(msg)
@@ -810,7 +630,6 @@ class StructMember:
             ncs.add(NCSInstructionType.RSADDF, args=[])
             ncs.add(NCSInstructionType.RSADDF, args=[])
         elif self.datatype.builtin == DataType.STRUCT:
-            # Use the struct type name from datatype, not the member name
             struct_type_name = self.datatype._struct
             if struct_type_name is None:
                 msg = f"Struct member '{self.identifier.label}' has no struct type name"
@@ -834,15 +653,7 @@ class StructMember:
 
 
 class CodeRoot:
-    """Root compilation context for NSS compilation.
-
-    Manages global scope, function definitions, constants, and compilation state.
-    Provides symbol resolution and type checking during NSS to NCS compilation.
-
-    References:
-    ----------
-
-    """
+    """Compilation state, global storage, and top-level symbols."""
 
     def __init__(
         self,
@@ -851,8 +662,11 @@ class CodeRoot:
         library_lookup: list[str] | list[Path] | list[Path | str] | str | Path | None,
         library: dict[str, bytes],
         max_include_depth: int = DEFAULT_MAX_INCLUDE_DEPTH,
+        *,
+        source_encoding: str | None = None,
     ):
         self.objects: list[TopLevelObject] = []
+        self.source_encoding = source_encoding
 
         self.library: dict[str, bytes] = library
         self.include_context = IncludeContext(max_include_depth)
@@ -880,25 +694,23 @@ class CodeRoot:
 
         self.function_map: dict[str, FunctionSymbol] = {}
         self._global_scope: list[ScopedValue] = []
-        self._compile_time_constants: dict[str, CompileTimeConstantSymbol] = {}
+        self._predefined_constants: dict[str, ConstantValue] = {}
         for constant in constants:
             if constant.datatype == DataType.INT:
                 value: int | float | str = _int32(int(constant.value))
             elif constant.datatype == DataType.FLOAT:
-                value = _float32(float(constant.value))
+                value = canonicalize_kotor_float_constant(float(constant.value))
             elif constant.datatype == DataType.STRING:
                 value = str(constant.value)
             else:
                 continue
-            self._compile_time_constants[constant.name] = CompileTimeConstantSymbol(
-                ConstantValue(constant.datatype, value)
-            )
+            self._predefined_constants[constant.name] = ConstantValue(constant.datatype, value)
         self.struct_map: dict[str, Struct] = {}
-        # Semantic symbol registration is separate from emitted VM storage.
-        # ``_registered_globals`` detects declarations before any bytecode exists,
-        # while ``_global_scope`` contains only globals whose runtime slots have
-        # actually been emitted.
+        self._struct_origins: dict[str, SourceOrigin] = {}
+        # Registered names and allocated global slots are tracked separately.
         self._registered_globals: dict[str, ScopedValue] = {}
+        self._global_origins: dict[str, SourceOrigin] = {}
+        self._global_function_references: set[str] = set()
         self._symbols_registered = False
         self._next_source_order = 0
 
@@ -917,22 +729,16 @@ class CodeRoot:
         for obj in objects:
             if isinstance(obj, IncludeScript):
                 expanded.extend(obj.expand(self, self.include_context))
-            else:
-                obj.set_source_origin(SourceOrigin(file_level, self._next_source_order))
-                self._next_source_order += 1
-                expanded.append(obj)
+                continue
+
+            origin = SourceOrigin(file_level, self._next_source_order)
+            self._next_source_order += 1
+            obj.set_source_origin(origin)
+            expanded.append(obj)
         return expanded
 
     def register_symbols(self) -> None:
-        """Build and validate the complete top-level symbol table.
-
-        Registration deliberately performs no NCS emission.  Struct names are
-        collected first so every later signature/declaration can be validated,
-        globals/constants are then registered in source order (preserving constant
-        dependency semantics), and function signatures are registered last. Function
-        registration is complete for code layout, while ``SourceOrigin`` still
-        controls whether a function was visible at any particular source location.
-        """
+        """Collect struct layouts, then register declarations in source order."""
         if self._symbols_registered:
             return
 
@@ -942,11 +748,11 @@ class CodeRoot:
         self._validate_struct_definitions()
 
         for obj in self.objects:
-            if isinstance(obj, (GlobalVariableDeclaration, GlobalVariableInitialization)):
+            if isinstance(obj, StructDefinition):
+                self._validate_struct_source_identifiers(obj)
+            elif isinstance(obj, (GlobalVariableDeclaration, GlobalVariableInitialization)):
                 obj.register(self)
-
-        for obj in self.objects:
-            if isinstance(obj, (FunctionForwardDeclaration, FunctionDefinition)):
+            elif isinstance(obj, (FunctionForwardDeclaration, FunctionDefinition)):
                 obj.register(self)
 
         self._symbols_registered = True
@@ -960,6 +766,7 @@ class CodeRoot:
                 f"Struct '{name}' cannot be empty\n  Structs must have at least one member"
             )
         self.struct_map[name] = Struct(definition.identifier, definition.members)
+        self._struct_origins[name] = definition.require_source_origin()
 
     def _validate_struct_definitions(self) -> None:
         """Validate member names/types and reject recursive by-value layouts."""
@@ -1027,12 +834,52 @@ class CodeRoot:
         for name in self.struct_map:
             validate_layout(name)
 
+    def is_function_identifier(
+        self,
+        name: str,
+        source_origin: SourceOrigin | None,
+    ) -> bool:
+        """Check whether a function name is visible at this source position."""
+        return (
+            self.get_engine_function(name) is not None
+            or self.get_visible_function(name, source_origin) is not None
+        )
+
+    def classify_source_identifier(
+        self,
+        name: str,
+        source_origin: SourceOrigin | None,
+    ) -> SourceIdentifierKind | None:
+        """Classify a visible constant or function; variables and struct names are unclassified."""
+        if self.get_compile_time_constant(name) is not None:
+            return SourceIdentifierKind.CONSTANT
+        if self.is_function_identifier(name, source_origin):
+            return SourceIdentifierKind.FUNCTION
+        return None
+
+    def require_variable_identifier(
+        self,
+        identifier: Identifier,
+        source_origin: SourceOrigin,
+        *,
+        context: str,
+    ) -> None:
+        """Reject names already classified as functions or constants."""
+        kind = self.classify_source_identifier(identifier.label, source_origin)
+        if kind is None:
+            return
+        raise CompileError(
+            f"Identifier '{identifier.label}' cannot be used as {context}\n"
+            f"  It is already classified as a {kind.value} identifier"
+        )
+
     def validate_data_type(
         self,
         datatype: DynamicDataType,
         *,
         context: str,
         allow_void: bool,
+        source_origin: SourceOrigin | None = None,
     ) -> None:
         if datatype.builtin == DataType.VOID:
             if not allow_void:
@@ -1042,46 +889,104 @@ class CodeRoot:
             struct_name = datatype._struct  # noqa: SLF001
             if not struct_name or struct_name not in self.struct_map:
                 raise CompileError(f"Unknown struct type '{struct_name}' for {context}")
+            if (
+                source_origin is not None
+                and self.classify_source_identifier(struct_name, source_origin) is not None
+            ):
+                raise CompileError(
+                    f"Struct type '{struct_name}' is not available for {context}\n"
+                    "  The name is already classified as a function or constant identifier"
+                )
+
+    def require_struct_layout_at(
+        self,
+        datatype: DynamicDataType,
+        origin: SourceOrigin,
+        *,
+        context: str,
+    ) -> None:
+        """Require an earlier struct layout for global storage and by-value members."""
+        if datatype.builtin != DataType.STRUCT:
+            return
+        definition = self._struct_origins.get(datatype.struct_name)
+        if definition is None or definition.source_order >= origin.source_order:
+            raise CompileError(
+                f"Struct type '{datatype.struct_name}' is not yet defined for {context}"
+            )
+
+    def _validate_struct_source_identifiers(self, definition: StructDefinition) -> None:
+        """Validate struct/member tokens at the point this struct appears in source."""
+        origin = definition.require_source_origin()
+        struct_name = definition.identifier.label
+        self.require_variable_identifier(
+            definition.identifier,
+            origin,
+            context="a struct name",
+        )
+        for member in definition.members:
+            self.require_variable_identifier(
+                member.identifier,
+                origin,
+                context=f"a member name in struct '{struct_name}'",
+            )
+            self.validate_data_type(
+                member.datatype,
+                context=f"member '{member.identifier.label}' of struct '{struct_name}'",
+                allow_void=False,
+                source_origin=origin,
+            )
+            self.require_struct_layout_at(
+                member.datatype,
+                origin,
+                context=f"member '{member.identifier.label}' of struct '{struct_name}'",
+            )
 
     def register_global(
         self,
         identifier: Identifier,
         datatype: DynamicDataType,
         *,
-        is_const: bool,
-        expression: Expression | None,
         origin: SourceOrigin,
     ) -> None:
+        """Register a runtime global without allocating its VM storage yet."""
         name = identifier.label
-        if name in self._registered_globals or name in self._compile_time_constants:
-            raise CompileError(f"Identifier '{identifier}' is already declared")
-
+        self.require_variable_identifier(
+            identifier,
+            origin,
+            context="a global variable name",
+        )
         self.validate_data_type(
             datatype,
             context=f"global variable '{name}'",
             allow_void=False,
+            source_origin=origin,
         )
-        self._registered_globals[name] = ScopedValue(identifier, datatype, is_const)
-        if is_const:
-            self._define_compile_time_constant(identifier, datatype, expression, origin)
+
+        self.require_struct_layout_at(datatype, origin, context=f"global variable '{name}'")
+        if name in self._registered_globals:
+            raise CompileError(f"Identifier '{identifier}' is already declared")
+        self._registered_globals[name] = ScopedValue(identifier, datatype)
+        self._global_origins[name] = origin
 
     def register_function(
         self,
         function: FunctionForwardDeclaration | FunctionDefinition,
     ) -> None:
-        """Register a function declaration or implementation without emitting code."""
+        """Register a function at its declaration position."""
         name = function.identifier.label
         origin = function.require_source_origin()
-        if name in self._engine_function_map:
+        is_implementation = isinstance(function, FunctionDefinition)
+
+        if self.get_compile_time_constant(name) is not None:
             raise CompileError(
-                f"Function '{name}' conflicts with a predefined engine function\n"
-                "  User-defined functions cannot reuse engine function names"
+                f"Function '{name}' conflicts with a compile-time constant identifier"
             )
 
         self.validate_data_type(
             function.return_type,
             context=f"return type of function '{name}'",
             allow_void=True,
+            source_origin=origin,
         )
 
         if len(function.parameters) > MAX_FUNCTION_PARAMETERS:
@@ -1099,18 +1004,41 @@ class CodeRoot:
                     f"Parameter '{parameter_name}' is declared more than once in function '{name}'"
                 )
             seen_parameters.add(parameter_name)
+
+            # Parameters see earlier declarations, not the function name being registered.
+            self.require_variable_identifier(
+                parameter.identifier,
+                origin,
+                context=f"a parameter name in function '{name}'",
+            )
             self.validate_data_type(
                 parameter.data_type,
                 context=f"parameter '{parameter_name}' of function '{name}'",
                 allow_void=False,
+                source_origin=origin,
             )
 
-        _validate_and_fold_default_parameters(function.parameters, self, name, origin)
-
+        _validate_and_normalize_default_parameters(function.parameters, self, name)
         signature = FunctionSignature.from_function(function)
-        existing = self.function_map.get(name)
-        is_implementation = isinstance(function, FunctionDefinition)
 
+        engine = self.get_engine_function(name)
+        if engine is not None:
+            engine_signature = FunctionSignature.from_engine_function(engine.function)
+            if signature != engine_signature:
+                self._raise_function_signature_mismatch(
+                    name,
+                    engine_signature,
+                    signature,
+                )
+            if is_implementation:
+                raise CompileError(
+                    f"Function '{name}' is already implemented by the engine\n"
+                    "  A predefined engine function may only be redeclared as an identical prototype"
+                )
+            # Matching API prototypes remain ACTION calls.
+            return
+
+        existing = self.function_map.get(name)
         if existing is None:
             self.function_map[name] = FunctionSymbol(
                 name=name,
@@ -1130,8 +1058,6 @@ class CodeRoot:
 
         existing.add_declaration_origin(origin)
 
-        # BioWare accepts repeated identical declarations.  A declaration after an
-        # implementation is equally harmless because it adds no executable code.
         if not is_implementation:
             return
 
@@ -1179,15 +1105,29 @@ class CodeRoot:
             f"  {detail_text}"
         )
 
-    def validate_referenced_functions(self) -> None:
-        """Reject calls to functions that were declared but never implemented."""
+    def note_function_reference(self, callee: FunctionSymbol, caller: str | None) -> None:
+        """Record a call from its owning function, or from a global initializer if None."""
+        if caller is None:
+            self._global_function_references.add(callee.name)
+        else:
+            self.function_map[caller].called_functions.add(callee.name)
+
+    def validate_referenced_functions(self, entry: FunctionSymbol) -> set[str]:
+        """Require implementations only in the entry/global-initializer call graph."""
+        pending = [entry.name, *sorted(self._global_function_references)]
+        required: set[str] = set()
+        while pending:
+            name = pending.pop()
+            if name in required:
+                continue
+            required.add(name)
+            pending.extend(sorted(self.function_map[name].called_functions))
+
         unresolved = [
-            symbol.name
-            for symbol in self.function_map.values()
-            if symbol.referenced and symbol.implementation is None
+            name for name in required if self.function_map[name].implementation is None
         ]
         if not unresolved:
-            return
+            return required
 
         unresolved.sort()
         if len(unresolved) == 1:
@@ -1201,27 +1141,46 @@ class CodeRoot:
             f"  Missing definitions: {', '.join(unresolved)}"
         )
 
-    def validate_function_semantics(self) -> None:
-        """Validate local scopes, names, types, and control flow without NCS emission."""
+    def validate_semantics(self) -> None:
+        """Validate all initializers and bodies, including unused functions."""
         from pykotor.resource.formats.ncs.compiler.semantic import (  # noqa: PLC0415
+            ExpressionSemanticAnalyzer,
             FunctionSemanticAnalyzer,
+            LocalSemanticScope,
         )
 
-        for symbol in self.function_map.values():
-            if symbol.implementation is not None:
-                FunctionSemanticAnalyzer(self, symbol.implementation).validate()
+        for obj in self.objects:
+            if isinstance(obj, GlobalVariableInitialization):
+                analyzer = ExpressionSemanticAnalyzer(
+                    self, obj.require_source_origin(), caller=None, global_initializer=True
+                )
+                analyzer.validate_initializer(
+                    obj.expression, obj.data_type, obj.identifier.label, LocalSemanticScope()
+                )
+            elif isinstance(obj, FunctionDefinition):
+                FunctionSemanticAnalyzer(self, obj).validate()
 
     def compile(self, ncs: NCS):  # noqa: A003
-        # BioWare expands includes before global/function processing. IncludeContext
-        # provides include-once, active-stack recursion checks, and depth limiting.
         self.expand_includes()
 
-        # Includes have now been expanded into this root. Build the complete
-        # semantic symbol table and validate every function body before *any* NCS
-        # bytecode is emitted. This keeps source diagnostics independent of dead-code
-        # elimination and stack-layout details in the emitter.
         self.register_symbols()
-        self.validate_function_semantics()
+        self.validate_semantics()
+
+        main_symbol = self.function_map.get("main")
+        conditional_symbol = self.function_map.get("StartingConditional")
+        if main_symbol is not None and main_symbol.has_root_declaration:
+            entry_symbol = main_symbol
+        elif conditional_symbol is not None and conditional_symbol.has_root_declaration:
+            entry_symbol = conditional_symbol
+        else:
+            raise EntryPointError(
+                "This file has no entry point and cannot be compiled (Most likely an include file)."
+            )
+        self._validate_entry_point(entry_symbol)
+        entry_instruction = self._require_entry_implementation(entry_symbol)
+        is_conditional = entry_symbol.name == "StartingConditional"
+
+        required_functions = self.validate_referenced_functions(entry_symbol)
 
         script_globals: list[
             GlobalVariableDeclaration | GlobalVariableInitialization | StructDefinition
@@ -1233,54 +1192,42 @@ class CodeRoot:
                 (GlobalVariableDeclaration, GlobalVariableInitialization, StructDefinition),
             )
         ]
-        others: list[TopLevelObject] = [
-            obj for obj in self.objects if obj not in script_globals
+        implementations = [
+            obj for obj in self.objects
+            if isinstance(obj, FunctionDefinition) and obj.identifier.label in required_functions
         ]
 
-        if script_globals:
-            for global_def in script_globals:
-                global_def.compile(ncs, self)
-            if self.scope_size() != 0:
-                ncs.add(NCSInstructionType.SAVEBP, args=[])
-        entry_index: int = len(ncs.instructions)
+        global_code = NCS()
+        for global_def in script_globals:
+            global_def.compile(global_code, self)
+        function_code = NCS()
+        for obj in implementations:
+            obj.compile(function_code, self)
 
-        for obj in others:
-            obj.compile(ncs, self)
+        # Keep the script result below globals so it survives cleanup.
+        if is_conditional:
+            ncs.add(NCSInstructionType.RSADDI)
+        ncs.merge(global_code)
 
-        # Prototypes are semantic declarations, not executable stubs.  Calls to a
-        # prototype-only symbol are diagnosed only if the symbol was actually used.
-        self.validate_referenced_functions()
+        global_bytes = -self.scope_size()
+        if global_bytes:
+            # SAVEBP occupies one four-byte stack cell.
+            ncs.add(NCSInstructionType.SAVEBP)
+            if is_conditional:
+                ncs.add(NCSInstructionType.RSADDI)
 
-        main_symbol = self.function_map.get("main")
-        conditional_symbol = self.function_map.get("StartingConditional")
+        ncs.add(NCSInstructionType.JSR, jump=entry_instruction)
 
-        if main_symbol is not None and main_symbol.has_root_declaration:
-            self._validate_entry_point(main_symbol)
-            entry_instruction = self._require_entry_implementation(main_symbol)
-            ncs.add(NCSInstructionType.RETN, args=[], index=entry_index)
-            ncs.add(
-                NCSInstructionType.JSR,
-                jump=entry_instruction,
-                index=entry_index,
-            )
-        elif (
-            conditional_symbol is not None
-            and conditional_symbol.has_root_declaration
-        ):
-            self._validate_entry_point(conditional_symbol)
-            entry_instruction = self._require_entry_implementation(conditional_symbol)
-            ncs.add(NCSInstructionType.RETN, args=[], index=entry_index)
-            ncs.add(
-                NCSInstructionType.JSR,
-                jump=entry_instruction,
-                index=entry_index,
-            )
-            ncs.add(NCSInstructionType.RSADDI, args=[], index=entry_index)
-        else:
-            msg = (
-                "This file has no entry point and cannot be compiled (Most likely an include file)."
-            )
-            raise EntryPointError(msg)
+        if global_bytes:
+            if is_conditional:
+                # Stack: [script result][globals][saved BP][function result].
+                ncs.add(NCSInstructionType.CPDOWNSP, args=[-(global_bytes + 12), 4])
+                ncs.add(NCSInstructionType.MOVSP, args=[-4])
+            ncs.add(NCSInstructionType.RESTOREBP)
+            ncs.add(NCSInstructionType.MOVSP, args=[-global_bytes])
+        ncs.add(NCSInstructionType.RETN)
+
+        ncs.merge(function_code)
 
     @staticmethod
     def _validate_entry_point(symbol: FunctionSymbol) -> None:
@@ -1351,7 +1298,7 @@ class CodeRoot:
         name = symbol.name
         parameters = symbol.parameters
         return_type = symbol.signature.return_type
-        start_instruction = symbol.mark_referenced()
+        start_instruction = symbol.require_entry_instruction()
 
         if len(args_list) > len(parameters):
             raise CompileError(
@@ -1362,7 +1309,6 @@ class CodeRoot:
 
         required_params = [param for param in parameters if param.default is None]
 
-        # Make sure the minimal number of arguments were passed through
         if len(required_params) > len(args_list):
             required_names = [p.identifier.label for p in required_params]
             msg = (
@@ -1372,70 +1318,24 @@ class CodeRoot:
             )
             raise CompileError(msg)
 
-        # If some optional parameters were not specified, add the defaults to the arguments list
         while len(parameters) > len(args_list):
             param_index = len(args_list)
             default_expr = parameters[param_index].default
             if default_expr is None:
-                # Should not happen as required_params already checked, but be safe
                 msg = f"Missing default value for parameter {param_index} in '{name}'"
                 raise CompileError(msg)
             args_list.append(default_expr)
 
-        # Reserve stack space for the return value and track it in the shared stack context
-        return_type_size = 0
-        if return_type == DynamicDataType.INT:
-            ncs.add(NCSInstructionType.RSADDI, args=[])
-            return_type_size = 4
-        elif return_type == DynamicDataType.FLOAT:
-            ncs.add(NCSInstructionType.RSADDF, args=[])
-            return_type_size = 4
-        elif return_type == DynamicDataType.STRING:
-            ncs.add(NCSInstructionType.RSADDS, args=[])
-            return_type_size = 4
-        elif return_type == DynamicDataType.VECTOR:
-            # Vectors are 3 floats (x, y, z components)
-            # Reserve stack space for all 3 components
-            ncs.add(NCSInstructionType.RSADDF, args=[])
-            ncs.add(NCSInstructionType.RSADDF, args=[])
-            ncs.add(NCSInstructionType.RSADDF, args=[])
-            return_type_size = 12
-        elif return_type == DynamicDataType.OBJECT:
-            ncs.add(NCSInstructionType.RSADDO, args=[])
-            return_type_size = 4
-        elif return_type == DynamicDataType.TALENT:
-            ncs.add(NCSInstructionType.RSADDTAL, args=[])
-            return_type_size = 4
-        elif return_type == DynamicDataType.EVENT:
-            ncs.add(NCSInstructionType.RSADDEVT, args=[])
-            return_type_size = 4
-        elif return_type == DynamicDataType.LOCATION:
-            ncs.add(NCSInstructionType.RSADDLOC, args=[])
-            return_type_size = 4
-        elif return_type == DynamicDataType.EFFECT:
-            ncs.add(NCSInstructionType.RSADDEFF, args=[])
-            return_type_size = 4
-        elif return_type == DynamicDataType.VOID:
-            return_type_size = 0
-        elif return_type.builtin == DataType.STRUCT:
-            # For struct return types, initialize the struct on the stack
-            struct_name = return_type._struct  # noqa: SLF001
-            if struct_name is not None and struct_name in self.struct_map:
-                self.struct_map[struct_name].initialize(ncs, self)
-                return_type_size = return_type.size(self)
-            else:
-                msg = "Unknown struct type for return value"
-                raise CompileError(msg)
-        else:
-            msg = f"Trying to return unsupported type '{return_type.builtin.name}'"
-            raise CompileError(msg)
+        return_type_size = emit_value_reservation(ncs, self, return_type)
 
-        # The return slot is physically present before the arguments. Track it so
-        # every argument sees correct SP-relative offsets.
+        # Include the return slot when computing argument offsets.
         block.context.stack.push(return_type_size)
 
         offset = 0
-        for param, arg in zip(parameters, args_list):
+
+        # Push arguments right-to-left, keeping each paired with its parameter.
+        call_arguments = list(zip(parameters, args_list))
+        for param, arg in reversed(call_arguments):
             arg_datatype: DynamicDataType = arg.compile(ncs, self, block)
             offset += arg_datatype.size(self)
             if param.data_type != arg_datatype:
@@ -1445,7 +1345,7 @@ class CodeRoot:
                     f"  Got: {arg_datatype.builtin.name}"
                 )
                 raise CompileError(msg)
-        # JSR consumes the arguments but leaves the caller-allocated return slot.
+        # JSR consumes arguments and leaves the return slot.
         block.context.stack.consume(offset)
         ncs.add(NCSInstructionType.JSR, jump=start_instruction)
 
@@ -1454,92 +1354,33 @@ class CodeRoot:
     def get_compile_time_constant(
         self,
         identifier: Identifier | str,
-        source_origin: SourceOrigin | None = None,
     ) -> ConstantValue | None:
+        """Look up a predefined constant in the identifier specification."""
         label = identifier.label if isinstance(identifier, Identifier) else identifier
-        symbol = self._compile_time_constants.get(label)
-        if symbol is None or not symbol.is_visible_at(source_origin):
-            return None
-        return symbol.value
+        return self._predefined_constants.get(label)
 
     def get_registered_global(
         self,
         identifier: Identifier | str,
+        *,
         source_origin: SourceOrigin | None = None,
     ) -> ScopedValue | None:
-        """Return source-level global metadata without requiring VM storage emission."""
+        """Resolve a global; initializers may only see slots allocated by that point."""
         label = identifier.label if isinstance(identifier, Identifier) else identifier
-        symbol = self._registered_globals.get(label)
-        if (
-            symbol is not None
-            and symbol.is_const
-            and self.get_compile_time_constant(label, source_origin) is None
-        ):
-            return None
-        return symbol
+        origin = self._global_origins.get(label)
+        if source_origin is not None and origin is not None:
+            if origin.source_order > source_origin.source_order:
+                return None
+        return self._registered_globals.get(label)
 
-    def registered_global_names(
-        self,
-        source_origin: SourceOrigin | None = None,
-    ) -> tuple[str, ...]:
-        """Return registered global names for source-level diagnostics."""
-        return tuple(
-            name
-            for name, symbol in self._registered_globals.items()
-            if not symbol.is_const
-            or self.get_compile_time_constant(name, source_origin) is not None
-        )
-
-    def _define_compile_time_constant(
-        self,
-        identifier: Identifier,
-        datatype: DynamicDataType,
-        expression: Expression | None,
-        origin: SourceOrigin,
-    ) -> None:
-        if datatype.builtin not in (DataType.INT, DataType.FLOAT, DataType.STRING):
-            raise CompileError(
-                f"Invalid type for const '{identifier}': {datatype.builtin.name.lower()}"
-                "\n  BioWare-style const declarations support only int, float, and string"
-            )
-
-        if expression is None:
-            defaults: dict[DataType, int | float | str] = {
-                DataType.INT: 0,
-                DataType.FLOAT: 0.0,
-                DataType.STRING: "",
-            }
-            constant = ConstantValue(datatype.builtin, defaults[datatype.builtin])
-        else:
-            constant = expression.constant_value(self, origin)
-            if constant is None:
-                raise CompileError(
-                    f"Invalid value assigned to constant '{identifier}'"
-                    "\n  Const initializers must be compile-time constant expressions"
-                )
-            if constant.datatype != datatype.builtin:
-                raise CompileError(
-                    f"Type mismatch in constant '{identifier}'\n"
-                    f"  Declared type: {datatype.builtin.name.lower()}\n"
-                    f"  Initializer type: {constant.datatype.name.lower()}"
-                )
-
-        if constant.datatype == DataType.INT:
-            constant = ConstantValue(DataType.INT, _int32(int(constant.value)))
-        elif constant.datatype == DataType.FLOAT:
-            constant = ConstantValue(DataType.FLOAT, _float32(float(constant.value)))
-        else:
-            constant = ConstantValue(DataType.STRING, str(constant.value))
-        self._compile_time_constants[identifier.label] = CompileTimeConstantSymbol(
-            constant,
-            origin,
-        )
+    def registered_global_names(self) -> tuple[str, ...]:
+        """Return registered runtime-global names for source-level diagnostics."""
+        return tuple(self._registered_globals)
 
     def allocate_global(
         self,
         identifier: Identifier,
         datatype: DynamicDataType,
-        is_const: bool = False,
     ) -> None:
         """Record one VM global slot after its allocation instructions are emitted."""
         registered = self._registered_globals.get(identifier.label)
@@ -1547,7 +1388,7 @@ class CodeRoot:
             raise ValueError(
                 f"Internal compiler error: global '{identifier}' was emitted before registration"
             )
-        if registered.data_type != datatype or registered.is_const != is_const:
+        if registered.data_type != datatype:
             raise ValueError(
                 f"Internal compiler error: emitted global '{identifier}' does not match registration"
             )
@@ -1555,7 +1396,7 @@ class CodeRoot:
             raise ValueError(
                 f"Internal compiler error: global '{identifier}' storage was emitted twice"
             )
-        self._global_scope.insert(0, ScopedValue(identifier, datatype, is_const))
+        self._global_scope.insert(0, ScopedValue(identifier, datatype))
 
     def get_scoped(self, identifier: Identifier, root: CodeRoot) -> GetScopedResult:
         offset = 0
@@ -1564,14 +1405,13 @@ class CodeRoot:
             if scoped.identifier == identifier:
                 break
         else:
-            # Provide helpful error with available globals
-            available = [s.identifier.label for s in self._global_scope[:10]]  # Show first 10
+            available = [s.identifier.label for s in self._global_scope[:10]]
             more = len(self._global_scope) - 10
             more_text = f" (and {more} more)" if more > 0 else ""
             msg = f"Undefined variable '{identifier}'\n  Available globals: {', '.join(available)}{more_text}"
             raise CompileError(msg)
         return GetScopedResult(
-            is_global=True, datatype=scoped.data_type, offset=offset, is_const=scoped.is_const
+            is_global=True, datatype=scoped.data_type, offset=offset
         )
 
     def scope_size(self):
@@ -1620,7 +1460,7 @@ class CodeBlock:
 
         entry_transient_bytes = self.context.stack.snapshot()
 
-        for statement in self._statements:
+        for index, statement in enumerate(self._statements):
             statement.compile(
                 ncs,
                 root,
@@ -1630,13 +1470,12 @@ class CodeBlock:
                 continue_instruction,
             )
             if isinstance(statement, ReturnStatement):
-                # Directly unreachable statements are omitted, matching the existing
-                # dead-code behavior. ReturnStatement owns all return lowering so the
-                # same logic also works when a return appears inside a switch body.
-                self.context.stack.restore(entry_transient_bytes)
-                return
+                # A later case label can still be reached after a return.
+                remaining = self._statements[index + 1 :]
+                if not any(statement_contains_switch_label(item) for item in remaining):
+                    self.context.stack.restore(entry_transient_bytes)
+                    return
 
-        # External compiler optimizes away MOVSP with offset 0, so match it.
         scope_size = self.scope_size(root)
         if scope_size != 0:
             ncs.instructions.append(
@@ -1653,9 +1492,15 @@ class CodeBlock:
             raise ValueError(msg)
 
     def add_scoped(
-        self, identifier: Identifier, data_type: DynamicDataType, is_const: bool = False
+        self, identifier: Identifier, data_type: DynamicDataType
     ):
-        self.scope.insert(0, ScopedValue(identifier, data_type, is_const))
+        # Previously retained temporaries sit below this new local.
+        value = ScopedValue(
+            identifier,
+            data_type,
+            temporary_bytes_below=self.context.stack.temporary_bytes,
+        )
+        self.scope.insert(0, value)
 
     def get_scoped(
         self,
@@ -1663,8 +1508,7 @@ class CodeBlock:
         root: CodeRoot,
         offset: int | None = None,
     ) -> GetScopedResult:
-        # The shared transient-stack depth is subtracted exactly once at the
-        # innermost lookup. Parent-scope recursion only walks persistent locals.
+        # Subtract only temporaries above the local, once across parent scopes.
         offset = -self.context.stack.temporary_bytes if offset is None else offset
         for scoped in self.scope:
             offset -= scoped.data_type.size(root)
@@ -1673,9 +1517,18 @@ class CodeBlock:
         else:
             if self._parent is not None:
                 return self._parent.get_scoped(identifier, root, offset)
-            return root.get_scoped(identifier, root)
+            scoped = root.get_scoped(identifier, root)
+            if self.context.semantic.global_initializer:
+                return GetScopedResult(
+                    is_global=False,
+                    datatype=scoped.datatype,
+                    offset=scoped.offset + offset,
+                )
+            return scoped
         return GetScopedResult(
-            is_global=False, datatype=scoped.data_type, offset=offset, is_const=scoped.is_const
+            is_global=False,
+            datatype=scoped.data_type,
+            offset=offset + scoped.temporary_bytes_below,
         )
 
     def scope_size(self, root: CodeRoot) -> int:
@@ -1694,13 +1547,7 @@ class CodeBlock:
         return self.full_scope_size(root) + self.context.stack.temporary_bytes
 
     def returns_on_all_paths(self) -> bool:
-        """Match BioWare's conservative non-void return-path analysis.
-
-        The original compiler only proves total return coverage through direct
-        returns, statement/compound-statement lists, scoped blocks, and complete
-        if/else choices.  It deliberately does *not* try to prove that loops or
-        switches always return, even when that may be obvious to a human reader.
-        """
+        """Match conservative non-void return-path analysis."""
         return any(_statement_returns_on_all_paths(statement) for statement in self._statements)
 
     def unwind_size_to(self, root: CodeRoot, target_depth: int) -> int:
@@ -1714,10 +1561,17 @@ class CodeBlock:
 
 
 class ScopedValue:
-    def __init__(self, identifier: Identifier, data_type: DynamicDataType, is_const: bool = False):
+    def __init__(
+        self,
+        identifier: Identifier,
+        data_type: DynamicDataType,
+        *,
+        temporary_bytes_below: int = 0,
+    ):
         self.identifier: Identifier = identifier
         self.data_type: DynamicDataType = data_type
-        self.is_const: bool = is_const
+        # Temporary depth at allocation; zero for parameters and globals.
+        self.temporary_bytes_below: int = temporary_bytes_below
 
 
 class FunctionForwardDeclaration(TopLevelObject):
@@ -1735,20 +1589,11 @@ class FunctionForwardDeclaration(TopLevelObject):
         root.register_function(self)
 
     def compile(self, ncs: NCS, root: CodeRoot):  # noqa: A003
-        # A prototype is semantic information only.  It deliberately emits no NCS
-        # instruction and therefore cannot become an accidental JSR destination.
         return
 
 
 class FunctionDefinition(TopLevelObject):
-    """Represents a function definition with implementation.
-
-    Contains the function signature (return type, parameters) and the code block
-    that implements the function body.
-
-    Signature matching is handled by :class:`FunctionSignature` during symbol
-    registration; this node owns only the implementation's source body and metadata.
-    """
+    """A function signature and its implementation body."""
 
     def __init__(
         self,
@@ -1764,7 +1609,8 @@ class FunctionDefinition(TopLevelObject):
         self.block: CodeBlock = block
         self.line_num: int = line_num
 
-        for param in parameters:
+        # Parameter zero is nearest SP; add_scoped() inserts at the front.
+        for param in reversed(parameters):
             block.add_scoped(param.identifier, param.data_type)
 
     def register(self, root: CodeRoot) -> None:
@@ -1798,13 +1644,54 @@ class FunctionDefinitionParam:
         self.default: Expression | None = default
 
 
-def _fold_default_parameter_expression(
+def resolve_kotor_constant_expression(
+    expression: Expression,
+    root: CodeRoot,
+    *,
+    allow_numeric_negation: bool = False,
+) -> ConstantValue | None:
+    """Resolve literals and predefined constants, preserving type restrictions.
+
+    Numeric negation is allowed only when allow_numeric_negation is set.
+    """
+    while isinstance(expression, ParenthesizedExpression):
+        expression = expression.expression
+
+    if isinstance(expression, IntExpression):
+        return ConstantValue(DataType.INT, expression.value)
+    if isinstance(expression, FloatExpression):
+        return ConstantValue(DataType.FLOAT, expression.value)
+    if isinstance(expression, StringExpression):
+        return ConstantValue(DataType.STRING, expression.value)
+    if isinstance(expression, ObjectExpression):
+        return ConstantValue(DataType.OBJECT, expression.value)
+    if isinstance(expression, IdentifierExpression):
+        return root.get_compile_time_constant(expression.identifier)
+
+    if allow_numeric_negation and isinstance(expression, UnaryOperatorExpression):
+        operand = resolve_kotor_constant_expression(
+            expression.expression1,
+            root,
+            allow_numeric_negation=False,
+        )
+        if operand is None:
+            return None
+
+        instructions = {mapping.instruction for mapping in expression.compatibility}
+        if operand.datatype == DataType.INT and NCSInstructionType.NEGI in instructions:
+            return ConstantValue(DataType.INT, _int32(-int(operand.value)))
+        if operand.datatype == DataType.FLOAT and NCSInstructionType.NEGF in instructions:
+            return ConstantValue(DataType.FLOAT, _float32(-float(operand.value)))
+
+    return None
+
+
+def _normalize_default_parameter(
     parameter: FunctionDefinitionParam,
     root: CodeRoot,
     function_name: str,
-    source_origin: SourceOrigin,
 ) -> None:
-    """Validate and canonicalize one BioWare-style optional parameter value."""
+    """Validate and normalize an optional parameter value."""
     expression = parameter.default
     if expression is None:
         return
@@ -1813,11 +1700,15 @@ def _fold_default_parameter_expression(
     parameter_name = parameter.identifier.label
 
     if datatype in (DataType.INT, DataType.FLOAT, DataType.STRING):
-        constant = expression.constant_value(root, source_origin)
+        constant = resolve_kotor_constant_expression(
+            expression,
+            root,
+            allow_numeric_negation=False,
+        )
         if constant is None:
             raise CompileError(
                 f"Non-constant default value for parameter '{parameter_name}' in '{function_name}'"
-                "\n  Default arguments must be compile-time constant expressions"
+                "\n  KotOR defaults must be literals or predefined constants"
             )
         if constant.datatype != datatype:
             raise CompileError(
@@ -1834,27 +1725,29 @@ def _fold_default_parameter_expression(
             parameter.default = StringExpression(str(constant.value))
         return
 
-    # BioWare permits object and vector defaults only as literal constants. They do
-    # not participate in the int/float/string compile-time constant symbol table.
     if datatype == DataType.OBJECT:
-        if not isinstance(expression, ObjectExpression):
+        constant = resolve_kotor_constant_expression(
+            expression, root, allow_numeric_negation=False
+        )
+        if constant is None or constant.datatype != DataType.OBJECT:
             raise CompileError(
                 f"Non-constant default value for parameter '{parameter_name}' in '{function_name}'"
                 "\n  Object defaults must be OBJECT_SELF or OBJECT_INVALID"
             )
-        parameter.default = ObjectExpression(expression.value)
+        parameter.default = ObjectExpression(int(constant.value))
         return
 
     if datatype == DataType.VECTOR:
+        while isinstance(expression, ParenthesizedExpression):
+            expression = expression.expression
         if not isinstance(expression, VectorExpression):
             raise CompileError(
                 f"Non-constant default value for parameter '{parameter_name}' in '{function_name}'"
                 "\n  Vector defaults must be vector literals"
             )
+
         parameter.default = VectorExpression(
-            FloatExpression(_float32(expression.x.value)),
-            FloatExpression(_float32(expression.y.value)),
-            FloatExpression(_float32(expression.z.value)),
+            *(FloatExpression(value) for value in expression.resolve_components(root))
         )
         return
 
@@ -1864,13 +1757,12 @@ def _fold_default_parameter_expression(
     )
 
 
-def _validate_and_fold_default_parameters(
+def _validate_and_normalize_default_parameters(
     parameters: list[FunctionDefinitionParam],
     root: CodeRoot,
     function_name: str,
-    source_origin: SourceOrigin,
 ) -> None:
-    """Apply BioWare optional-parameter ordering, constness, and type rules."""
+    """Validate parameter defaults, their types, and required-before-optional order."""
     optional_parameters_started = False
     for parameter in parameters:
         if parameter.default is None:
@@ -1881,11 +1773,10 @@ def _validate_and_fold_default_parameters(
             continue
 
         optional_parameters_started = True
-        _fold_default_parameter_expression(
+        _normalize_default_parameter(
             parameter,
             root,
             function_name,
-            source_origin,
         )
 
 
@@ -1894,7 +1785,10 @@ class IncludeScript(TopLevelObject):
         self,
         file: StringExpression,
         library: dict[str, bytes] | None = None,
+        *,
+        location: SourceLocation | None = None,
     ):
+        self.location = location
         self.file: StringExpression = file
         self.library: dict[str, bytes] = {} if library is None else library
 
@@ -1904,7 +1798,11 @@ class IncludeScript(TopLevelObject):
         context: IncludeContext,
     ) -> list[TopLevelObject]:
         """Parse this include and recursively expand its nested includes."""
-        canonical_name = context.begin_include(self.file.value)
+        try:
+            canonical_name = context.begin_include(self.file.value)
+        except CompileError as exc:
+            exc.add_include(self.location)
+            raise
         if canonical_name is None:
             return []
 
@@ -1918,11 +1816,13 @@ class IncludeScript(TopLevelObject):
             )
             completed = True
             return expanded
+        except CompileError as exc:
+            exc.add_include(self.location)
+            raise
         finally:
             context.end_include(canonical_name, completed=completed)
 
     def _parse(self, root: CodeRoot) -> CodeRoot:
-        from pykotor.resource.formats.ncs.compiler.lexer import NssLexer  # noqa: PLC0415
         from pykotor.resource.formats.ncs.compiler.parser import NssParser  # noqa: PLC0415
 
         lookup_paths = cast(
@@ -1935,24 +1835,24 @@ class IncludeScript(TopLevelObject):
             root.library,
             lookup_paths,
             max_include_depth=root.include_context.max_depth,
+            source_encoding=root.source_encoding,
         )
-        source = self._get_script(root)
-        lexer = NssLexer()
-        return parser.parser.parse(source, lexer=lexer.lexer, tracking=True)
+        source_name, source_bytes = self._get_script(root)
+        return parser.parse(source_bytes, source_name=source_name)
 
     def compile(self, ncs: NCS, root: CodeRoot):  # noqa: A003
         raise RuntimeError(
             "Internal compiler error: include directive reached bytecode emission"
         )
 
-    def _get_script(self, root: CodeRoot) -> str:
-        """Load an included script using KOTOR's case-insensitive resource names."""
+    def _get_script(self, root: CodeRoot) -> tuple[str, bytes]:
+        """Load bytes and their identity; the parser uses the shared source decoder."""
         for folder in root.library_lookup:
             filepath = folder / f"{self.file.value}.nss"
             if filepath.is_file():
                 try:
-                    return filepath.read_bytes().decode(errors="ignore")
-                except Exception as exc:
+                    return str(filepath), filepath.read_bytes()
+                except OSError as exc:
                     raise MissingIncludeError(
                         f"Failed to read include file '{filepath}': {exc}"
                     ) from exc
@@ -1960,7 +1860,7 @@ class IncludeScript(TopLevelObject):
         canonical_name = IncludeContext.canonicalize(self.file.value)
         for library_name, source_bytes in self.library.items():
             if IncludeContext.canonicalize(library_name) == canonical_name:
-                return source_bytes.decode(errors="ignore")
+                return f"{library_name}.nss", source_bytes
 
         search_paths = [str(folder) for folder in root.library_lookup]
         raise MissingIncludeError(
@@ -1980,29 +1880,11 @@ class StructDefinition(TopLevelObject):
         root.register_struct(self)
 
     def compile(self, ncs: NCS, root: CodeRoot):  # noqa: A003
-        # Structs are compile-time-only symbols. Their complete validation/layout
-        # is performed during registration and they emit no NCS instructions.
         return None
 
 
 class Expression(ABC):
-    """Abstract base class for NSS expressions.
-
-    Expressions compile to NCS bytecode instructions that evaluate to values.
-    All expression types (literals, operators, function calls, etc.) inherit from this.
-
-    References:
-    ----------
-
-    """
-
-    def constant_value(
-        self,
-        root: CodeRoot,
-        source_origin: SourceOrigin | None = None,
-    ) -> ConstantValue | None:
-        """Return the compile-time value of this expression, if one exists."""
-        return None
+    """Base class for expressions that leave a value on the stack."""
 
     def compile(
         self,
@@ -2010,13 +1892,7 @@ class Expression(ABC):
         root: CodeRoot,
         block: CodeBlock,
     ) -> DynamicDataType:
-        """Compile an expression and enforce one stack-accounting contract.
-
-        Every expression leaves exactly one value of its reported type on the VM
-        stack (or zero bytes for ``void``). Child expressions may update the shared
-        context while they are being lowered, but callers never need to guess
-        whether a particular node tracked its own result.
-        """
+        """Compile an expression and record its result in the shared stack context."""
         entry_stack = block.context.stack.snapshot()
         data_type = self._compile(ncs, root, block)
         block.context.stack.restore(entry_stack + data_type.size(root))
@@ -2032,15 +1908,7 @@ class Expression(ABC):
 
 
 class Statement(ABC):
-    """Abstract base class for NSS statements.
-
-    Statements compile to NCS bytecode instructions that perform actions (control flow,
-    assignments, declarations, etc.). All statement types inherit from this.
-
-    References:
-    ----------
-
-    """
+    """Base class for executable statements."""
 
     def __init__(self):
         self.line_num: None = None
@@ -2058,85 +1926,143 @@ class Statement(ABC):
 
 
 class FieldAccess:
+    """An identifier-rooted path to assignable storage."""
+
+    @classmethod
+    def from_expression(cls, expression: Expression) -> FieldAccess | None:
+        """Unwrap parentheses/members only; calls and other values are not lvalues."""
+        members: list[Identifier] = []
+        while True:
+            if isinstance(expression, ParenthesizedExpression):
+                expression = expression.expression
+            elif isinstance(expression, MemberAccessExpression):
+                members.append(expression.member)
+                expression = expression.base
+            elif isinstance(expression, IdentifierExpression):
+                return cls([expression.identifier, *reversed(members)])
+            elif isinstance(expression, FieldAccessExpression):
+                return cls([*expression.field_access.identifiers, *reversed(members)])
+            else:
+                return None
+
+    @classmethod
+    def require_lvalue(cls, expression: Expression) -> FieldAccess:
+        access = cls.from_expression(expression)
+        if access is None:
+            raise CompileError("Assignment/increment target must be a variable or a member of a variable")
+        return access
+
     def __init__(self, identifiers: list[Identifier]):
         super().__init__()
         self.identifiers: list[Identifier] = identifiers
 
     def get_scoped(self, block: CodeBlock, root: CodeRoot) -> GetScopedResult:
-        """Get scoped variable information for field access.
-
-        Args:
-        ----
-            block: Current code block
-            root: Code root context
-
-        Returns:
-        -------
-            GetScopedResult: Variable scope information
-
-        Raises:
-        ------
-            CompileError: If field access is invalid
-        """
+        """Resolve storage and member offsets for this field path."""
         if len(self.identifiers) == 0:
             msg = "Internal error: FieldAccess has no identifiers"
             raise CompileError(msg)
 
         first_ident: Identifier = self.identifiers[0]
-        if root.get_compile_time_constant(
-            first_ident,
-            block.context.semantic.source_origin,
-        ) is not None:
+        source_origin = block.context.semantic.source_origin
+        if root.get_compile_time_constant(first_ident) is not None:
             raise CompileError(f"Cannot assign to compile-time constant '{first_ident}'")
+        if root.is_function_identifier(first_ident.label, source_origin):
+            raise CompileError(
+                f"Function identifier '{first_ident.label}' cannot be used as a variable"
+            )
         scoped: GetScopedResult = block.get_scoped(first_ident, root)
 
         is_global: bool = scoped.is_global
         offset: int = scoped.offset
         datatype: DynamicDataType = scoped.datatype
-        is_const: bool = scoped.is_const  # Get is_const from the first call
 
-        for next_ident in self.identifiers[1:]:
-            # Check previous datatype to see what members are accessible
-            if datatype.builtin == DataType.VECTOR:
-                datatype = DynamicDataType.FLOAT
-                if next_ident.label == "x":
-                    offset += 0
-                elif next_ident.label == "y":
-                    offset += 4
-                elif next_ident.label == "z":
-                    offset += 8
-                else:
-                    msg = f"Attempting to access unknown member '{next_ident}' on datatype '{datatype}'."
-                    raise CompileError(msg)
-            elif datatype.builtin == DataType.STRUCT:
-                assert datatype._struct is not None, (
-                    "datatype._struct cannot be None in FieldAccess.get_scoped()"
-                )  # noqa: SLF001
-                offset += root.struct_map[datatype._struct].child_offset(  # noqa: SLF001
-                    root,
-                    next_ident,
-                )
-                datatype = root.struct_map[datatype._struct].child_type(  # noqa: SLF001
-                    root,
-                    next_ident,
-                )
-            else:
-                msg = (
-                    f"Attempting to access unknown member '{next_ident}' on datatype '{datatype}'."
-                )
-                raise CompileError(msg)
+        for member in self.identifiers[1:]:
+            layout = resolve_member_layout(root, datatype, member)
+            offset += layout.offset
+            datatype = layout.datatype
 
-        return GetScopedResult(is_global, datatype, offset, is_const)
+        return GetScopedResult(is_global, datatype, offset)
 
     def compile(self, ncs: NCS, root: CodeRoot, block: CodeBlock) -> DynamicDataType:  # noqa: A003
-        is_global, variable_type, stack_index, _is_const = self.get_scoped(block, root)
+        is_global, variable_type, stack_index = self.get_scoped(block, root)
         instruction_type = NCSInstructionType.CPTOPBP if is_global else NCSInstructionType.CPTOPSP
         ncs.add(instruction_type, args=[stack_index, variable_type.size(root)])
         block.context.stack.push(variable_type.size(root))
         return variable_type
 
 
-# region Expressions: Simple
+class MemberLayout(NamedTuple):
+    """Type and byte offset of one field within an aggregate value."""
+
+    datatype: DynamicDataType
+    offset: int
+
+
+def resolve_member_layout(
+    root: CodeRoot, datatype: DynamicDataType, member: Identifier
+) -> MemberLayout:
+    """Use the same member names/layout for semantic checks, reads and writes."""
+    if datatype.builtin == DataType.VECTOR:
+        offsets = {"x": 0, "y": 4, "z": 8}
+        if member.label in offsets:
+            return MemberLayout(DynamicDataType.FLOAT, offsets[member.label])
+    elif datatype.builtin == DataType.STRUCT:
+        struct_type = root.struct_map.get(datatype.struct_name)
+        if struct_type is None:
+            raise CompileError(f"Unknown struct type '{datatype.struct_name}' in member access")
+        return MemberLayout(
+            struct_type.child_type(root, member), struct_type.child_offset(root, member)
+        )
+    raise CompileError(
+        f"Attempting to access unknown member '{member.label}' on datatype '{datatype}'"
+    )
+
+
+class MemberAccessExpression(Expression):
+    """Read a field from a variable or an aggregate-valued expression."""
+
+    def __init__(self, base: Expression, member: Identifier):
+        super().__init__()
+        self.base = base
+        self.member = member
+        self.resolved_type: DynamicDataType | None = None
+
+    def _compile(self, ncs: NCS, root: CodeRoot, block: CodeBlock) -> DynamicDataType:
+        storage = FieldAccess.from_expression(self)
+        if storage is not None:
+            return storage.compile(ncs, root, block)
+
+        member_type = self.resolved_type
+        if member_type is None:
+            raise ValueError("Internal compiler error: member expression was not semantically validated")
+        # Keep the typed result below the temporary aggregate.
+        member_size = emit_value_reservation(ncs, root, member_type)
+        block.context.stack.push(member_size)
+
+        base_type = self.base.compile(ncs, root, block)
+        member = resolve_member_layout(root, base_type, self.member)
+        if member.datatype != member_type:
+            raise ValueError("Internal compiler error: member type changed after semantic analysis")
+        base_size = base_type.size(root)
+        ncs.add(NCSInstructionType.CPTOPSP, args=[member.offset - base_size, member_size])
+        block.context.stack.push(member_size)
+        ncs.add(NCSInstructionType.CPDOWNSP, args=[-(base_size + 2 * member_size), member_size])
+        ncs.add(NCSInstructionType.MOVSP, args=[-(base_size + member_size)])
+        block.context.stack.consume(base_size + member_size)
+        return member_type
+
+
+class ParenthesizedExpression(Expression):
+    """Preserve source parentheses where grammar distinctions depend on them."""
+
+    def __init__(self, expression: Expression):
+        super().__init__()
+        self.expression = expression
+
+    def _compile(self, ncs: NCS, root: CodeRoot, block: CodeBlock) -> DynamicDataType:  # noqa: A003
+        return self.expression.compile(ncs, root, block)
+
+
 class IdentifierExpression(Expression):
     def __init__(self, value: Identifier):
         super().__init__()
@@ -2155,19 +2081,17 @@ class IdentifierExpression(Expression):
     def __repr__(self) -> str:
         return f"IdentifierExpression(identifier={self.identifier})"
 
-    def constant_value(
-        self,
-        root: CodeRoot,
-        source_origin: SourceOrigin | None = None,
-    ) -> ConstantValue | None:
-        return root.get_compile_time_constant(self.identifier, source_origin)
-
     def _compile(self, ncs: NCS, root: CodeRoot, block: CodeBlock) -> DynamicDataType:  # noqa: A003
-        constant = self.constant_value(root, block.context.semantic.source_origin)
+        source_origin = block.context.semantic.source_origin
+        constant = root.get_compile_time_constant(self.identifier)
         if constant is not None:
             return _emit_constant(ncs, constant)
+        if root.is_function_identifier(self.identifier.label, source_origin):
+            raise CompileError(
+                f"Function identifier '{self.identifier.label}' cannot be used as a value"
+            )
 
-        is_global, datatype, stack_index, _is_const = block.get_scoped(self.identifier, root)
+        is_global, datatype, stack_index = block.get_scoped(self.identifier, root)
         instruction_type = NCSInstructionType.CPTOPBP if is_global else NCSInstructionType.CPTOPSP
         ncs.add(instruction_type, args=[stack_index, datatype.size(root)])
         return datatype
@@ -2178,12 +2102,8 @@ class IdentifierExpression(Expression):
             None,
         )
 
-    def is_constant(
-        self,
-        root: CodeRoot,
-        source_origin: SourceOrigin | None = None,
-    ) -> bool:
-        return self.constant_value(root, source_origin) is not None
+    def is_constant(self, root: CodeRoot) -> bool:
+        return root.get_compile_time_constant(self.identifier) is not None
 
 
 class FieldAccessExpression(Expression):
@@ -2226,13 +2146,6 @@ class StringExpression(Expression):
     def data_type(self) -> DynamicDataType:
         return DynamicDataType.STRING
 
-    def constant_value(
-        self,
-        root: CodeRoot,
-        source_origin: SourceOrigin | None = None,
-    ) -> ConstantValue | None:
-        return ConstantValue(DataType.STRING, self.value)
-
     def _compile(self, ncs: NCS, root: CodeRoot, block: CodeBlock) -> DynamicDataType:  # noqa: A003
         ncs.instructions.append(NCSInstruction(NCSInstructionType.CONSTS, [self.value]))
         return DynamicDataType.STRING
@@ -2259,21 +2172,10 @@ class IntExpression(Expression):
     def data_type(self) -> DynamicDataType:
         return DynamicDataType.INT
 
-    def constant_value(
-        self,
-        root: CodeRoot,
-        source_origin: SourceOrigin | None = None,
-    ) -> ConstantValue | None:
-        return ConstantValue(DataType.INT, self.value)
-
     def _compile(self, ncs: NCS, root: CodeRoot, block: CodeBlock) -> DynamicDataType:  # noqa: A003
-        # NCS CONSTI is a signed 32-bit field. Newer compiler sources accept the full
-        # 32-bit hexadecimal range (for example 0x80000000 for unsigned shifts),
-        # while this branch's binary writer expects an already-signed Python int.
-        value = self.value & 0xFFFFFFFF
-        if value >= 0x80000000:
-            value -= 0x100000000
-        ncs.instructions.append(NCSInstruction(NCSInstructionType.CONSTI, [value]))
+        ncs.instructions.append(
+            NCSInstruction(NCSInstructionType.CONSTI, [_int32(self.value)])
+        )
         return DynamicDataType.INT
 
 
@@ -2297,6 +2199,18 @@ class ObjectExpression(Expression):
 
     def data_type(self) -> DynamicDataType:
         return DynamicDataType.OBJECT
+
+    @classmethod
+    def from_engine_default(cls, value: int | str) -> ObjectExpression:
+        """Convert numeric or named object defaults to CONSTO operands."""
+        if value == "OBJECT_SELF":
+            return cls(0)
+        if value == "OBJECT_INVALID":
+            return cls(1)
+        try:
+            return cls(int(value))
+        except (TypeError, ValueError) as exc:
+            raise CompileError(f"Invalid engine object default: {value!r}") from exc
 
     def _compile(self, ncs: NCS, root: CodeRoot, block: CodeBlock) -> DynamicDataType:  # noqa: A003
         ncs.instructions.append(NCSInstruction(NCSInstructionType.CONSTO, [self.value]))
@@ -2324,24 +2238,19 @@ class FloatExpression(Expression):
     def data_type(self) -> DynamicDataType:
         return DynamicDataType.FLOAT
 
-    def constant_value(
-        self,
-        root: CodeRoot,
-        source_origin: SourceOrigin | None = None,
-    ) -> ConstantValue | None:
-        return ConstantValue(DataType.FLOAT, self.value)
-
     def _compile(self, ncs: NCS, root: CodeRoot, block: CodeBlock) -> DynamicDataType:  # noqa: A003
-        ncs.instructions.append(NCSInstruction(NCSInstructionType.CONSTF, [self.value]))
+        ncs.instructions.append(
+            NCSInstruction(NCSInstructionType.CONSTF, [_float32(self.value)])
+        )
         return DynamicDataType.FLOAT
 
 
 class VectorExpression(Expression):
-    def __init__(self, x: FloatExpression, y: FloatExpression, z: FloatExpression):
+    def __init__(self, x: Expression, y: Expression, z: Expression):
         super().__init__()
-        self.x: FloatExpression = x
-        self.y: FloatExpression = y
-        self.z: FloatExpression = z
+        self.x: Expression = x
+        self.y: Expression = y
+        self.z: Expression = z
 
     def __eq__(self, other: VectorExpression | object):
         if self is other:
@@ -2359,19 +2268,27 @@ class VectorExpression(Expression):
     def data_type(self) -> DynamicDataType:
         return DynamicDataType.VECTOR
 
+    def resolve_components(self, root: CodeRoot) -> tuple[float, float, float]:
+        """Resolve the three literal/predefined float tokens, never runtime values."""
+        values: list[float] = []
+        for component in (self.x, self.y, self.z):
+            constant = resolve_kotor_constant_expression(component, root)
+            if constant is None or constant.datatype != DataType.FLOAT:
+                raise CompileError(
+                    "Vector components must be float literals or predefined float constants"
+                )
+            values.append(float(constant.value))
+        return values[0], values[1], values[2]
+
     def _compile(self, ncs: NCS, root: CodeRoot, block: CodeBlock) -> DynamicDataType:  # noqa: A003
-        self.x.compile(ncs, root, block)
-        self.y.compile(ncs, root, block)
-        self.z.compile(ncs, root, block)
+        values = self.resolve_components(root)
+        for value in values:
+            FloatExpression(value).compile(ncs, root, block)
         return DynamicDataType.VECTOR
 
 
 class EngineCallExpression(Expression):
-    """Explicit engine-call node retained for callers that construct ASTs directly.
-
-    Parsed NSS uses :class:`FunctionCallExpression` for every source call and resolves
-    engine-versus-user ownership during semantic analysis/emission.
-    """
+    """Engine call node for directly constructed ASTs."""
 
     def __init__(
         self,
@@ -2382,9 +2299,6 @@ class EngineCallExpression(Expression):
         super().__init__()
         self._function: ScriptFunction = function
         self._routine_id: int = routine_id
-        # Engine-call arguments are part of the parsed/constructed AST. Keep the
-        # stored sequence immutable; default expansion happens on a local list in
-        # ``_compile`` and must never change this node between compiler passes.
         self._args: tuple[Expression, ...] = tuple(args)
 
     @property
@@ -2403,8 +2317,6 @@ class EngineCallExpression(Expression):
         root: CodeRoot,
         block: CodeBlock,
     ) -> DynamicDataType:  # noqa: A003
-        # Default materialization is an emission detail. Keep the parsed AST stable
-        # across semantic analysis and any repeated compiler passes.
         args = list(self._args)
         arg_count = len(args)
 
@@ -2446,7 +2358,7 @@ class EngineCallExpression(Expression):
                     z = FloatExpression(param.default.z)
                     args.append(VectorExpression(x, y, z))
                 elif param.datatype == DataType.OBJECT:
-                    args.append(ObjectExpression(int(param.default)))
+                    args.append(ObjectExpression.from_engine_default(param.default))
                 else:
                     msg = (
                         f"Unsupported default parameter type '{param.datatype.name}' "
@@ -2461,13 +2373,10 @@ class EngineCallExpression(Expression):
             elif constant.datatype == DataType.STRING:
                 args.append(StringExpression(str(constant.value)))
             elif constant.datatype == DataType.OBJECT:
-                args.append(ObjectExpression(int(constant.value)))
+                args.append(ObjectExpression.from_engine_default(constant.value))
 
         ordinary_argument_bytes = 0
 
-        # BioWare ACTION calling convention places the first parameter at the
-        # top of the VM stack. Emit arguments in reverse declaration order so
-        # ACTION consumers pop parameter 0 first.
         for reverse_index, arg in enumerate(reversed(args)):
             param_index = len(args) - 1 - reverse_index
             param = self._function.params[param_index]
@@ -2476,7 +2385,7 @@ class EngineCallExpression(Expression):
                 after_command = NCSInstruction()
                 ncs.add(
                     NCSInstructionType.STORE_STATE,
-                    args=[-root.scope_size(), block.full_scope_size(root)],
+                    args=[-root.scope_size(), block.stack_depth(root)],
                 )
                 ncs.add(NCSInstructionType.JMP, jump=after_command)
                 action_entry_stack = block.context.stack.snapshot()
@@ -2508,8 +2417,6 @@ class EngineCallExpression(Expression):
                 [self._routine_id, len(args)],
             ),
         )
-        # ACTION consumes ordinary value arguments. Captured ACTION parameters are
-        # stored as code/state and therefore do not contribute ordinary stack bytes.
         block.context.stack.consume(ordinary_argument_bytes)
         return DynamicDataType(self._function.returntype)
 
@@ -2535,13 +2442,10 @@ class FunctionCallExpression(Expression):
         source_origin = block.context.semantic.source_origin
         symbol = root.get_visible_function(name, source_origin)
         if symbol is not None:
-            # compile_jsr handles return-slot reservation and shared stack accounting.
             return root.compile_jsr(ncs, block, symbol, *self._args)
 
         engine = root.get_engine_function(name)
         if engine is not None:
-            # Parsed calls stay unresolved until semantic analysis. Reuse the explicit
-            # engine-call emitter without changing the source AST.
             engine_call = EngineCallExpression(
                 engine.function,
                 engine.routine_id,
@@ -2558,9 +2462,6 @@ class FunctionCallExpression(Expression):
         )
 
 
-# endregion
-
-
 class BinaryOperatorExpression(Expression):
     def __init__(
         self,
@@ -2572,54 +2473,17 @@ class BinaryOperatorExpression(Expression):
         self.expression2: Expression = expression2
         self.compatibility: list[BinaryOperatorMapping] = mapping
 
-    def constant_value(
-        self,
-        root: CodeRoot,
-        source_origin: SourceOrigin | None = None,
-    ) -> ConstantValue | None:
-        left = self.expression1.constant_value(root, source_origin)
-        if left is None:
-            return None
-
-        # Match BioWare's compile-time short-circuit behavior: the right side does
-        # not need to be constant if the left side determines the logical result.
-        if left.datatype == DataType.INT:
-            for mapping in self.compatibility:
-                if mapping.instruction == NCSInstructionType.LOGORII and int(left.value) != 0:
-                    return ConstantValue(DataType.INT, 1)
-                if mapping.instruction == NCSInstructionType.LOGANDII and int(left.value) == 0:
-                    return ConstantValue(DataType.INT, 0)
-
-        right = self.expression2.constant_value(root, source_origin)
-        if right is None:
-            return None
-        for mapping in self.compatibility:
-            folded = _fold_binary_constant(mapping, left, right)
-            if folded is not None:
-                return folded
-        return None
-
     def _compile(self, ncs: NCS, root: CodeRoot, block: CodeBlock) -> DynamicDataType:  # noqa: A003
-        constant = self.constant_value(root, block.context.semantic.source_origin)
-        if constant is not None:
-            return _emit_constant(ncs, constant)
-
-        short_circuit_mapping = next(
+        and_mapping = next(
             (
                 mapping
                 for mapping in self.compatibility
-                if mapping.instruction
-                in {NCSInstructionType.LOGANDII, NCSInstructionType.LOGORII}
+                if mapping.instruction == NCSInstructionType.LOGANDII
             ),
             None,
         )
-        if short_circuit_mapping is not None:
-            return self._compile_short_circuit(
-                ncs,
-                root,
-                block,
-                short_circuit_mapping,
-            )
+        if and_mapping is not None:
+            return self._compile_short_circuit_and(ncs, root, block, and_mapping)
 
         type1 = self.expression1.compile(ncs, root, block)
         type1_size = type1.size(root)
@@ -2634,9 +2498,6 @@ class BinaryOperatorExpression(Expression):
                 break
 
         if result_type is None:
-            # User-defined structures (and BioWare's built-in vector structure)
-            # use the generic STRUCT/STRUCT equality opcode with an explicit byte
-            # count. Different named structures are intentionally incompatible.
             equality_instruction: NCSInstructionType | None = None
             if type1 == type2 and type1.builtin in {DataType.STRUCT, DataType.VECTOR}:
                 instructions = {mapping.instruction for mapping in self.compatibility}
@@ -2667,7 +2528,6 @@ class BinaryOperatorExpression(Expression):
                 ncs.add(equality_instruction, args=[type1.size(root)])
                 result_type = DynamicDataType.INT
             else:
-                # Build helpful error showing what operations are supported.
                 supported = [
                     f"{m.lhs.name.lower()} {m.instruction.name} {m.rhs.name.lower()}"
                     for m in self.compatibility[:3]
@@ -2680,24 +2540,17 @@ class BinaryOperatorExpression(Expression):
                 raise CompileError(msg)
 
         result_size = result_type.size(root)
-        # Binary instructions consume both operands and leave one result.
         block.context.stack.replace(type1_size + type2_size, result_size)
         return result_type
 
-    def _compile_short_circuit(
+    def _compile_short_circuit_and(
         self,
         ncs: NCS,
         root: CodeRoot,
         block: CodeBlock,
         mapping: BinaryOperatorMapping,
     ) -> DynamicDataType:
-        """Lower BioWare-style runtime ``&&``/``||`` short-circuiting.
-
-        BioWare keeps the original left operand on the stack, duplicates it for
-        the conditional jump, and only evaluates the right operand when needed.
-        If the branch is short-circuited, the original left operand itself is the
-        expression result; otherwise LOGANDII/LOGORII combines both operands.
-        """
+        """Skip the right operand of false AND and leave a normalized integer result."""
         type1 = self.expression1.compile(ncs, root, block)
         if type1 != mapping.lhs:
             raise CompileError(
@@ -2716,17 +2569,9 @@ class BinaryOperatorExpression(Expression):
 
         end_label = NCSInstruction(NCSInstructionType.NOP, args=[])
 
-        # Duplicate only the test value. JZ/JNZ consumes the duplicate and leaves
-        # the original lhs in place for either the short-circuit result or the
-        # eventual LOGANDII/LOGORII operation.
         ncs.add(NCSInstructionType.CPTOPSP, args=[-lhs_size, lhs_size])
         block.context.stack.push(lhs_size)
-        jump_type = (
-            NCSInstructionType.JZ
-            if mapping.instruction == NCSInstructionType.LOGANDII
-            else NCSInstructionType.JNZ
-        )
-        ncs.add(jump_type, jump=end_label)
+        ncs.add(NCSInstructionType.JZ, jump=end_label)
         block.context.stack.consume(lhs_size)
 
         type2 = self.expression2.compile(ncs, root, block)
@@ -2751,25 +2596,7 @@ class TernaryConditionalExpression(Expression):
         self.true_expr: Expression = true_expr
         self.false_expr: Expression = false_expr
 
-    def constant_value(
-        self,
-        root: CodeRoot,
-        source_origin: SourceOrigin | None = None,
-    ) -> ConstantValue | None:
-        condition = self.condition.constant_value(root, source_origin)
-        if condition is None or condition.datatype != DataType.INT:
-            return None
-        true_value = self.true_expr.constant_value(root, source_origin)
-        false_value = self.false_expr.constant_value(root, source_origin)
-        if true_value is None or false_value is None or true_value.datatype != false_value.datatype:
-            return None
-        return true_value if int(condition.value) != 0 else false_value
-
     def _compile(self, ncs: NCS, root: CodeRoot, block: CodeBlock) -> DynamicDataType:
-        constant = self.constant_value(root, block.context.semantic.source_origin)
-        if constant is not None:
-            return _emit_constant(ncs, constant)
-
         initial_stack = block.context.stack.snapshot()
 
         condition_type = self.condition.compile(ncs, root, block)
@@ -2809,24 +2636,7 @@ class UnaryOperatorExpression(Expression):
         self.expression1: Expression = expression1
         self.compatibility: list[UnaryOperatorMapping] = mapping
 
-    def constant_value(
-        self,
-        root: CodeRoot,
-        source_origin: SourceOrigin | None = None,
-    ) -> ConstantValue | None:
-        operand = self.expression1.constant_value(root, source_origin)
-        if operand is None:
-            return None
-        for mapping in self.compatibility:
-            if operand.datatype == mapping.rhs:
-                return _fold_unary_constant(mapping.instruction, operand)
-        return None
-
     def _compile(self, ncs: NCS, root: CodeRoot, block: CodeBlock) -> DynamicDataType:  # noqa: A003
-        constant = self.constant_value(root, block.context.semantic.source_origin)
-        if constant is not None:
-            return _emit_constant(ncs, constant)
-
         type1 = self.expression1.compile(ncs, root, block)
 
         for x in self.compatibility:
@@ -2875,49 +2685,35 @@ class BitwiseNotExpression(Expression):
         return type1
 
 
-# region Expressions: Assignment
 class Assignment(Expression):
     def __init__(
         self,
         field_access: FieldAccess,
         value: Expression,
-        *,
-        allow_const: bool = False,
     ):
         super().__init__()
         self.field_access: FieldAccess = field_access
         self.expression: Expression = value
-        self.allow_const = allow_const
 
     def _compile(self, ncs: NCS, root: CodeRoot, block: CodeBlock) -> DynamicDataType:
         variable_type = self.expression.compile(ncs, root, block)
 
-        # Get the variable location; get_scoped accounts for the current transient expression value
-        is_global, expression_type, stack_index, is_const = self.field_access.get_scoped(
+        is_global, expression_type, stack_index = self.field_access.get_scoped(
             block,
             root,
         )
 
-        if is_const and not self.allow_const:
-            var_name = ".".join(str(ident) for ident in self.field_access.identifiers)
-            msg = f"Cannot assign to const variable '{var_name}'"
-            raise CompileError(msg)
-
         instruction_type = NCSInstructionType.CPDOWNBP if is_global else NCSInstructionType.CPDOWNSP
-        # get_scoped() already accounts for the transient expression result, so stack_index
-        # points to the correct variable location
 
         if variable_type != expression_type:
             var_name = ".".join(str(ident) for ident in self.field_access.identifiers)
             msg = f"Type mismatch in assignment to '{var_name}'\n  Variable type: {expression_type.builtin.name}\n  Expression type: {variable_type.builtin.name}"
             raise CompileError(msg)
 
-        # Copy the value that the expression has already been placed on the stack to where the identifiers position is
         ncs.instructions.append(
             NCSInstruction(instruction_type, [stack_index, expression_type.size(root)]),
         )
 
-        # Leave the assignment result on the stack; the enclosing expression consumer owns cleanup.
 
         return variable_type
 
@@ -2934,23 +2730,16 @@ class AdditionAssignment(Expression):
         root: CodeRoot,
         block: CodeBlock,
     ) -> DynamicDataType:
-        # Copy the variable to the top of the stack
-        is_global, variable_type, stack_index, is_const = self.field_access.get_scoped(
+        is_global, variable_type, stack_index = self.field_access.get_scoped(
             block,
             root,
         )
-        if is_const:
-            var_name = ".".join(str(ident) for ident in self.field_access.identifiers)
-            msg = f"Cannot assign to const variable '{var_name}'"
-            raise CompileError(msg)
         instruction_type = NCSInstructionType.CPTOPBP if is_global else NCSInstructionType.CPTOPSP
         ncs.add(instruction_type, args=[stack_index, variable_type.size(root)])
         block.context.stack.push(variable_type.size(root))
 
-        # Compile the right-hand side; the expression contract tracks its result.
         expresion_type = self.expression.compile(ncs, root, block)
 
-        # Determine what instruction to apply to the two values
         if variable_type == DynamicDataType.INT and expresion_type == DynamicDataType.INT:
             arthimetic_instruction = NCSInstructionType.ADDII
         elif variable_type == DynamicDataType.FLOAT and expresion_type == DynamicDataType.FLOAT:
@@ -2971,25 +2760,16 @@ class AdditionAssignment(Expression):
             )
             raise CompileError(msg)
 
-        # Add the expression and our temp variable copy together
         ncs.add(arthimetic_instruction, args=[])
 
-        # Copy the result to the original variable in the stack
-        # The arithmetic operation consumed both operands and left the result on stack
-        # After CPDOWNSP, the result is still on stack (for ExpressionStatement to clean up)
         ins_cpdown = NCSInstructionType.CPDOWNBP if is_global else NCSInstructionType.CPDOWNSP
-        # Result (variable_type size) is on stack; offset to original variable accounts for this
         offset_cpdown = stack_index if is_global else stack_index - variable_type.size(root)
         ncs.add(ins_cpdown, args=[offset_cpdown, variable_type.size(root)])
 
-        # Arithmetic operation consumed variable copy and expression (2 values), left result (1 value)
-        # Result is still on stack (copied to variable location but also remains on top for ExpressionStatement)
-        # The explicit stack context mirrors the VM transformation: two operands become one result.
         block.context.stack.replace(
             variable_type.size(root) + expresion_type.size(root),
             variable_type.size(root),
         )
-        # Return variable_type (the result type) so ExpressionStatement knows what size to clean up
         return variable_type
 
 
@@ -3000,20 +2780,13 @@ class SubtractionAssignment(Expression):
         self.expression: Expression = value
 
     def _compile(self, ncs: NCS, root: CodeRoot, block: CodeBlock) -> DynamicDataType:
-        # Copy the variable to the top of the stack
-        isglobal, variable_type, stack_index, is_const = self.field_access.get_scoped(block, root)
-        if is_const:
-            var_name = ".".join(str(ident) for ident in self.field_access.identifiers)
-            msg = f"Cannot assign to const variable '{var_name}'"
-            raise CompileError(msg)
+        isglobal, variable_type, stack_index = self.field_access.get_scoped(block, root)
         instruction_type = NCSInstructionType.CPTOPBP if isglobal else NCSInstructionType.CPTOPSP
         ncs.add(instruction_type, args=[stack_index, variable_type.size(root)])
         block.context.stack.push(variable_type.size(root))
 
-        # Compile the right-hand side; the expression contract tracks its result.
         expresion_type = self.expression.compile(ncs, root, block)
 
-        # Determine what instruction to apply to the two values
         if variable_type == DynamicDataType.INT and expresion_type == DynamicDataType.INT:
             arthimetic_instruction = NCSInstructionType.SUBII
         elif variable_type == DynamicDataType.FLOAT and expresion_type == DynamicDataType.FLOAT:
@@ -3032,25 +2805,16 @@ class SubtractionAssignment(Expression):
             )
             raise CompileError(msg)
 
-        # Subtract the expression from our temp variable copy
         ncs.add(arthimetic_instruction)
 
-        # Copy the result to the original variable in the stack
-        # The arithmetic operation consumed both operands and left the result on stack
-        # After CPDOWNSP, the result is still on stack (for ExpressionStatement to clean up)
         ins_cpdown = NCSInstructionType.CPDOWNBP if isglobal else NCSInstructionType.CPDOWNSP
-        # Result (variable_type size) is on stack; offset to original variable accounts for this
         offset_cpdown = stack_index if isglobal else stack_index - variable_type.size(root)
         ncs.add(ins_cpdown, args=[offset_cpdown, variable_type.size(root)])
 
-        # Arithmetic operation consumed variable copy and expression (2 values), left result (1 value)
-        # Result is still on stack (copied to variable location but also remains on top for ExpressionStatement)
-        # The explicit stack context mirrors the VM transformation: two operands become one result.
         block.context.stack.replace(
             variable_type.size(root) + expresion_type.size(root),
             variable_type.size(root),
         )
-        # Return variable_type (the result type) so ExpressionStatement knows what size to clean up
         return variable_type
 
 
@@ -3061,20 +2825,13 @@ class MultiplicationAssignment(Expression):
         self.expression: Expression = value
 
     def _compile(self, ncs: NCS, root: CodeRoot, block: CodeBlock) -> DynamicDataType:
-        # Copy the variable to the top of the stack
-        isglobal, variable_type, stack_index, is_const = self.field_access.get_scoped(block, root)
-        if is_const:
-            var_name = ".".join(str(ident) for ident in self.field_access.identifiers)
-            msg = f"Cannot assign to const variable '{var_name}'"
-            raise CompileError(msg)
+        isglobal, variable_type, stack_index = self.field_access.get_scoped(block, root)
         instruction_type = NCSInstructionType.CPTOPBP if isglobal else NCSInstructionType.CPTOPSP
         ncs.add(instruction_type, args=[stack_index, variable_type.size(root)])
         block.context.stack.push(variable_type.size(root))
 
-        # Compile the right-hand side; the expression contract tracks its result.
         expresion_type = self.expression.compile(ncs, root, block)
 
-        # Determine what instruction to apply to the two values
         if variable_type == DynamicDataType.INT and expresion_type == DynamicDataType.INT:
             arthimetic_instruction = NCSInstructionType.MULII
         elif variable_type == DynamicDataType.FLOAT and expresion_type == DynamicDataType.FLOAT:
@@ -3093,25 +2850,16 @@ class MultiplicationAssignment(Expression):
             )
             raise CompileError(msg)
 
-        # Multiply the temp variable copy by the expression
         ncs.add(arthimetic_instruction)
 
-        # Copy the result to the original variable in the stack
-        # The arithmetic operation consumed both operands and left the result on stack
-        # After CPDOWNSP, the result is still on stack (for ExpressionStatement to clean up)
         ins_cpdown = NCSInstructionType.CPDOWNBP if isglobal else NCSInstructionType.CPDOWNSP
-        # Result (variable_type size) is on stack; offset to original variable accounts for this
         offset_cpdown = stack_index if isglobal else stack_index - variable_type.size(root)
         ncs.add(ins_cpdown, args=[offset_cpdown, variable_type.size(root)])
 
-        # Arithmetic operation consumed variable copy and expression (2 values), left result (1 value)
-        # Result is still on stack (copied to variable location but also remains on top for ExpressionStatement)
-        # The explicit stack context mirrors the VM transformation: two operands become one result.
         block.context.stack.replace(
             variable_type.size(root) + expresion_type.size(root),
             variable_type.size(root),
         )
-        # Return variable_type (the result type) so ExpressionStatement knows what size to clean up
         return variable_type
 
 
@@ -3122,20 +2870,13 @@ class DivisionAssignment(Expression):
         self.expression: Expression = value
 
     def _compile(self, ncs: NCS, root: CodeRoot, block: CodeBlock) -> DynamicDataType:
-        # Copy the variable to the top of the stack
-        isglobal, variable_type, stack_index, is_const = self.field_access.get_scoped(block, root)
-        if is_const:
-            var_name = ".".join(str(ident) for ident in self.field_access.identifiers)
-            msg = f"Cannot assign to const variable '{var_name}'"
-            raise CompileError(msg)
+        isglobal, variable_type, stack_index = self.field_access.get_scoped(block, root)
         instruction_type = NCSInstructionType.CPTOPBP if isglobal else NCSInstructionType.CPTOPSP
         ncs.add(instruction_type, args=[stack_index, variable_type.size(root)])
         block.context.stack.push(variable_type.size(root))
 
-        # Compile the right-hand side; the expression contract tracks its result.
         expresion_type = self.expression.compile(ncs, root, block)
 
-        # Determine what instruction to apply to the two values
         if variable_type == DynamicDataType.INT and expresion_type == DynamicDataType.INT:
             arthimetic_instruction = NCSInstructionType.DIVII
         elif variable_type == DynamicDataType.FLOAT and expresion_type == DynamicDataType.FLOAT:
@@ -3154,25 +2895,16 @@ class DivisionAssignment(Expression):
             )
             raise CompileError(msg)
 
-        # Divide the temp variable copy by the expression
         ncs.add(arthimetic_instruction)
 
-        # Copy the result to the original variable in the stack
-        # The arithmetic operation consumed both operands and left the result on stack
-        # After CPDOWNSP, the result is still on stack (for ExpressionStatement to clean up)
         ins_cpdown = NCSInstructionType.CPDOWNBP if isglobal else NCSInstructionType.CPDOWNSP
-        # Result (variable_type size) is on stack; offset to original variable accounts for this
         offset_cpdown = stack_index if isglobal else stack_index - variable_type.size(root)
         ncs.add(ins_cpdown, args=[offset_cpdown, variable_type.size(root)])
 
-        # Arithmetic operation consumed variable copy and expression (2 values), left result (1 value)
-        # Result is still on stack (copied to variable location but also remains on top for ExpressionStatement)
-        # The explicit stack context mirrors the VM transformation: two operands become one result.
         block.context.stack.replace(
             variable_type.size(root) + expresion_type.size(root),
             variable_type.size(root),
         )
-        # Return variable_type (the result type) so ExpressionStatement knows what size to clean up
         return variable_type
 
 
@@ -3183,20 +2915,13 @@ class ModuloAssignment(Expression):
         self.expression: Expression = value
 
     def _compile(self, ncs: NCS, root: CodeRoot, block: CodeBlock) -> DynamicDataType:
-        # Copy the variable to the top of the stack
-        isglobal, variable_type, stack_index, is_const = self.field_access.get_scoped(block, root)
-        if is_const:
-            var_name = ".".join(str(ident) for ident in self.field_access.identifiers)
-            msg = f"Cannot assign to const variable '{var_name}'"
-            raise CompileError(msg)
+        isglobal, variable_type, stack_index = self.field_access.get_scoped(block, root)
         instruction_type = NCSInstructionType.CPTOPBP if isglobal else NCSInstructionType.CPTOPSP
         ncs.add(instruction_type, args=[stack_index, variable_type.size(root)])
         block.context.stack.push(variable_type.size(root))
 
-        # Compile the right-hand side; the expression contract tracks its result.
         expresion_type = self.expression.compile(ncs, root, block)
 
-        # Determine what instruction to apply to the two values
         if variable_type == DynamicDataType.INT and expresion_type == DynamicDataType.INT:
             arthimetic_instruction = NCSInstructionType.MODII
         else:
@@ -3209,25 +2934,16 @@ class ModuloAssignment(Expression):
             )
             raise CompileError(msg)
 
-        # Apply modulo operation
         ncs.add(arthimetic_instruction)
 
-        # Copy the result to the original variable in the stack
-        # The arithmetic operation consumed both operands and left the result on stack
-        # After CPDOWNSP, the result is still on stack (for ExpressionStatement to clean up)
         ins_cpdown = NCSInstructionType.CPDOWNBP if isglobal else NCSInstructionType.CPDOWNSP
-        # Result (variable_type size) is on stack; offset to original variable accounts for this
         offset_cpdown = stack_index if isglobal else stack_index - variable_type.size(root)
         ncs.add(ins_cpdown, args=[offset_cpdown, variable_type.size(root)])
 
-        # Arithmetic operation consumed variable copy and expression (2 values), left result (1 value)
-        # Result is still on stack (copied to variable location but also remains on top for ExpressionStatement)
-        # The explicit stack context mirrors the VM transformation: two operands become one result.
         block.context.stack.replace(
             variable_type.size(root) + expresion_type.size(root),
             variable_type.size(root),
         )
-        # Return variable_type (the result type) so ExpressionStatement knows what size to clean up
         return variable_type
 
 
@@ -3238,20 +2954,13 @@ class BitwiseAndAssignment(Expression):
         self.expression: Expression = value
 
     def _compile(self, ncs: NCS, root: CodeRoot, block: CodeBlock) -> DynamicDataType:
-        # Copy the variable to the top of the stack
-        is_global, variable_type, stack_index, is_const = self.field_access.get_scoped(block, root)
-        if is_const:
-            var_name = ".".join(str(ident) for ident in self.field_access.identifiers)
-            msg = f"Cannot assign to const variable '{var_name}'"
-            raise CompileError(msg)
+        is_global, variable_type, stack_index = self.field_access.get_scoped(block, root)
         instruction_type = NCSInstructionType.CPTOPBP if is_global else NCSInstructionType.CPTOPSP
         ncs.add(instruction_type, args=[stack_index, variable_type.size(root)])
         block.context.stack.push(variable_type.size(root))
 
-        # Compile the right-hand side; the expression contract tracks its result.
         expression_type = self.expression.compile(ncs, root, block)
 
-        # Determine what instruction to apply to the two values
         if variable_type == DynamicDataType.INT and expression_type == DynamicDataType.INT:
             bitwise_instruction = NCSInstructionType.BOOLANDII
         else:
@@ -3264,24 +2973,16 @@ class BitwiseAndAssignment(Expression):
             )
             raise CompileError(msg)
 
-        # Apply the bitwise AND operation
         ncs.add(bitwise_instruction, args=[])
 
-        # Copy the result to the original variable in the stack
-        # The bitwise operation consumed both operands and left the result on stack
-        # After CPDOWNSP, the result is still on stack (for ExpressionStatement to clean up)
         ins_cpdown = NCSInstructionType.CPDOWNBP if is_global else NCSInstructionType.CPDOWNSP
-        # Result (variable_type size) is on stack; offset to original variable accounts for this
         offset_cpdown = stack_index if is_global else stack_index - variable_type.size(root)
         ncs.add(ins_cpdown, args=[offset_cpdown, variable_type.size(root)])
 
-        # Bitwise operation consumed variable copy and expression (2 values), left result (1 value)
-        # The explicit stack context records that both operands became one result.
         block.context.stack.replace(
             variable_type.size(root) + expression_type.size(root),
             variable_type.size(root),
         )
-        # Return variable_type (the result type) so ExpressionStatement knows what size to clean up
         return variable_type
 
 
@@ -3292,20 +2993,13 @@ class BitwiseOrAssignment(Expression):
         self.expression: Expression = value
 
     def _compile(self, ncs: NCS, root: CodeRoot, block: CodeBlock) -> DynamicDataType:
-        # Copy the variable to the top of the stack
-        is_global, variable_type, stack_index, is_const = self.field_access.get_scoped(block, root)
-        if is_const:
-            var_name = ".".join(str(ident) for ident in self.field_access.identifiers)
-            msg = f"Cannot assign to const variable '{var_name}'"
-            raise CompileError(msg)
+        is_global, variable_type, stack_index = self.field_access.get_scoped(block, root)
         instruction_type = NCSInstructionType.CPTOPBP if is_global else NCSInstructionType.CPTOPSP
         ncs.add(instruction_type, args=[stack_index, variable_type.size(root)])
         block.context.stack.push(variable_type.size(root))
 
-        # Compile the right-hand side; the expression contract tracks its result.
         expression_type = self.expression.compile(ncs, root, block)
 
-        # Determine what instruction to apply to the two values
         if variable_type == DynamicDataType.INT and expression_type == DynamicDataType.INT:
             bitwise_instruction = NCSInstructionType.INCORII
         else:
@@ -3318,24 +3012,16 @@ class BitwiseOrAssignment(Expression):
             )
             raise CompileError(msg)
 
-        # Apply the bitwise OR operation
         ncs.add(bitwise_instruction, args=[])
 
-        # Copy the result to the original variable in the stack
-        # The bitwise operation consumed both operands and left the result on stack
-        # After CPDOWNSP, the result is still on stack (for ExpressionStatement to clean up)
         ins_cpdown = NCSInstructionType.CPDOWNBP if is_global else NCSInstructionType.CPDOWNSP
-        # Result (variable_type size) is on stack; offset to original variable accounts for this
         offset_cpdown = stack_index if is_global else stack_index - variable_type.size(root)
         ncs.add(ins_cpdown, args=[offset_cpdown, variable_type.size(root)])
 
-        # Bitwise operation consumed variable copy and expression (2 values), left result (1 value)
-        # The explicit stack context records that both operands became one result.
         block.context.stack.replace(
             variable_type.size(root) + expression_type.size(root),
             variable_type.size(root),
         )
-        # Return variable_type (the result type) so ExpressionStatement knows what size to clean up
         return variable_type
 
 
@@ -3346,20 +3032,13 @@ class BitwiseXorAssignment(Expression):
         self.expression: Expression = value
 
     def _compile(self, ncs: NCS, root: CodeRoot, block: CodeBlock) -> DynamicDataType:
-        # Copy the variable to the top of the stack
-        is_global, variable_type, stack_index, is_const = self.field_access.get_scoped(block, root)
-        if is_const:
-            var_name = ".".join(str(ident) for ident in self.field_access.identifiers)
-            msg = f"Cannot assign to const variable '{var_name}'"
-            raise CompileError(msg)
+        is_global, variable_type, stack_index = self.field_access.get_scoped(block, root)
         instruction_type = NCSInstructionType.CPTOPBP if is_global else NCSInstructionType.CPTOPSP
         ncs.add(instruction_type, args=[stack_index, variable_type.size(root)])
         block.context.stack.push(variable_type.size(root))
 
-        # Compile the right-hand side; the expression contract tracks its result.
         expression_type = self.expression.compile(ncs, root, block)
 
-        # Determine what instruction to apply to the two values
         if variable_type == DynamicDataType.INT and expression_type == DynamicDataType.INT:
             bitwise_instruction = NCSInstructionType.EXCORII
         else:
@@ -3372,24 +3051,16 @@ class BitwiseXorAssignment(Expression):
             )
             raise CompileError(msg)
 
-        # Apply the bitwise XOR operation
         ncs.add(bitwise_instruction, args=[])
 
-        # Copy the result to the original variable in the stack
-        # The bitwise operation consumed both operands and left the result on stack
-        # After CPDOWNSP, the result is still on stack (for ExpressionStatement to clean up)
         ins_cpdown = NCSInstructionType.CPDOWNBP if is_global else NCSInstructionType.CPDOWNSP
-        # Result (variable_type size) is on stack; offset to original variable accounts for this
         offset_cpdown = stack_index if is_global else stack_index - variable_type.size(root)
         ncs.add(ins_cpdown, args=[offset_cpdown, variable_type.size(root)])
 
-        # Bitwise operation consumed variable copy and expression (2 values), left result (1 value)
-        # The explicit stack context records that both operands became one result.
         block.context.stack.replace(
             variable_type.size(root) + expression_type.size(root),
             variable_type.size(root),
         )
-        # Return variable_type (the result type) so ExpressionStatement knows what size to clean up
         return variable_type
 
 
@@ -3400,20 +3071,13 @@ class BitwiseLeftAssignment(Expression):
         self.expression: Expression = value
 
     def _compile(self, ncs: NCS, root: CodeRoot, block: CodeBlock) -> DynamicDataType:
-        # Copy the variable to the top of the stack
-        is_global, variable_type, stack_index, is_const = self.field_access.get_scoped(block, root)
-        if is_const:
-            var_name = ".".join(str(ident) for ident in self.field_access.identifiers)
-            msg = f"Cannot assign to const variable '{var_name}'"
-            raise CompileError(msg)
+        is_global, variable_type, stack_index = self.field_access.get_scoped(block, root)
         instruction_type = NCSInstructionType.CPTOPBP if is_global else NCSInstructionType.CPTOPSP
         ncs.add(instruction_type, args=[stack_index, variable_type.size(root)])
         block.context.stack.push(variable_type.size(root))
 
-        # Compile the right-hand side; the expression contract tracks its result.
         expression_type = self.expression.compile(ncs, root, block)
 
-        # Determine what instruction to apply to the two values
         if variable_type == DynamicDataType.INT and expression_type == DynamicDataType.INT:
             bitwise_instruction = NCSInstructionType.SHLEFTII
         else:
@@ -3426,24 +3090,16 @@ class BitwiseLeftAssignment(Expression):
             )
             raise CompileError(msg)
 
-        # Apply the bitwise left shift operation
         ncs.add(bitwise_instruction, args=[])
 
-        # Copy the result to the original variable in the stack
-        # The bitwise operation consumed both operands and left the result on stack
-        # After CPDOWNSP, the result is still on stack (for ExpressionStatement to clean up)
         ins_cpdown = NCSInstructionType.CPDOWNBP if is_global else NCSInstructionType.CPDOWNSP
-        # Result (variable_type size) is on stack; offset to original variable accounts for this
         offset_cpdown = stack_index if is_global else stack_index - variable_type.size(root)
         ncs.add(ins_cpdown, args=[offset_cpdown, variable_type.size(root)])
 
-        # Bitwise operation consumed variable copy and expression (2 values), left result (1 value)
-        # The explicit stack context records that both operands became one result.
         block.context.stack.replace(
             variable_type.size(root) + expression_type.size(root),
             variable_type.size(root),
         )
-        # Return variable_type (the result type) so ExpressionStatement knows what size to clean up
         return variable_type
 
 
@@ -3454,20 +3110,13 @@ class BitwiseRightAssignment(Expression):
         self.expression: Expression = value
 
     def _compile(self, ncs: NCS, root: CodeRoot, block: CodeBlock) -> DynamicDataType:
-        # Copy the variable to the top of the stack
-        is_global, variable_type, stack_index, is_const = self.field_access.get_scoped(block, root)
-        if is_const:
-            var_name = ".".join(str(ident) for ident in self.field_access.identifiers)
-            msg = f"Cannot assign to const variable '{var_name}'"
-            raise CompileError(msg)
+        is_global, variable_type, stack_index = self.field_access.get_scoped(block, root)
         instruction_type = NCSInstructionType.CPTOPBP if is_global else NCSInstructionType.CPTOPSP
         ncs.add(instruction_type, args=[stack_index, variable_type.size(root)])
         block.context.stack.push(variable_type.size(root))
 
-        # Compile the right-hand side; the expression contract tracks its result.
         expression_type = self.expression.compile(ncs, root, block)
 
-        # Determine what instruction to apply to the two values
         if variable_type == DynamicDataType.INT and expression_type == DynamicDataType.INT:
             bitwise_instruction = NCSInstructionType.SHRIGHTII
         else:
@@ -3480,24 +3129,16 @@ class BitwiseRightAssignment(Expression):
             )
             raise CompileError(msg)
 
-        # Apply the bitwise right shift operation
         ncs.add(bitwise_instruction, args=[])
 
-        # Copy the result to the original variable in the stack
-        # The bitwise operation consumed both operands and left the result on stack
-        # After CPDOWNSP, the result is still on stack (for ExpressionStatement to clean up)
         ins_cpdown = NCSInstructionType.CPDOWNBP if is_global else NCSInstructionType.CPDOWNSP
-        # Result (variable_type size) is on stack; offset to original variable accounts for this
         offset_cpdown = stack_index if is_global else stack_index - variable_type.size(root)
         ncs.add(ins_cpdown, args=[offset_cpdown, variable_type.size(root)])
 
-        # Bitwise operation consumed variable copy and expression (2 values), left result (1 value)
-        # The explicit stack context records that both operands became one result.
         block.context.stack.replace(
             variable_type.size(root) + expression_type.size(root),
             variable_type.size(root),
         )
-        # Return variable_type (the result type) so ExpressionStatement knows what size to clean up
         return variable_type
 
 
@@ -3508,20 +3149,13 @@ class BitwiseUnsignedRightAssignment(Expression):
         self.expression: Expression = value
 
     def _compile(self, ncs: NCS, root: CodeRoot, block: CodeBlock) -> DynamicDataType:
-        # Copy the variable to the top of the stack
-        is_global, variable_type, stack_index, is_const = self.field_access.get_scoped(block, root)
-        if is_const:
-            var_name = ".".join(str(ident) for ident in self.field_access.identifiers)
-            msg = f"Cannot assign to const variable '{var_name}'"
-            raise CompileError(msg)
+        is_global, variable_type, stack_index = self.field_access.get_scoped(block, root)
         instruction_type = NCSInstructionType.CPTOPBP if is_global else NCSInstructionType.CPTOPSP
         ncs.add(instruction_type, args=[stack_index, variable_type.size(root)])
         block.context.stack.push(variable_type.size(root))
 
-        # Compile the right-hand side; the expression contract tracks its result.
         expression_type = self.expression.compile(ncs, root, block)
 
-        # Determine what instruction to apply to the two values
         if variable_type == DynamicDataType.INT and expression_type == DynamicDataType.INT:
             bitwise_instruction = NCSInstructionType.USHRIGHTII
         else:
@@ -3534,31 +3168,19 @@ class BitwiseUnsignedRightAssignment(Expression):
             )
             raise CompileError(msg)
 
-        # Apply the unsigned bitwise right shift operation
         ncs.add(bitwise_instruction, args=[])
 
-        # Copy the result to the original variable in the stack
-        # The bitwise operation consumed both operands and left the result on stack
-        # After CPDOWNSP, the result is still on stack (for ExpressionStatement to clean up)
         ins_cpdown = NCSInstructionType.CPDOWNBP if is_global else NCSInstructionType.CPDOWNSP
-        # Result (variable_type size) is on stack; offset to original variable accounts for this
         offset_cpdown = stack_index if is_global else stack_index - variable_type.size(root)
         ncs.add(ins_cpdown, args=[offset_cpdown, variable_type.size(root)])
 
-        # Bitwise operation consumed variable copy and expression (2 values), left result (1 value)
-        # The explicit stack context records that both operands became one result.
         block.context.stack.replace(
             variable_type.size(root) + expression_type.size(root),
             variable_type.size(root),
         )
-        # Return variable_type (the result type) so ExpressionStatement knows what size to clean up
         return variable_type
 
 
-# endregion
-
-
-# region Statements
 class EmptyStatement(Statement):
     def __init__(self):
         super().__init__()
@@ -3572,24 +3194,6 @@ class EmptyStatement(Statement):
         break_instruction: NCSInstruction | None,
         continue_instruction: NCSInstruction | None,
     ) -> DynamicDataType:
-        return DynamicDataType.VOID
-
-
-class NopStatement(Statement):
-    def __init__(self, string: str):
-        super().__init__()
-        self.string = string
-
-    def compile(
-        self,
-        ncs: NCS,
-        root: CodeRoot,
-        block: CodeBlock,
-        return_instruction: NCSInstruction,
-        break_instruction: NCSInstruction | None,
-        continue_instruction: NCSInstruction | None,
-    ) -> DynamicDataType:
-        ncs.add(NCSInstructionType.NOP, args=[self.string])
         return DynamicDataType.VOID
 
 
@@ -3619,12 +3223,10 @@ class DeclarationStatement(Statement):
         self,
         data_type: DynamicDataType,
         declarators: list[VariableDeclarator | VariableInitializer],
-        is_const: bool = False,
     ):
         super().__init__()
         self.data_type: DynamicDataType = data_type
         self.declarators: list[VariableDeclarator | VariableInitializer] = declarators
-        self.is_const: bool = is_const
 
     def compile(
         self,
@@ -3635,13 +3237,8 @@ class DeclarationStatement(Statement):
         break_instruction: NCSInstruction | None,
         continue_instruction: NCSInstruction | None,
     ):
-        if self.is_const:
-            raise ValueError(
-                "Internal compiler error: local const declaration reached emission "
-                "after semantic validation"
-            )
         for declarator in self.declarators:
-            declarator.compile(ncs, root, block, self.data_type, False)
+            declarator.compile(ncs, root, block, self.data_type)
 
 
 class VariableDeclarator:
@@ -3654,7 +3251,6 @@ class VariableDeclarator:
         root: CodeRoot,
         block: CodeBlock,
         data_type: DynamicDataType,
-        is_const: bool = False,
     ):
         if data_type.builtin == DataType.INT:
             ncs.add(NCSInstructionType.RSADDI)
@@ -3695,7 +3291,7 @@ class VariableDeclarator:
                 f"'{data_type.builtin.name}' reached emission"
             )
 
-        block.add_scoped(self.identifier, data_type, is_const)
+        block.add_scoped(self.identifier, data_type)
 
 
 class VariableInitializer:
@@ -3709,18 +3305,14 @@ class VariableInitializer:
         root: CodeRoot,
         block: CodeBlock,
         data_type: DynamicDataType,
-        is_const: bool = False,
     ):
         declarator = VariableDeclarator(self.identifier)
-        declarator.compile(ncs, root, block, data_type, is_const)
+        declarator.compile(ncs, root, block, data_type)
 
-        # Initializers use normal assignment lowering but may write the freshly
-        # declared const slot exactly once. The expression contract guarantees one
-        # result value that we discard after copying it into the variable.
+        # Discard the assignment result after storing the initializer.
         assignment = Assignment(
             FieldAccess([self.identifier]),
             self.expression,
-            allow_const=True,
         )
         result_type = assignment.compile(ncs, root, block)
         result_size = result_type.size(root)
@@ -3748,42 +3340,11 @@ class ConditionalBlock(Statement):
         break_instruction: NCSInstruction | None,
         continue_instruction: NCSInstruction | None,
     ):
-        """Compile an if/else chain, pruning branches with constant conditions.
-
-        This mirrors BioWare's dead-branch optimization: only conditions that
-        fold to an integer constant are removed. Runtime conditions retain the
-        normal JZ/JMP control-flow structure.
-        """
+        """Emit the conditional branches and their bodies."""
         end_label = NCSInstruction(NCSInstructionType.NOP, args=[])
         needs_end_label = False
 
         for condition_and_block in self.if_blocks:
-            constant = condition_and_block.condition.constant_value(
-                root,
-                block.context.semantic.source_origin,
-            )
-            if constant is not None:
-                if constant.datatype != DataType.INT:
-                    raise ValueError(
-                        "Internal compiler error: non-int constant condition reached emission"
-                    )
-                if int(constant.value) == 0:
-                    # Provably dead branch: emit neither the condition nor body.
-                    continue
-
-                # Provably true. Any remaining else-if/else branches are dead.
-                condition_and_block.block.compile(
-                    ncs,
-                    root,
-                    block,
-                    return_instruction,
-                    break_instruction,
-                    continue_instruction,
-                )
-                if needs_end_label:
-                    ncs.instructions.append(end_label)
-                return
-
             next_label = NCSInstruction(NCSInstructionType.NOP, args=[])
             condition_type = condition_and_block.condition.compile(ncs, root, block)
             if condition_type != DynamicDataType.INT:
@@ -3875,9 +3436,7 @@ class ReturnStatement(Statement):
         cleanup_size = scope_size + entry_transient_bytes
         if cleanup_size != 0:
             ncs.add(NCSInstructionType.MOVSP, args=[-cleanup_size])
-        # Emission has terminated this runtime path, but compilation may continue
-        # at another control-flow label (for example a later switch case). Keep the
-        # compile-time transient depth at the return statement's entry state.
+        # Restore tracked depth for other paths reaching later labels.
         block.context.stack.restore(entry_transient_bytes)
         ncs.add(NCSInstructionType.JMP, jump=return_instruction)
         return return_type
@@ -4005,7 +3564,6 @@ class ForLoopBlock(Statement):
     ):
         if self.initial is not None:
             if isinstance(self.initial, Statement):
-                # For declaration statements, compile them directly
                 self.initial.compile(
                     ncs, root, block, return_instruction, break_instruction, continue_instruction
                 )
@@ -4077,9 +3635,6 @@ class ScopedBlock(Statement):
         )
 
 
-# endregion
-
-
 class BreakStatement(Statement):
     def __init__(self):
         super().__init__()
@@ -4140,11 +3695,7 @@ class PrefixIncrementExpression(Expression):
             msg = f"Increment operator (++) requires integer variable, got {variable_type.builtin.name.lower()}\n  Variable: {var_name}"
             raise CompileError(msg)
 
-        isglobal, variable_type, stack_index, is_const = self.field_access.get_scoped(block, root)
-        if is_const:
-            var_name = ".".join(str(ident) for ident in self.field_access.identifiers)
-            msg = f"Cannot increment const variable '{var_name}'"
-            raise CompileError(msg)
+        isglobal, variable_type, stack_index = self.field_access.get_scoped(block, root)
         ncs.add(NCSInstructionType.INCISP, args=[-4])
 
         if isglobal:
@@ -4173,11 +3724,7 @@ class PostfixIncrementExpression(Expression):
             msg = f"Increment operator (++) requires integer variable, got {variable_type.builtin.name.lower()}\n  Variable: {var_name}"
             raise CompileError(msg)
 
-        isglobal, variable_type, stack_index, is_const = self.field_access.get_scoped(block, root)
-        if is_const:
-            var_name = ".".join(str(ident) for ident in self.field_access.identifiers)
-            msg = f"Cannot increment const variable '{var_name}'"
-            raise CompileError(msg)
+        isglobal, variable_type, stack_index = self.field_access.get_scoped(block, root)
         if isglobal:
             ncs.add(NCSInstructionType.INCIBP, args=[stack_index])
         else:
@@ -4198,11 +3745,7 @@ class PrefixDecrementExpression(Expression):
             msg = f"Decrement operator (--) requires integer variable, got {variable_type.builtin.name.lower()}\n  Variable: {var_name}"
             raise CompileError(msg)
 
-        isglobal, variable_type, stack_index, is_const = self.field_access.get_scoped(block, root)
-        if is_const:
-            var_name = ".".join(str(ident) for ident in self.field_access.identifiers)
-            msg = f"Cannot decrement const variable '{var_name}'"
-            raise CompileError(msg)
+        isglobal, variable_type, stack_index = self.field_access.get_scoped(block, root)
         ncs.add(NCSInstructionType.DECISP, args=[-4])
 
         if isglobal:
@@ -4231,11 +3774,7 @@ class PostfixDecrementExpression(Expression):
             msg = f"Decrement operator (--) requires integer variable, got {variable_type.builtin.name.lower()}\n  Variable: {var_name}"
             raise CompileError(msg)
 
-        isglobal, variable_type, stack_index, is_const = self.field_access.get_scoped(block, root)
-        if is_const:
-            var_name = ".".join(str(ident) for ident in self.field_access.identifiers)
-            msg = f"Cannot decrement const variable '{var_name}'"
-            raise CompileError(msg)
+        isglobal, variable_type, stack_index = self.field_access.get_scoped(block, root)
         if isglobal:
             ncs.add(NCSInstructionType.DECIBP, args=[stack_index])
         else:
@@ -4244,62 +3783,50 @@ class PostfixDecrementExpression(Expression):
         return variable_type
 
 
-# region Switch
 class SwitchStatement(Statement):
-    def __init__(self, expression: Expression, blocks: list[SwitchBlock]):
+    def __init__(self, expression: Expression, body: CodeBlock):
         super().__init__()
-        self.expression: Expression = expression
-        self.blocks: list[SwitchBlock] = blocks
-
-        self.real_block: CodeBlock = CodeBlock()
+        self.expression = expression
+        self.body = body
 
     def _validate_labels(
         self,
         root: CodeRoot,
         source_origin: SourceOrigin | None,
-    ) -> tuple[list[tuple[SwitchBlock, int]], SwitchBlock | None]:
-        """Resolve BioWare switch labels before emitting any switch bytecode.
-
-        NWScript switch labels are compile-time integer constants.  Resolving
-        them up front also lets us reject duplicate case values and duplicate
-        default labels deterministically, including duplicates that only become
-        equal after constant folding.
-        """
-        cases: list[tuple[SwitchBlock, int]] = []
+    ) -> tuple[list[tuple[ExpressionSwitchLabel, int]], DefaultSwitchLabel | None]:
+        """Resolve integer case values and check label uniqueness."""
+        cases: list[tuple[ExpressionSwitchLabel, int]] = []
         case_values: set[int] = set()
-        default_block: SwitchBlock | None = None
+        default_label: DefaultSwitchLabel | None = None
 
-        for switchblock in self.blocks:
-            for label in switchblock.labels:
-                if isinstance(label, DefaultSwitchLabel):
-                    if default_block is not None:
-                        raise ValueError(
-                            "Internal compiler error: duplicate default label reached emission"
-                        )
-                    default_block = switchblock
-                    continue
-
-                if not isinstance(label, ExpressionSwitchLabel):
+        for label in iter_switch_labels(self.body):
+            if isinstance(label, DefaultSwitchLabel):
+                if default_label is not None:
                     raise ValueError(
-                        "Internal compiler error: unsupported switch label reached emission: "
-                        f"{type(label).__name__}"
+                        "Internal compiler error: duplicate default label reached emission"
                     )
+                default_label = label
+                continue
 
-                constant = label.expression.constant_value(root, source_origin)
-                if constant is None or constant.datatype != DataType.INT:
-                    raise ValueError(
-                        "Internal compiler error: non-constant/non-int switch label reached emission"
-                    )
+            constant = resolve_kotor_constant_expression(
+                label.expression,
+                root,
+                allow_numeric_negation=True,
+            )
+            if constant is None or constant.datatype != DataType.INT:
+                raise ValueError(
+                    "Internal compiler error: non-constant/non-int switch label reached emission"
+                )
 
-                value = _int32(int(constant.value))
-                if value in case_values:
-                    raise ValueError(
-                        f"Internal compiler error: duplicate switch case value {value} reached emission"
-                    )
-                case_values.add(value)
-                cases.append((switchblock, value))
+            value = _int32(int(constant.value))
+            if value in case_values:
+                raise ValueError(
+                    f"Internal compiler error: duplicate switch case value {value} reached emission"
+                )
+            case_values.add(value)
+            cases.append((label, value))
 
-        return cases, default_block
+        return cases, default_label
 
     def compile(
         self,
@@ -4310,16 +3837,10 @@ class SwitchStatement(Statement):
         break_instruction: NCSInstruction | None,
         continue_instruction: NCSInstruction | None,
     ):
-        # Validate labels before emitting the switch expression or body.
-        cases, default_block = self._validate_labels(
+        cases, default_label = self._validate_labels(
             root,
             block.context.semantic.source_origin,
         )
-
-        parent_block = block
-        self.real_block._parent = parent_block  # noqa: SLF001
-        self.real_block._context = parent_block.context  # noqa: SLF001
-        block = self.real_block
 
         expression_type = self.expression.compile(ncs, root, block)
         if expression_type != DynamicDataType.INT:
@@ -4335,85 +3856,122 @@ class SwitchStatement(Statement):
             switch_stack_depth,
         )
 
-        # Compile the body once. Blocks remain sequential so normal fall-through
-        # semantics are preserved. A labeled block must be reachable with exactly
-        # the switch-entry stack layout; otherwise a case jump would skip locals.
+        # Emit the body once; dispatch targets its case/default labels.
         tempncs = NCS()
-        switchblock_to_instruction: dict[SwitchBlock, NCSInstruction] = {}
         block.context.control.push(target)
         try:
-            for switchblock in self.blocks:
-                if switchblock.labels and block.stack_depth(root) != switch_stack_depth:
-                    raise ValueError(
-                        "Internal compiler error: switch label stack depth changed after "
-                        "semantic validation"
-                    )
-                switchblock_start = tempncs.add(NCSInstructionType.NOP, args=[])
-                switchblock_to_instruction[switchblock] = switchblock_start
-                for statement in switchblock.block:
-                    statement.compile(
-                        tempncs,
-                        root,
-                        block,
-                        return_instruction,
-                        end_of_switch,
-                        continue_instruction,
-                    )
+            self.body.compile(
+                tempncs,
+                root,
+                block,
+                return_instruction,
+                end_of_switch,
+                continue_instruction,
+            )
         finally:
             block.context.control.pop(target)
 
-        # Normal body fall-through owns any switch-scope locals it allocated. A
-        # break/no-match jump targets end_of_switch directly and therefore skips
-        # this cleanup because those paths never have those locals (or already
-        # unwound them explicitly).
-        switch_scope_size = block.scope_size(root)
-        if switch_scope_size:
-            tempncs.add(NCSInstructionType.MOVSP, args=[-switch_scope_size])
-
-        # Test every case first.  Case expressions are compile-time constants,
-        # so no case-label expression is evaluated at runtime.
-        for switchblock, case_value in cases:
+        for label, case_value in cases:
             ncs.add(NCSInstructionType.CPTOPSP, args=[-4, 4])
             ncs.add(NCSInstructionType.CONSTI, args=[case_value])
             ncs.add(NCSInstructionType.EQUALII, args=[])
-            ncs.add(NCSInstructionType.JNZ, jump=switchblock_to_instruction[switchblock])
+            ncs.add(NCSInstructionType.JNZ, jump=label.target)
 
-        # BioWare semantics: default is selected only after every case fails,
-        # irrespective of where the default label appears textually.
-        if default_block is not None:
-            ncs.add(NCSInstructionType.JMP, jump=switchblock_to_instruction[default_block])
+        # Check every case before selecting default.
+        if default_label is not None:
+            ncs.add(NCSInstructionType.JMP, jump=default_label.target)
         else:
             ncs.add(NCSInstructionType.JMP, jump=end_of_switch)
 
         ncs.merge(tempncs)
         ncs.instructions.append(end_of_switch)
 
-        # All switch exits converge with only the discriminant still transient.
+        # Only the discriminant remains at this exit.
         ncs.add(NCSInstructionType.MOVSP, args=[-expression_type.size(root)])
         block.context.stack.consume(expression_type.size(root))
 
 
-class SwitchBlock:
-    def __init__(self, labels: list[SwitchLabel], block: list[Statement]):
-        self.labels: list[SwitchLabel] = labels
-        self.block: list[Statement] = block
+class SwitchLabel(Statement):
+    """Statement-level switch label with a stable dispatcher jump target."""
 
+    def __init__(self):
+        super().__init__()
+        self.target = NCSInstruction(NCSInstructionType.NOP, args=[])
 
-class SwitchLabel(ABC):
-    """Marker base class for parsed switch labels."""
+    def compile(
+        self,
+        ncs: NCS,
+        root: CodeRoot,
+        block: CodeBlock,
+        return_instruction: NCSInstruction,
+        break_instruction: NCSInstruction | None,
+        continue_instruction: NCSInstruction | None,
+    ) -> None:
+        ncs.instructions.append(self.target)
 
 
 class ExpressionSwitchLabel(SwitchLabel):
     def __init__(self, expression: Expression):
-        self.expression: Expression = expression
+        super().__init__()
+        self.expression = expression
 
 
 class DefaultSwitchLabel(SwitchLabel):
     pass
 
 
+def iter_switch_labels(block: CodeBlock) -> Iterator[SwitchLabel]:
+    """Yield labels in this switch, excluding nested switches."""
+    pending: list[Statement | CodeBlock] = list(reversed(block.statements))
+    while pending:
+        statement = pending.pop()
+        if isinstance(statement, SwitchLabel):
+            yield statement
+            continue
+        if isinstance(statement, SwitchStatement):
+            # Nested switches own their labels.
+            continue
+        if isinstance(statement, CodeBlock):
+            pending.extend(reversed(statement.statements))
+            continue
+        if isinstance(statement, ScopedBlock):
+            pending.extend(reversed(statement.block.statements))
+            continue
+        if isinstance(statement, ConditionalBlock):
+            child_blocks = [branch.block for branch in statement.if_blocks]
+            if statement.else_block is not None:
+                child_blocks.append(statement.else_block)
+            for child in reversed(child_blocks):
+                pending.extend(reversed(child.statements))
+            continue
+        if isinstance(statement, (WhileLoopBlock, DoWhileLoopBlock, ForLoopBlock)):
+            pending.extend(reversed(statement.block.statements))
+
+
+def statement_contains_switch_label(statement: Statement | CodeBlock) -> bool:
+    """Return whether an outer switch may dispatch into this statement subtree."""
+    if isinstance(statement, SwitchLabel):
+        return True
+    if isinstance(statement, SwitchStatement):
+        return False
+    if isinstance(statement, CodeBlock):
+        return any(statement_contains_switch_label(child) for child in statement.statements)
+    if isinstance(statement, ScopedBlock):
+        return statement_contains_switch_label(statement.block)
+    if isinstance(statement, ConditionalBlock):
+        if any(statement_contains_switch_label(branch.block) for branch in statement.if_blocks):
+            return True
+        return (
+            statement.else_block is not None
+            and statement_contains_switch_label(statement.else_block)
+        )
+    if isinstance(statement, (WhileLoopBlock, DoWhileLoopBlock, ForLoopBlock)):
+        return statement_contains_switch_label(statement.block)
+    return False
+
+
 def _statement_returns_on_all_paths(statement: Statement | CodeBlock) -> bool:
-    """Return whether BioWare's conservative analysis proves this statement returns."""
+    """Check whether every statically known path returns."""
     if isinstance(statement, CodeBlock):
         return statement.returns_on_all_paths()
     if isinstance(statement, ReturnStatement):
@@ -4428,9 +3986,6 @@ def _statement_returns_on_all_paths(statement: Statement | CodeBlock) -> bool:
             for condition_and_block in statement.if_blocks
         ) and statement.else_block.returns_on_all_paths()
     return False
-
-
-# endregion
 
 
 class DynamicDataType:

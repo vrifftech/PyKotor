@@ -9,33 +9,17 @@ if TYPE_CHECKING:
 
 
 class RemoveNopOptimizer(NCSOptimizer):
-    """NCS Compiler uses NOP instructions as stubs to simplify the compilation process however as their name suggests
-    they do not perform any actual function. This optimizer removes all occurrences of NOP instructions from the
-    compiled script.
-    """  # noqa: D205
+    """Remove symbolic NOP labels and redirect their incoming jumps."""  # noqa: D205
 
     def optimize(self, ncs: NCS):
-        """Optimizes a neural circuit specification by removing NOP instructions.
-
-        Args:
-        ----
-            ncs: NCS - The neural circuit specification to optimize
-
-        Processing Logic:
-        ----------------
-            - Finds all NOP instructions in the NCS
-            - For each NOP, finds all links jumping to it and updates them to jump to the next instruction instead
-            - Removes all NOP instructions from the NCS instruction list.
-        """
+        """Remove NOP instructions while preserving jump targets."""
         nops: list[NCSInstruction] = [inst for inst in ncs.instructions if inst.ins_type == NCSInstructionType.NOP]
 
-        # Process instructions which jump to a NOP and set them to jump to the proceeding instruction instead
         for nop in nops:
             nop_index: int = ncs.instructions.index(nop)
             for link in ncs.links_to(nop):
                 link.jump = ncs.instructions[nop_index + 1]
 
-        # It is now safe to remove all NOP instructions
         ncs.instructions = [inst for inst in ncs.instructions if inst.ins_type != NCSInstructionType.NOP]
 
 
@@ -44,27 +28,14 @@ class RemoveMoveSPEqualsZeroOptimizer(NCSOptimizer):
         super().__init__()
 
     def optimize(self, ncs: NCS):
-        """Optimizes an NCS script by removing unnecessary MOVSP=0 instructions.
-
-        Args:
-        ----
-            ncs (NCS): The NCS script to optimize
-
-        Processing Logic:
-        ----------------
-            - Finds all MOVSP=0 instructions
-            - Changes any jumps to those instructions to jump to the next instruction instead
-            - Removes all MOVSP=0 instructions from the program.
-        """
+        """Remove zero-sized stack moves while preserving jump targets."""
         movsp0: list[NCSInstruction] = [inst for inst in ncs.instructions if inst.ins_type == NCSInstructionType.MOVSP and inst.args[0] == 0]
 
-        # Process instructions which jump to a MOVSP=0 and set them to jump to the proceeding instruction instead
         for op in movsp0:
             nop_index: int = ncs.instructions.index(op)
             for link in ncs.links_to(op):
                 link.jump = ncs.instructions[nop_index + 1]
 
-        # It is now safe to remove all MOVSP=0 instructions
         for inst in ncs.instructions.copy():
             if inst.ins_type == NCSInstructionType.MOVSP and inst.args[0] == 0:
                 ncs.instructions.remove(inst)
@@ -82,13 +53,7 @@ class RemoveJMPToAdjacentOptimizer(NCSOptimizer):
 
 
 class RemoveUnusedBlocksOptimizer(NCSOptimizer):
-    """Remove instructions that cannot be reached from the script loader.
-
-    For compiled NSS this is equivalent to BioWare's safe dead-function
-    elimination: user functions are emitted before final reachability is known,
-    then functions that cannot be reached from the loader/call graph disappear.
-    The graph walk also removes any other truly unreachable instruction ranges.
-    """
+    """Remove instructions unreachable from entry, calls, and deferred continuations."""
 
     def optimize(self, ncs: NCS):
         instructions = ncs.instructions
@@ -117,12 +82,14 @@ class RemoveUnusedBlocksOptimizer(NCSOptimizer):
                 add_jump_target()
                 checking.append(index + 1)
             elif instruction.ins_type == NCSInstructionType.JSR:
-                # A subroutine call reaches both the callee and the instruction
-                # following the call once the callee returns.
                 add_jump_target()
                 checking.append(index + 1)
             elif instruction.ins_type == NCSInstructionType.JMP:
                 add_jump_target()
+            elif instruction.ins_type == NCSInstructionType.STORE_STATE:
+                # The deferred entry follows the jump that skips its body.
+                checking.append(index + 1)
+                checking.append(index + 2)
             elif instruction.ins_type == NCSInstructionType.RETN:
                 continue
             else:

@@ -15,7 +15,8 @@ from pykotor.resource.formats.ncs import (
 )
 from pykotor.resource.formats.ncs.compiler.classes import EntryPointError
 from pykotor.resource.formats.ncs.compilers import ExternalNCSCompiler
-from pykotor.tools.encoding import decode_bytes_with_fallbacks
+from pykotor.resource.formats.ncs.compiler.source import decode_nss_source
+from pykotor.resource.formats.ncs.string_encoding import encode_ncs_string
 from pykotor.tools.path import CaseAwarePath
 from pykotor.tslpatcher.mods.template import PatcherModifications
 from utility.error_handling import universal_simplify_exception
@@ -56,45 +57,23 @@ class ModificationsNSS(PatcherModifications):
         logger: PatchLogger,
         game: Game,
     ) -> bytes | Literal[True]:
-        """Takes the source nss bytes and replaces instances of 2DAMEMORY# and StrRef# with the values in patcher memory. Compiles the
-        source bytes and returns the ncs compiled script as a bytes object.
-
-        Args:
-        ----
-            nss_source: SOURCE_TYPES: NSS source object to apply modifications to
-            memory: (PatcherMemory): current memory of 2damemory and strref
-            logger (PatchLogger): Logging object
-            game (Game): KOTOR Game enum value
-
-        Returns:
-        -------
-            bytes: Compiled NCS bytes
-
-        Processing Logic:
-        ----------------
-            1. Loads NSS source bytes and decodes
-            2. Replaces 2DAMEMORY# and StrRef# tokens with values from patcher memory
-            3. Attempts to compile with external NWN compiler if on Windows
-            4. Falls back to built-in compiler if external isn't available, fails, or not on Windows
-        """
+        """Replace memory tokens in NSS source and return compiled NCS bytes."""
         with BinaryReader.from_auto(nss_source) as reader:
             nss_bytes: bytes = reader.read_all()
         if nss_bytes is None:
             logger.add_error("Invalid nss source provided to ModificationsNSS.apply()")
             return True
 
-        # Replace memory tokens in the script, and save to the file.
-        source_text = decode_bytes_with_fallbacks(nss_bytes)
+        source_text = decode_nss_source(nss_bytes, source_name=self.sourcefile)
         source = MutableString(source_text)
         self.apply(source, memory, logger, game)
         if self.temp_script_folder is None:
             raise RuntimeError("CompileList working directory was not prepared before compilation.")
         temp_script_file = self.temp_script_folder / PureWindowsPath(self.sourcefile).name.lower()
 
-        processed_bytes = nss_bytes if source.value == source_text else source.value.encode("windows-1252")
+        processed_bytes = nss_bytes if source.value == source_text else encode_ncs_string(source.value)
         BinaryWriter.dump(temp_script_file, processed_bytes)
 
-        # Compile with external on windows, fall back to built-in if mac/linux or if external fails.
         is_windows = os.name == "nt"
         nwnnsscomp_exists = self.nwnnsscomp_path is not None and self.nwnnsscomp_path.safe_isfile()
         if is_windows and self.nwnnsscomp_path and nwnnsscomp_exists:
@@ -114,7 +93,7 @@ class ModificationsNSS(PatcherModifications):
             except EntryPointError as exc:
                 logger.add_note(str(exc))
                 return True
-            except Exception as e:  # pylint: disable=W0718  # noqa: BLE001
+            except Exception as e:
                 logger.add_error(str(universal_simplify_exception(e)))
 
         if is_windows:
@@ -125,13 +104,13 @@ class ModificationsNSS(PatcherModifications):
         else:
             logger.add_note(f"Patching from a unix operating system, compiling '{self.sourcefile}' using the built-in compilers...")
 
-        # Compile using built-in script compiler if external compiler fails.
         try:
             ncs: NCS = compile_with_builtin(
                 source.value,
                 game,
-                [],  # [RemoveNopOptimizer(), RemoveMoveSPEqualsZeroOptimizer(), RemoveUnusedBlocksOptimizer()],  # TODO: ncs optimizers need testing
+                [],
                 library_lookup=[CaseAwarePath.pathify(self.temp_script_folder)],
+                source_name=self.sourcefile,
             )
         except EntryPointError as e:
             logger.add_note(str(e))
@@ -145,21 +124,7 @@ class ModificationsNSS(PatcherModifications):
         logger: PatchLogger,
         game: Game,
     ):
-        """Applies memory patches to the source script.
-
-        Args:
-        ----
-            nss_source: A mutable string. This function can't return anything in order to stay compatible with the superclass so we modify it in place.
-            memory: PatcherMemory object containing StrRef and 2DAMEMORY tokens from earlier patches.
-            logger: PatchLogger object for logging.
-            game: Game enum representing the kotor game being patched. Not used here anymore, but is provided for backwards compatibility reasons.
-
-        Processing Logic:
-        ----------------
-            - Replaces defined #2DAMEMORY# tokens with their stored values
-            - Replaces defined #StrRef# tokens with their stored string references
-            - Leaves undefined tokens unchanged and logs a warning
-        """
+        """Replace StrRef and 2DAMEMORY tokens in the mutable source string."""
         def replace_tokens(token_name: str, memory_dict: dict[int, Any]) -> None:
             search_pattern = re.compile(rf"#{token_name}([0-9]+)#")
             highest_token = max(memory_dict, default=0) if token_name == "2DAMEMORY" else 0
@@ -200,7 +165,7 @@ class ModificationsNSS(PatcherModifications):
 
     @staticmethod
     def _split_compiler_flags(flags: str) -> list[str]:
-        """Split Windows compiler arguments without POSIX backslash escaping."""
+        """Split command-line flags without treating backslashes as POSIX escapes."""
         arguments: list[str] = []
         index = 0
         while index < len(flags):
@@ -252,10 +217,8 @@ class ModificationsNSS(PatcherModifications):
             )
             result: bool | bytes = "File is an include file, ignored" in stdout
             if not result:
-                # Return the compiled bytes
                 result = BinaryReader.load_file(tempcompiled_filepath)
 
-        # Parse the output.
         if stdout.strip():
             for line in stdout.split("\n"):
                 if line.strip():

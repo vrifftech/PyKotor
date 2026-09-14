@@ -7,7 +7,7 @@ KOTOR_LIBRARY = {
     Cheat Bot scripting.
 */
 //:: Created By: Preston Watamaniuk
-//:: Copyright (c) 2002 Bioware Corp.
+
 #include "k_inc_debug"
 //Takes a PLANET_ Constant
 void CH_SetPlanetaryGlobal(int nPlanetConstant);
@@ -15,7 +15,7 @@ void CH_SetPlanetaryGlobal(int nPlanetConstant);
 void CH_SetPartyMemberAvailable(int nNPC);
 //::///////////////////////////////////////////////
 //:: Set Planet Local
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     VARIABLE = K_CURRENT_PLANET
@@ -79,7 +79,7 @@ void CH_SetPlanetaryGlobal(int nPlanetConstant)
 }
 //::///////////////////////////////////////////////
 //:: Make NPC Available
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Sets an NPC as available
@@ -464,7 +464,7 @@ void SpawnWanderingKathHound(int nNumberOfHounds)
     "k_inc_debug": b"""//::///////////////////////////////////////////////
 //:: KOTOR Debug Include
 //:: k_inc_debug
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     This contains the functions for inserting
@@ -486,7 +486,7 @@ void Db_AssignPCDebugString(string sString);
 void Db_PostString(string sString = "",int x = 5,int y = 5,float fShow = 1.0);
 //::///////////////////////////////////////////////
 //:: Debug Print String
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Inserts a print string into the log file for
@@ -505,7 +505,7 @@ void Db_MyPrintString(string sString)
 }
 //::///////////////////////////////////////////////
 //:: Debug Speak String
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Makes the object running the script say a
@@ -521,7 +521,7 @@ void Db_MySpeakString(string sString)
 }
 //::///////////////////////////////////////////////
 //:: Assign PC Debug String
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Assigns the nearest PC a speakstring for debug
@@ -541,7 +541,7 @@ void Db_AssignPCDebugString(string sString)
 }
 //::///////////////////////////////////////////////
 //:: Db_PostString
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //Basically, a wrapper for AurPostString
@@ -561,7 +561,7 @@ void Db_PostString(string sString = "",int x = 5,int y = 5,float fShow = 1.0)
     "k_inc_drop": b"""//::///////////////////////////////////////////////
 //:: KOTOR Treasure drop Include
 //:: k_inc_drop
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 // Contains the functions for handling creatures dropping random treasure
 //Only human creatures not of the beast subrace willdrop treasure dependant
@@ -798,7 +798,7 @@ void DR_CreateFillerCredits()
      Ebon Hawk include file
 */
 //:: Created By: Preston Watamaniuk
-//:: Copyright (c) 2002 Bioware Corp.
+
 //This checks the Star Map plot to see if it is at state 30.
 int EBO_CheckStarMapPlot();
 //Bastila intiates conversation with the PC
@@ -829,7 +829,7 @@ int EBO_GetPlanetFrom2DA(int nPlanetIndex);
 void EBO_PlayRenderSequence();
 //::///////////////////////////////////////////////
 //:: Check Star Map
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     If the variable K_STAR_MAP is at 30 and
@@ -859,7 +859,7 @@ int EBO_CheckStarMapPlot()
 }
 //::///////////////////////////////////////////////
 //:: Bastila Start Vision Conversation
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     This function gets bastila to start the
@@ -928,7 +928,7 @@ void EBO_BastilaStartConversation()
 }
 //::///////////////////////////////////////////////
 //::Calo Nord / Bandon Variable Advancement
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     This plot involves the PC being tracked across the galaxy.
@@ -963,7 +963,7 @@ void EBO_PlayBountyHunterCutScene()
 //::///////////////////////////////////////////////
 //::Play Appropriate Travel Cutscenes
 //::Calo Nord / Bandon Variable Advancement
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     K_STAR_MAP variable
@@ -1059,7 +1059,7 @@ string EBO_PlayLanding(int nDestination)
 }
 //::///////////////////////////////////////////////
 //:: Does the PC need equipment
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Checks the PCs inventory and determines based
@@ -1137,7 +1137,7 @@ int EBO_GetIsEquipmentNeeded()
 }
 //::///////////////////////////////////////////////
 //:: NPC Item Creation
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Determines who the person being talked to is
@@ -1238,7 +1238,7 @@ void EBO_CreateEquipmentOnPC()
 }
 //::///////////////////////////////////////////////
 //:: Count Inventory Items
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Counts and totals up to four different items
@@ -1288,7 +1288,7 @@ int EBO_CheckInventoryNumbers(string sTag1, string sTag2 = "", string sTag3 = ""
 }
 //::///////////////////////////////////////////////
 //:: Get Planet Constant
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Uses K_CURRENT_PLANET to return the current
@@ -1355,7 +1355,7 @@ int EBO_GetCurrentPlanet()
 }
 //::///////////////////////////////////////////////
 //:: Get Planet Constant
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Uses K_FUTURE_PLANET to return the current
@@ -1534,7 +1534,7 @@ Plot Values
 }
 //::///////////////////////////////////////////////
 //:: Start Render/Stunt Sequence
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Starts the correct sequence based on the
@@ -1553,7 +1553,7 @@ void EBO_PlayRenderSequence()
 }
 //::///////////////////////////////////////////////
 //:: Should Bastila Start Vision Conversation
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     This function returns true if bastila should
@@ -1625,7 +1625,7 @@ int EBO_ShouldBastilaStartConversation()
 }
 //::///////////////////////////////////////////////
 //:: Bastila Start Conversation
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 //:://////////////////////////////////////////////
 //:: Created By: Preston Watamaniuk
@@ -1889,7 +1889,7 @@ object GetCutsceneObject(int nObjectNumber)
 """,
     "k_inc_endgame": b"""//::///////////////////////////////////////////////
 //:: Name k_inc_endgame
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
      This include houses all of the stunt/render
@@ -1987,7 +1987,7 @@ void ST_PlayEndCreditsDark()
     Force Powers Include for KOTOR
 */
 //:: Created By: Preston Watamaniuk
-//:: Copyright (c) 2002 Bioware Corp.
+
 float fLightningDuration = 1.0;
 //These variables are set in the script run area.
 int SWFP_PRIVATE_SAVE_TYPE;
@@ -2050,7 +2050,7 @@ int SP_CheckForcePushViability(object oTarget, int Whirlwind);
 void Sp_RemoveSpellEffectsGeneral(int nSpell_ID, object oTarget);
 //::///////////////////////////////////////////////
 //:: Apply Delayed Effect
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     This checks all of the delayed effect applications
@@ -2070,7 +2070,7 @@ void SP_MyApplyEffectToObject(int nDurationType, effect eEffect, object oTarget,
 }
 //::///////////////////////////////////////////////
 //:: Interative Damage
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Interates through given a time period and a
@@ -2101,7 +2101,7 @@ void SP_InterativeDamage(effect eDamage, int nSecondsRemaining, object oTarget)
 }
 //::///////////////////////////////////////////////
 //:: Blocking Checks
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Does the Spell Resistance and Immunity
@@ -2280,7 +2280,7 @@ int SP_CheckEnergyResistance(object oTarget)
 }
 //::///////////////////////////////////////////////
 //:: Runs the specified force power.
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Runs the script for the particular force power.
@@ -3881,7 +3881,7 @@ void  Sp_RunForcePowers()
 }
 //::///////////////////////////////////////////////
 //:: While Loop Effect Delivery
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Uses these values to deliver the effects in the
@@ -4009,7 +4009,7 @@ void Sp_ApplyEffects(int nBlocking, object oAnchor, float fSize, int nCounter, e
 }
 //::///////////////////////////////////////////////
 //:: Remove Buff Bonuses
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Goes through and removes all of the bonuses
@@ -4057,7 +4057,7 @@ void Sp_RemoveBuffSpell()
 }
 //::///////////////////////////////////////////////
 //:: Check for Appearance Type Turret
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Checks to see if the target is a Turret
@@ -4082,7 +4082,7 @@ int SP_CheckAppearanceTurret(object oTarget, int nFeedback = FALSE)
 }
 //::///////////////////////////////////////////////
 //:: Check Droid Appearance Type
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Checks to see if the target is a Mark 1, 2, 4
@@ -4106,7 +4106,7 @@ int SP_CheckAppearanceGeoDroid(object oTarget)
 }
 //::///////////////////////////////////////////////
 //:: Check Droid Appearance Type and and Shields
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Checks to see if the target is a Mark 1, 2, 4
@@ -4142,7 +4142,7 @@ int SP_CheckAppearanceGeoDroidShields(object oTarget, int nFeedback = FALSE)
 }
 //::///////////////////////////////////////////////
 //:: Force Push Viability
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Returns TRUE if the target can be force pushed
@@ -4201,7 +4201,7 @@ void SP_MyPostString(string sString, int n1 = 5, int n2 = 10, float fTime = 4.0)
     Post Clean Up as of March 3, 2003
 */
 //:: Created By: Preston Watamaniuk
-//:: Copyright (c) 2002 Bioware Corp.
+
 #include "k_inc_gensupport"
 #include "k_inc_walkways"
 #include "k_inc_drop"
@@ -4428,7 +4428,7 @@ void GN_DetermineCombatRound(object oIntruder = OBJECT_INVALID)
 }
 //::///////////////////////////////////////////////
 //:: Do Post Determine Combat Round Checks
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Performs a series of checks in case the combat
@@ -4485,7 +4485,7 @@ int GN_DoPostDCRChecks()
 }
 //::///////////////////////////////////////////////
 //:: GN_ActionDoPostDCRChecks
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     A form of the DCR checks that can be run as
@@ -4501,7 +4501,7 @@ void GN_ActionDoPostDCRChecks()
 }
 //:://////////////////////////////////////////////
 //:: Run Default AI
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Runs the default AI for an NPC. Returns FALSE
@@ -4610,7 +4610,7 @@ int GN_RunDefaultAIRoutine(object oIntruder)
 }
 //::///////////////////////////////////////////////
 //:: Jedi Aid AI
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     AI that concentrates on keeping the party healed,
@@ -4638,7 +4638,7 @@ int GN_RunAidAIRoutine(object oIntruder = OBJECT_INVALID)
 }
 //::///////////////////////////////////////////////
 //:: Grenade AI
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Trys to use a grenades on targets not surrounded
@@ -4675,7 +4675,7 @@ int GN_RunGrenadeAIRoutine(object oIntruder = OBJECT_INVALID)
 }
 //::///////////////////////////////////////////////
 //:: Jedi Support
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     This will make the Jedi use Force Powers before
@@ -4753,7 +4753,7 @@ int GN_RunJediSupportAIRoutine(object oIntruder = OBJECT_INVALID)
 }
 //::///////////////////////////////////////////////
 //:: Boss AI: Grenade
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Run Boss Grenade AI Routine
@@ -4790,7 +4790,7 @@ int GN_RunBossGrenadeAI()
 }
 //::///////////////////////////////////////////////
 //:: Boss AI: AOE Power
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Run Boss AOE Force Power Routine
@@ -4826,7 +4826,7 @@ int GN_RunBossAOEPowerRoutine()
 }
 //::///////////////////////////////////////////////
 //:: Boss AI: Targeting
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     This will make boss monsters use targeted
@@ -4905,7 +4905,7 @@ int GN_RunBossTargetedRoutine()
 }
 //::///////////////////////////////////////////////
 //:: Boss AI
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     This will make boss monsters buff themselves
@@ -4935,7 +4935,7 @@ int GN_RunBossAIRoutine(object oIntruder = OBJECT_INVALID)
 }
 //::///////////////////////////////////////////////
 //:: Malak AI
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     This AI is just for Darth Malak on the Star
@@ -5048,7 +5048,7 @@ int GN_RunMalakAIRoutine()
 }
 //::///////////////////////////////////////////////
 //:: Shield Activation
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Organic Shields are 99 to 107
@@ -5114,7 +5114,7 @@ int GN_ActivateForceField()
 }
 //::///////////////////////////////////////////////
 //:: Resistance Activation
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     20 Resist Force
@@ -5160,7 +5160,7 @@ int GN_ActivateResistances()
 //:://///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //:://///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //:: Respond to Shout                                           ========  =       =   =======   =       =  =========   ========
-//:: Copyright (c) 2001 Bioware Corp.                          =          =       =  =       =  =       =      =      =
+
 //:://////////////////////////////////////////////             =          =       =  =       =  =       =      =      =
 /*//                                                           =          =       =  =       =  =       =      =      =
     Catches the shouts and determines the best                 =========  =========  =       =  =       =      =      =========
@@ -5328,7 +5328,7 @@ void GN_RespondToShout(object oShouter, int nShoutIndex, object oIntruder = OBJE
 }
 //::///////////////////////////////////////////////
 //:: SetListeningPatterns
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Sets the correct listen checks on the NPC by
@@ -5410,7 +5410,7 @@ void GN_SetListeningPatterns()
 }
 //::///////////////////////////////////////////////
 //:: Check for Poison
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Checks if someone in the party is poisoned.
@@ -5458,7 +5458,7 @@ object GN_CheckIfPoisoned()
 }
 //::///////////////////////////////////////////////
 //:: Check for Injuries
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Returns member index +1 or false depending on
@@ -5519,7 +5519,7 @@ object GN_CheckIfInjured()
 }
 //:://///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //:: Generic Talent Routines
-//:: Copyright (c) 2001 Bioware Corp.
+
 //::////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //::////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //:: Created By: Preston Watamaniuk
@@ -5709,7 +5709,7 @@ int GN_TalentMasterRoutine(int nTalentConstant, object oTarget)
 }
 //::///////////////////////////////////////////////
 //:: Last Round Setup
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Sets the following struct up so that Last Rounds
@@ -5753,7 +5753,7 @@ void GN_SetLastRoundData()
 }
 //::///////////////////////////////////////////////
 //:: Combo Sub Routine
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     This function determines what move to do
@@ -5834,7 +5834,7 @@ talent GN_GetComboMove(int nBoss = FALSE)
 }
 //::///////////////////////////////////////////////
 //:: Check Droid Utility Usage
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Checks the target and the droid utility use
@@ -5895,7 +5895,7 @@ talent GN_CheckDroidUtilityUsage(object oTarget, talent tUse)
 }
 //::///////////////////////////////////////////////
 //:: Throw Lightsaber Check
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Checks the target and the force power to make
@@ -5937,7 +5937,7 @@ talent GN_CheckThrowLightSaberUsage(object oTarget, talent tUse)
 }
 //::///////////////////////////////////////////////
 //:: Check Droid Force Power Usage
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Checks the force power and makes sure it can
@@ -5990,7 +5990,7 @@ talent GN_CheckNonDroidForcePower(object oTarget, talent tUse)
 }
 //::///////////////////////////////////////////////
 //:: Play Ambient Animations
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Play the correct animations based on the
@@ -6129,7 +6129,7 @@ void GN_PlayAmbientAnimation()
 }
 //::///////////////////////////////////////////////
 //:: Commoner AI
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     If ever engaged in combat they will flee.
@@ -6185,7 +6185,7 @@ int GN_CommonAI()
 }
 //::///////////////////////////////////////////////
 //:: Should Commoner Flee
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Checks a number of conditions for a commoner
@@ -6222,7 +6222,7 @@ int GN_CheckShouldFlee()
 }
 //::///////////////////////////////////////////////
 //:: Reset Deactivated Droid
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Resets a Droid to his deactivated animation
@@ -6245,7 +6245,7 @@ void GN_ResetDroidDeactivationState(object oDroid = OBJECT_SELF)
 }
 //::///////////////////////////////////////////////
 //:: Determine Attack Target
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Checks the nearest seen target and oIntruder
@@ -6336,7 +6336,7 @@ object GN_DetermineAttackTarget(object oIntruder = OBJECT_INVALID)
 }
 //::///////////////////////////////////////////////
 //:: Return Talent Code
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     This function determines the state of the selected
@@ -6434,7 +6434,7 @@ void GN_SetDayNightPresence(int nPresenceSetting)
     use k_inc_generic
 */
 //:: Created By: Preston Watamaniuk
-//:: Copyright (c) 2002 Bioware Corp.
+
 //BOSS ATTACK TYPES
 int SW_BOSS_ATTACK_TYPE_GRENADE = 1;
 int SW_BOSS_ATTACK_TYPE_FORCE_POWER = 2;
@@ -6633,7 +6633,7 @@ void GN_PostShoutString(string sString = "",int x = 10,int y = 10,float fShow = 
 void GN_MyPrintShoutString(string sString);
 //::///////////////////////////////////////////////
 //:: Get Attackers
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Returns the number objects attacking the object;
@@ -6655,7 +6655,7 @@ int GN_GetAttackers(object oTarget)
 }
 //::///////////////////////////////////////////////
 //:: Am I a party member
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Returns member index +1 or false depending on
@@ -6683,7 +6683,7 @@ int GN_CheckNPCIsInParty(object oNPC)
 }
 //::///////////////////////////////////////////////
 //:: GetAttempted Spell or Attack Target State
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Returns true if the spell or attack target is
@@ -6705,7 +6705,7 @@ int GN_CheckAttemptedSpellAttackTarget()
 }
 //::///////////////////////////////////////////////
 //:: GetIsFighting
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Checks if the passed object has an Attempted
@@ -6738,7 +6738,7 @@ int GN_GetIsFighting(object oFighting)
 }
 //::///////////////////////////////////////////////
 //:: Compare Talents
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Checks the bits of Talent 1 against the bits
@@ -6759,7 +6759,7 @@ int GN_CompareTalents(int nTalent1, int nTalent2)
 }
 //::///////////////////////////////////////////////
 //:: Get Last Talent Code
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Determines the last talent that was used
@@ -6787,7 +6787,7 @@ int GN_GetPreviousTalentCode()
 }
 //::///////////////////////////////////////////////
 //:: Get Spell Talent Code
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Returns the talent code for a particular spell
@@ -6803,7 +6803,7 @@ int GN_GetSpellTalentCode(int nSpell)
 }
 //::///////////////////////////////////////////////
 //:: Get Feat Talent Code
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Returns the talent code for a particular feat
@@ -6819,7 +6819,7 @@ int GN_GetFeatTalentCode(int nFeat)
 }
 //::///////////////////////////////////////////////
 //:: Get Has Viable Talent
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Takes a talent code and searches for a viable
@@ -6840,7 +6840,7 @@ int GN_GetHasViableTalent(int nTalentCode)
 }
 //::///////////////////////////////////////////////
 //:: Get Exclusion Code
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Returns an exclusion code based on the Racial
@@ -6871,7 +6871,7 @@ int GN_GetExclusionCode(object oTarget)
 }
 //::///////////////////////////////////////////////
 //:: Get Jedi Combo
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Returns a proper Jedi Combo for Standard AI
@@ -6939,7 +6939,7 @@ int GN_GetStandardJediCombo(int nBoss = FALSE)
 }
 //::///////////////////////////////////////////////
 //:: Get Droid Combo
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Returns a proper Droid Combo for Standard AI
@@ -6990,7 +6990,7 @@ int GN_GetStandardDroidCombo(int nBoss = FALSE)
 }
 //::///////////////////////////////////////////////
 //:: Get NPC Combo
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Returns a proper NPC Combo for Standard AI
@@ -7037,7 +7037,7 @@ int GN_GetStandardNPCCombo(int nBoss = FALSE)
 }
 //::///////////////////////////////////////////////
 //:: Get Next Talent In Combo
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Looks at the combo id and returns an ability
@@ -7493,7 +7493,7 @@ talent GN_GetNextTalentInCombo(int nCombo)
 }
 //::///////////////////////////////////////////////
 //:: Force Power Get Functions
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Returns an ability based.
@@ -7740,7 +7740,7 @@ int GN_GetSeriesBreach()
 }
 //::///////////////////////////////////////////////
 //:: Force Power Series Checks
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Checks if a Jedi has 1 in a force power series
@@ -7886,7 +7886,7 @@ int GN_CheckSeriesDroidUtilities()
 }
 //::///////////////////////////////////////////////
 //:: Is Combo Valid
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Gets a combo constant and determines if the
@@ -8124,7 +8124,7 @@ int GN_GetHasDamagingForcePower()
 }
 //::///////////////////////////////////////////////
 //:: Get Weapon Type
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Return 1 if the object is a Melee Weapon and
@@ -8184,7 +8184,7 @@ int GN_GetWeaponType(object oTarget = OBJECT_SELF)
 //
 //::///////////////////////////////////////////////
 //:: Equip Appropriate Weapon
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Gets the NPC to eqyuip a melee = 1 or
@@ -8277,7 +8277,7 @@ int GN_EquipAppropriateWeapon()
 }
 //::///////////////////////////////////////////////
 //:: Check Friendly Fire on Target
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Takes a target object and a radius and
@@ -8306,7 +8306,7 @@ int GN_CheckFriendlyFireOnTarget(object oTarget, float fDistance = 4.0)
 }
 //::///////////////////////////////////////////////
 //:: Check For Enemies Around Target
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Takes a target object and a radius and
@@ -8334,7 +8334,7 @@ int GN_CheckEnemyGroupingOnTarget(object oTarget, float fDistance = 4.0)
 }
 //::///////////////////////////////////////////////
 //:: Find Grenade Target
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Searches the area and marks a group as a viable
@@ -8375,7 +8375,7 @@ object GN_FindGrenadeTarget()
 }
 //::///////////////////////////////////////////////
 //:: Find Grenade Target
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Searches the area and marks a group as a
@@ -8405,7 +8405,7 @@ object GN_FindAOETarget()
 }
 //::///////////////////////////////////////////////
 //:: Get Grenade Talent
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Returns a talent based on the target.
@@ -8595,7 +8595,7 @@ talent GN_GetGrenadeTalent(int nDroid = FALSE)
 }
 //::///////////////////////////////////////////////
 //:: Get Boss Combat Move
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Returns a talent for the boss to perform
@@ -8696,7 +8696,7 @@ talent GN_GetBossCombatMove(int nBossAttackType, int nDroid = FALSE)
 }
 //::///////////////////////////////////////////////
 //:: Get AOE Force Power
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Checks and returns a random force power that
@@ -8883,7 +8883,7 @@ talent GN_GetAOEForcePower(int nDroid = FALSE)
 }
 //::///////////////////////////////////////////////
 //:: Get Targeted Force Power
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Checks and returns a random force power that
@@ -9102,7 +9102,7 @@ talent GN_GetTargetedForcePower(int nDroid = FALSE)
 }
 //::///////////////////////////////////////////////
 //:: Get Active Party Member Count
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Returns the number of party members who
@@ -9134,7 +9134,7 @@ int GN_GetActivePartyMemberCount()
 }
 //::///////////////////////////////////////////////
 //:: Get Active Party Member
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Returns a party member who is active a not
@@ -9242,7 +9242,7 @@ object GN_GetActivePartyMember(int nDrainTarget = FALSE)
 }
 //::///////////////////////////////////////////////
 //:: Return Active Party Member
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     This function returns an active party member.
@@ -9329,7 +9329,7 @@ object GN_ReturnActivePartyMember(int nDebil = FALSE)
 }
 //:://///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //:: Generic Include Debug Commands
-//:: Copyright (c) 2001 Bioware Corp.
+
 //::////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //::////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //:: Created By: Preston Watamaniuk
@@ -9443,7 +9443,7 @@ string GN_FetchComboString(int nCombo)
 }
 //::///////////////////////////////////////////////
 //:: Return AI Style
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Returns the AI style in a string
@@ -9483,7 +9483,7 @@ string GN_ITS(int sFutureString)
     "k_inc_kas": b"""//::///////////////////////////////////////////////
 //:: Include
 //:: k_inc_kas
-//:: Copyright (c) 2002 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     This is the include file for Kashyyyk.
@@ -10795,7 +10795,7 @@ void SetChorrawlFightLocal(int bValue, object oTarget = OBJECT_SELF)
 }""",
     "k_inc_lev": b"""//::///////////////////////////////////////////////
 //:: k_inc_lev
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
   include file for leviathan
@@ -10818,7 +10818,7 @@ void LEV_AddTreasureToContainer(object oContainer,int iTable,int iAmount);
 void LEV_StripCharacter(object oTarget,object oDest);
 //::///////////////////////////////////////////////
 //:: LEV_MarkForCleanup
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //mark an object for cleanup by the TAR_CleanupDeadObjects function
@@ -10833,7 +10833,7 @@ void LEV_MarkForCleanup(object obj)
 }
 //::///////////////////////////////////////////////
 //:: LEV_CleanupDeadObjects
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //destroy all objects whose PLOT_10 flag has been set
@@ -10860,7 +10860,7 @@ void LEV_CleanupDeadObjects(object oArea)
 }
 //::///////////////////////////////////////////////
 //:: LEV_LeaveArea
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //mark object for cleanup and move to nearest exit
@@ -10965,7 +10965,7 @@ void LEV_StripCharacter(object oTarget,object oDest)
      Desc
 */
 //:: Created By:
-//:: Copyright (c) 2002 Bioware Corp.
+
 #include "k_inc_generic"
 #include "k_inc_utility"
 int SHIP_TAKEOFF_CUTSCENE = 1;
@@ -11765,7 +11765,7 @@ void SetIsSashaDead()
      for the game.
 */
 //:: Created By: Preston Watamaniuk
-//:: Copyright (c) 2002 Bioware Corp.
+
 //INDIVIDUAL STUNT MODULE CALLS ******************************************************************************************************
 //LEV_A: Pulled out of hyperspace by the Leviathan, load STUNT_16
 void ST_PlayLevCaptureStunt();
@@ -11951,7 +11951,7 @@ void ST_PlayLeviathanEscape01()
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //::///////////////////////////////////////////////
 //:: Play Post Turret Sequence
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
    This determines what to play after a Fighter
@@ -11999,7 +11999,7 @@ void ST_PlayPostTurret()
 }
 //::///////////////////////////////////////////////
 //:: Play STUNT_14 Cutscene
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     This determines what planet the PC is taking
@@ -12017,7 +12017,7 @@ void ST_PlayStunt14()
 }
 //::///////////////////////////////////////////////
 //:: Play Landing Sequence
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Plays the appropriate landing sequence for the
@@ -12045,7 +12045,7 @@ void ST_PlayGenericLanding()
 }
 //::///////////////////////////////////////////////
 //:: Play Planet to Planet
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     With no cutscene between planets the game can
@@ -12085,7 +12085,7 @@ void ST_PlayPlanetToPlanet()
 }
 //::///////////////////////////////////////////////
 //:: Play Vision Stunt and Landing
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     If the landing is broken by a STUNT_00 then
@@ -12110,7 +12110,7 @@ void ST_PlayVisionLanding()
 }
 //::///////////////////////////////////////////////
 //:: Play Post ebo_m40ad
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Allows the Ebon Hawk to continue to the
@@ -12167,7 +12167,7 @@ void ST_PlayPostEbo_m40ad()
 }
 //::///////////////////////////////////////////////
 //:: Get Take-Off Render
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Returns the appropriate take off render based
@@ -12236,7 +12236,7 @@ string ST_GetTakeOffRender()
 }
 //::///////////////////////////////////////////////
 //:: Get Landing Render
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Returns the appropriate landing render based
@@ -12301,7 +12301,7 @@ string ST_GetLandingRender()
 }
 //::///////////////////////////////////////////////
 //:: Has Vision Played
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Checks if the planet designated as
@@ -12346,7 +12346,7 @@ int ST_VisionPlayed()
 }
 //::///////////////////////////////////////////////
 //:: Fetch Starmap Render
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Fetches the correct Starmap Vision Render
@@ -12378,7 +12378,7 @@ string ST_GetStarmapVisionRender()
 }
 //::///////////////////////////////////////////////
 //:: Set Ebon Hawk Skybox
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     This gets the current planet that the character
@@ -12461,7 +12461,7 @@ void ST_MyPostString(string sString)
 }
 //::///////////////////////////////////////////////
 //:: Fetch Starmap Render
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Fetches the correct Starmap Vision Render
@@ -12499,7 +12499,7 @@ string ST_GetCurrentStarmapVisionRender()
      events in the game as constants.
 */
 //:: Created By: Preston Watamaniuk
-//:: Copyright (c) 2002 Bioware Corp.
+
 //DEFAULT AI EVENTS
 int KOTOR_DEFAULT_EVENT_ON_HEARTBEAT           = 1001;
 int KOTOR_DEFAULT_EVENT_ON_PERCEPTION          = 1002;
@@ -12536,7 +12536,7 @@ int KOTOR_MISC_DETERMINE_COMBAT_ROUND_ON_INDEX_ZERO  = 3003;
     "k_inc_tar": b"""//::///////////////////////////////////////////////
 //:: k_inc_tar
 //:: k_inc_tar
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
   include file for taris
@@ -12584,7 +12584,7 @@ void TAR_EnableSithArmor();
 void TAR_StripCharacter(object oTarget,object oDest);
 //::///////////////////////////////////////////////
 //:: TAR_TransformCreature
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //performs a standard creature transformation where the original creature
@@ -12610,7 +12610,7 @@ object TAR_TransformCreature(object oTarget = OBJECT_INVALID,string sTemplate = 
 }
 //::///////////////////////////////////////////////
 //:: TAR_WalkWaypoints
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //test routine for walking waypoints
@@ -12665,7 +12665,7 @@ void TAR_WalkWaypoints()
 }
 //::///////////////////////////////////////////////
 //:: TAR_MarkForCleanup
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //mark an object for cleanup by the TAR_CleanupDeadObjects function
@@ -12680,7 +12680,7 @@ void TAR_MarkForCleanup(object obj = OBJECT_SELF)
 }
 //::///////////////////////////////////////////////
 //:: TAR_CleanupDeadObjects
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //destroy all objects whose PLOT_10 flag has been set
@@ -12707,7 +12707,7 @@ void TAR_CleanupDeadObjects(object oArea)
 }
 //::///////////////////////////////////////////////
 //:: TAR_PlotMovePath
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //make object do an uninterruptible path move
@@ -12739,7 +12739,7 @@ void TAR_PlotMovePath(string sWayPointTag,int nFirst, int nLast, int nRun = FALS
 }
 //::///////////////////////////////////////////////
 //:: TAR_PlotMoveObject
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //make object do an uninterruptible move to an object
@@ -12756,7 +12756,7 @@ void TAR_PlotMoveObject(object oTarget,int nRun = FALSE)
 }
 //::///////////////////////////////////////////////
 //:: TAR_PlotMoveObject
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //make object do an uninterruptible move to a location
@@ -12773,7 +12773,7 @@ void TAR_PlotMoveLocation(location lTarget,int nRun = FALSE)
 }
 //::///////////////////////////////////////////////
 //:: TAR_PCHasApprenticeJournal
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //check for rukil's apprentice journal
@@ -12788,7 +12788,7 @@ int TAR_PCHasApprenticeJournal()
 }
 //::///////////////////////////////////////////////
 //:: TAR_GetNumberPromisedLandJournals
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //return number of promised land journals player has
@@ -12815,7 +12815,7 @@ int TAR_GetNumberPromisedLandJournals()
 }
 //::///////////////////////////////////////////////
 //:: TAR_ToggleSithArmor
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //toggle the state of sith armor
@@ -13074,7 +13074,7 @@ void TAR_StripCharacter(object oTarget,object oDest)
     "k_inc_tat": b"""//::///////////////////////////////////////////////
 //:: Include
 //:: k_inc_tat
-//:: Copyright (c) 2002 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     This is the include file for Tatooine.
@@ -15181,7 +15181,7 @@ void SetTuskenContainerLocal(int bValue, object oTarget = OBJECT_SELF)
      contains code for filling containers using treasure tables
 */
 //:: Created By:  Jason Booth
-//:: Copyright (c) 2002 Bioware Corp.
+
 //
 //  March 15, 2003  J.B.
 //      removed parts and spikes from tables
@@ -16001,7 +16001,7 @@ void SWTR_PopulateTreasure(object oContainer,int iTable,int iItems = 1,int bUniq
 """,
     "k_inc_unk": b"""//::///////////////////////////////////////////////
 //:: k_inc_unk
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
   include file for unknown world
@@ -16035,7 +16035,7 @@ void UNK_AddTreasureToContainer(object oContainer,int iTable,int iAmount);
 void UNK_RakDefence(string sObjectTag, float fDistance, int bIndiscriminant = TRUE);
 //::///////////////////////////////////////////////
 //:: UNK_MarkForCleanup
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //mark an object for cleanup by the TAR_CleanupDeadObjects function
@@ -16050,7 +16050,7 @@ void UNK_MarkForCleanup(object obj)
 }
 //::///////////////////////////////////////////////
 //:: UNK_CleanupDeadObjects
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //destroy all objects whose PLOT_10 flag has been set
@@ -16077,7 +16077,7 @@ void UNK_CleanupDeadObjects(object oArea)
 }
 //::///////////////////////////////////////////////
 //:: UNK_LeaveArea
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //mark object for cleanup and move to nearest exit
@@ -16097,7 +16097,7 @@ void UNK_LeaveArea(object obj = OBJECT_SELF, int bRun = FALSE)
 }
 //::///////////////////////////////////////////////
 //:: UNK_GetRedRakataHostile
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //test if red rakata are hostile
@@ -16112,7 +16112,7 @@ int UNK_GetRedRakataHostile()
 }
 //::///////////////////////////////////////////////
 //:: UNK_GetBlackRakataHostile
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //test if black rakata are hostile
@@ -16127,7 +16127,7 @@ int UNK_GetBlackRakataHostile()
 }
 //::///////////////////////////////////////////////
 //:: UNK_SetRedRakatanHostile
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //make red rakatans hostile
@@ -16155,7 +16155,7 @@ void UNK_SetRedRakataHostile()
 }
 //::///////////////////////////////////////////////
 //:: UNK_SetBlackRakatanHostile
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //make black rakatans hostile
@@ -16186,7 +16186,7 @@ void UNK_SetBlackRakataHostile()
 }
 //::///////////////////////////////////////////////
 //:: UNK_SetBlackRakataNeutral
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //make black rakatans neutral
@@ -16258,7 +16258,7 @@ void UNK_AddTreasureToContainer(object oContainer,int iTable,int iAmount)
 }
 //::///////////////////////////////////////////////
 //:: Rakatan Defence Grid
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Overloads a power conduit and does 10d6 damage
@@ -16310,7 +16310,7 @@ void UNK_RakDefence(string sObjectTag, float fDistance, int bIndiscriminant = TR
     - Added UT_MakeNeutral2(), UT_MakeHostile1(), UT_MakeFriendly1() and UT_MakeFriendly2()
 */
 //:: Created By: Jason Booth
-//:: Copyright (c) 2002 Bioware Corp.
+
 // Plot Flag Constants.
 int SW_PLOT_BOOLEAN_01 = 0;
 int SW_PLOT_BOOLEAN_02 = 1;
@@ -16604,7 +16604,7 @@ int AutoDC(int DC, int nSkill, object oTarget)
 }
 //::///////////////////////////////////////////////
 //:: IsCharismaHigh
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //  checks for high charisma
@@ -16626,7 +16626,7 @@ int IsCharismaHigh()
 }
 //::///////////////////////////////////////////////
 //:: IsCharismaLow
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //  checks for low charisma
@@ -16641,7 +16641,7 @@ int IsCharismaLow()
 }
 //::///////////////////////////////////////////////
 //:: IsCharismaNormal
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //  checks for normal charisma
@@ -16663,7 +16663,7 @@ int IsCharismaNormal()
 }
 //::///////////////////////////////////////////////
 //:: IsIntelligenceHigh
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //  checks for high intelligence
@@ -16685,7 +16685,7 @@ int IsIntelligenceHigh()
 }
 //::///////////////////////////////////////////////
 //:: IsIntelligenceLow
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //  checks for low intelligence
@@ -16700,7 +16700,7 @@ int IsIntelligenceLow()
 }
 //::///////////////////////////////////////////////
 //:: IsIntelligenceNormal
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //  checks for normal intelligence
@@ -16722,7 +16722,7 @@ int IsIntelligenceNormal()
 }
 //::///////////////////////////////////////////////
 //:: IsDarkHigh
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //  checks to see if pc is very dark side
@@ -16745,7 +16745,7 @@ int IsDarkHigh()
 }
 //::///////////////////////////////////////////////
 //:: IsDarkLow
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //  checks to see if pc is just a little dark side
@@ -16768,7 +16768,7 @@ int IsDarkLow()
 }
 //::///////////////////////////////////////////////
 //:: IsDark
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //  checks to see if pc is dark side
@@ -16790,7 +16790,7 @@ int IsDark()
 }
 //::///////////////////////////////////////////////
 //:: IsLightHigh
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //  checks to see if pc is very light side
@@ -16813,7 +16813,7 @@ int IsLightHigh()
 }
 //::///////////////////////////////////////////////
 //:: IsLightLow
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //  checks to see if pc is slightly light side
@@ -16836,7 +16836,7 @@ int IsLightLow()
 }
 //::///////////////////////////////////////////////
 //:: IsLight
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //  checks to see if pc is light side
@@ -16858,7 +16858,7 @@ int IsLight()
 }
 //::///////////////////////////////////////////////
 //:: IsNeutral
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //  checks to see if pc is neutral
@@ -16880,7 +16880,7 @@ int IsNeutral()
 }
 //::///////////////////////////////////////////////
 //:: PadString
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //  pads a string with the given pad character to the specified length
@@ -16899,7 +16899,7 @@ string PadString(string str = "",string pad = " ",int length = 0)
 }
 //::///////////////////////////////////////////////
 //:: TalkToPC
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //  causes the given object to initiate conversation with the player
@@ -16916,7 +16916,7 @@ void TalkToPC(object oSpeaker)
 }
 //::///////////////////////////////////////////////
 //:: Get Boolean Plot Flag
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Gets the boolean state of a plot bit field
@@ -16940,7 +16940,7 @@ int UT_GetPlotBooleanFlag(object oTarget, int nIndex)
 }
 //::///////////////////////////////////////////////
 //:: Set Boolean Plot Flag
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Sets the boolean state of a plot bit field
@@ -16981,7 +16981,7 @@ void UT_SetPlotBooleanFlag(object oTarget, int nIndex, int nState)
 }
 //::///////////////////////////////////////////////
 //:: Get Talked To Flag
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Returns the state of the Talk to Flag
@@ -17005,7 +17005,7 @@ int UT_GetTalkedToBooleanFlag(object oTarget)
 }
 //::///////////////////////////////////////////////
 //:: Set Talked To Flag
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Sets the talked to flag to the given state.
@@ -17026,7 +17026,7 @@ void UT_SetTalkedToBooleanFlag(object oTarget, int nState = TRUE)
 }
 //::///////////////////////////////////////////////
 //:: UT_GetNearestPCToObject
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //Get the nearest PC to the specified object
@@ -17041,7 +17041,7 @@ object UT_GetNearestPCToObject(object oTarget = OBJECT_SELF)
 }
 //::///////////////////////////////////////////////
 //:: UT_IsObjectPC
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //Determine if object is a PC
@@ -17065,7 +17065,7 @@ int UT_IsObjectPC(object oTarget = OBJECT_INVALID)
 }
 //::///////////////////////////////////////////////
 //:: Adjust Character Alignment
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Make alignment change based on a constant
@@ -17155,7 +17155,7 @@ void UT_AdjustCharacterAlignment(object oTarget, int nScale)
 }
 //::///////////////////////////////////////////////
 //:: UT_DarkHigh
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //does a heavy darkside adjustment on the target
@@ -17171,7 +17171,7 @@ void UT_DarkHigh(object oTarget)
 }
 //::///////////////////////////////////////////////
 //:: UT_DarkMed
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //does a medium darkside adjustment on the target
@@ -17187,7 +17187,7 @@ void UT_DarkMed(object oTarget)
 }
 //::///////////////////////////////////////////////
 //:: UT_DarkSml
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //does a small darkside adjustment on the target
@@ -17203,7 +17203,7 @@ void UT_DarkSml(object oTarget)
 }
 //::///////////////////////////////////////////////
 //:: UT_LightHigh
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //does a heavy lightside adjustment on the target
@@ -17219,7 +17219,7 @@ void UT_LightHigh(object oTarget)
 }
 //::///////////////////////////////////////////////
 //:: UT_LightMed
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //does a medium lightside adjustment on the target
@@ -17235,7 +17235,7 @@ void UT_LightMed(object oTarget)
 }
 //::///////////////////////////////////////////////
 //:: UT_LightSml
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //does a small lightside adjustment on the target
@@ -17251,7 +17251,7 @@ void UT_LightSml(object oTarget)
 }
 //::///////////////////////////////////////////////
 //:: Reset Plot Booleans
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Goes through all of the plot bit fields and sets
@@ -17274,7 +17274,7 @@ void UT_ResetPlotBooleanFlags(object oToChange, int nState)
 }
 //::///////////////////////////////////////////////
 //:: Check Manaan Medical State
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Returns true if the manaan facilities have
@@ -17290,7 +17290,7 @@ int UT_GetIsKoltoDestroyed()
 }
 //::///////////////////////////////////////////////
 //:: UT_PlotMovePath
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //make object do an uninterruptible path move
@@ -17322,7 +17322,7 @@ void UT_PlotMovePath(string sWayPointTag,int nFirst, int nLast, int nRun = FALSE
 }
 //::///////////////////////////////////////////////
 //:: UT_PlotMoveObject
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //make object do an uninterruptible move to an object
@@ -17339,7 +17339,7 @@ void UT_PlotMoveObject(object oTarget,int nRun = FALSE)
 }
 //::///////////////////////////////////////////////
 //:: UT_PlotMoveLocation
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //make object do an uninterruptible move to a location
@@ -17356,7 +17356,7 @@ void UT_PlotMoveLocation(location lTarget,int nRun = FALSE)
 }
 //::///////////////////////////////////////////////
 //:: UT_SkillCheck
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //perform a skill check using a given DC
@@ -17375,7 +17375,7 @@ int UT_SkillCheck(int iDC, int iSkill, object oTarget)
 }
 //::///////////////////////////////////////////////
 //:: UT_IsDarkSidePower
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //test whether force power is dark side
@@ -17438,7 +17438,7 @@ int UT_IsDarkSidePower(int iSpellID)
 }
 //::///////////////////////////////////////////////
 //:: UT_CreateObject
-//:: Copyright (c) 2002 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Create an object without needing a variable
@@ -17454,7 +17454,7 @@ void UT_CreateObject(int nObjectType, string sTemplate, location lLocal)
 }
 //::///////////////////////////////////////////////
 //:: UT_JumpPartyToObject
-//:: Copyright (c) 2002 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Move the entire party to the object specified.
@@ -17487,7 +17487,7 @@ void UT_JumpPartyToObject(object oTarget)
 }
 //::///////////////////////////////////////////////
 //:: UT_JumpPartyToLocation
-//:: Copyright (c) 2002 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Move the entire party to the location specified.
@@ -17520,7 +17520,7 @@ void UT_JumpPartyToLocation(location lTarget)
 }
 //::///////////////////////////////////////////////
 //:: Spawn Messenger
-//:: Copyright (c) 2002 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Determines which messenger to spawn in for a specific planet.
@@ -17671,7 +17671,7 @@ void UT_SpawnMessenger()
 }
 //::///////////////////////////////////////////////
 //:: Exit Area
-//:: Copyright (c) 2002 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     The NPC moves to an SW_EXIT waypoint and destroys
@@ -17703,7 +17703,7 @@ void UT_ExitArea(int nRun = FALSE)
 }
 //::///////////////////////////////////////////////
 //:: UT_GetNumItems
-//:: Copyright (c) 2002 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Counts the number of items with the given tag
@@ -17729,7 +17729,7 @@ int UT_GetNumItems(object oTarget, string sItemTag)
 }
 //::///////////////////////////////////////////////
 //:: Determines Item Cost
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Returns a value for how many parts or spikes
@@ -17780,7 +17780,7 @@ int UT_DeterminesItemCost(int nDC, int nSkill)
 }
 //::///////////////////////////////////////////////
 //:: Remove X number of Computer Spikes
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Remove a number of computer spikes
@@ -17808,7 +17808,7 @@ void UT_RemoveComputerSpikes(int nNumber)
 }
 //::///////////////////////////////////////////////
 //:: Remove X number of Repair Parts
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Remove a number of repair parts
@@ -17836,7 +17836,7 @@ void UT_RemoveRepairParts(int nNumber)
 }
 //::///////////////////////////////////////////////
 //:: Return item amount
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Depending on the skill chosen, returns the
@@ -17867,7 +17867,7 @@ int UT_ReturnSpikePartAmount(int nSkill)
 }
 //::///////////////////////////////////////////////
 //:: Make Neutral
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Searches the area and changes all object with
@@ -17891,7 +17891,7 @@ void UT_MakeNeutral(string sObjectTag)
 }
 //::///////////////////////////////////////////////
 //:: Make Insane
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Searches the area and changes all objects with
@@ -17915,7 +17915,7 @@ void UT_MakeInsane(string sObjectTag)
 }
 //::///////////////////////////////////////////////
 //:: Stun Droids
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Searches the area and changes all objects with
@@ -17939,7 +17939,7 @@ void UT_StunDroids(string sObjectTag)
 }
 //::///////////////////////////////////////////////
 //:: Start a Fight
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Gets the nearest enemy that is seen and start combat
@@ -17954,7 +17954,7 @@ void UT_StartCombat(object oObject)
 }
 //::///////////////////////////////////////////////
 //:: Gas a Rooom
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Releases gas into the room and kills all biologicals in the
@@ -17995,7 +17995,7 @@ void UT_GasRoom(string sWayTag, float fDistance, int bIndiscriminant = TRUE)
 }
 //::///////////////////////////////////////////////
 //:: Overload Conduit
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Overloads a power conduit and does 10d6 damage
@@ -18063,7 +18063,7 @@ void UT_ReturnToBase(string sTag = "wp_homebase")
 }
 //::///////////////////////////////////////////////
 //:: UT_NPC_InitConversation
-//:: Copyright (c) 2002 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     The specified NPC will start a conversation
@@ -18119,7 +18119,7 @@ void UT_NPC_InitConversation(string sNPCTag,string sDlg = "",object oEntered = O
 }
 //::///////////////////////////////////////////////
 //:: Set Starmap Journal
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Sets the Journal entry for the starmap
@@ -18163,7 +18163,7 @@ void UT_SetStarmapJournal()
 }
 //::///////////////////////////////////////////////
 //:: Spawn Creatures
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Creates number of creatures with a specific template at a specified waypoint tag.
@@ -18200,7 +18200,7 @@ void UT_RunCombatEncounter(string sTemplate, string sTag, int nTotal = 3, float 
 }
 //::///////////////////////////////////////////////
 //:: Set Talk To Flag by Tag
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Loops through all object with a certain tag
@@ -18223,7 +18223,7 @@ void UT_SetTalkToFlagByTag(string sTag)
 }
 //::///////////////////////////////////////////////
 //:: Lock / Plot Twin Doors
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Loops through all doors with a certain tag
@@ -18251,7 +18251,7 @@ void UT_LockDoorDuplicates(string sTag)
 }
 //::///////////////////////////////////////////////
 //:: Can Party Member Interject
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Check to see if the Party member specified is
@@ -18319,7 +18319,7 @@ int UT_CheckCanPartyMemberInterject(int nNPC_Constant, float fDistance)
 }
 //::///////////////////////////////////////////////
 //:: Reinitialize NPC Planet Constants
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     This resets the variables for each party member
@@ -18403,7 +18403,7 @@ void UT_TeleportWholeParty(object oWP0, object oWP1, object oWP2)
 }
 //::///////////////////////////////////////////////
 //:: Action Pause Converation
-//:: Copyright (c) 2003 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
      This will stop and start a conversation in 1
@@ -18423,7 +18423,7 @@ void UT_ActionPauseConversation(float fDelay)
 }
 //::///////////////////////////////////////////////
 //:: Spawn Available NPC
-//:: Copyright (c) 2003 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Allows the uses to delay command on the creation
@@ -18439,7 +18439,7 @@ void UT_SpawnAvailableNPC(int nNPC, location lWay)
 }
 //::///////////////////////////////////////////////
 //:: Set Starmap Variables
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Advances K_STAR_MAP, sets the journal and
@@ -18493,7 +18493,7 @@ void UT_StarMap1VariableSet()
 }
 //::///////////////////////////////////////////////
 //:: Play Starmap Animations
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Plays the animations necessary for the current
@@ -18521,7 +18521,7 @@ void UT_StarMap2PlayAnimation()
 }
 //::///////////////////////////////////////////////
 //:: Returns the Appropriate Starmap Anim Loop
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Returns the appropriate animation loop for the
@@ -18558,7 +18558,7 @@ int UT_StarMap3GetLoopAnim(int nStarMapVar)
 }
 //::///////////////////////////////////////////////
 //:: Generic Starmap Handler
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Runs the entire Starmap sequence as a black
@@ -18621,7 +18621,7 @@ void UT_StoreParty()
 }
 //::///////////////////////////////////////////////
 //:: Restore NPC
-//:: Copyright (c) 2003 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     This function restore party members. It will only
@@ -18668,7 +18668,7 @@ void UT_RestoreParty()
 }
 //::///////////////////////////////////////////////
 //:: Return NPC Integer
-//:: Copyright (c) 2003 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Returns the NPC code for the given object if
@@ -18725,7 +18725,7 @@ int UT_GetNPCCode(object oNPC)
 }
 //::///////////////////////////////////////////////
 //:: Restore Party Member to 1 Vitality
-//:: Copyright (c) 2003 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Restores all party mambers to 1 hp if
@@ -18752,7 +18752,7 @@ void UT_RestorePartyToOneHealth()
 }
 //::///////////////////////////////////////////////
 //:: Heal Party
-//:: Copyright (c) 2003 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Cycles throught the entire party and heals
@@ -18778,7 +18778,7 @@ void UT_HealParty()
 }
 //::///////////////////////////////////////////////
 //:: Heal Party Member
-//:: Copyright (c) 2003 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Heals a single target to full.
@@ -18794,7 +18794,7 @@ void UT_HealNPC(object oNPC)
 }
 //::///////////////////////////////////////////////
 //:: Alter Stack
-//:: Copyright (c) 2003 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Alters the stack of a given object by the
@@ -18838,7 +18838,7 @@ void UT_AlterItemStack(object oItem,int iNum = 1,int bDecrement = TRUE)
 }
 //::///////////////////////////////////////////////
 //:: Heal All Party NPCs
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Searches through the area and heals all of the
@@ -18883,7 +18883,7 @@ void UT_HealAllPartyNPCs()
 }
 //::///////////////////////////////////////////////
 //:: Clear Party Members
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Goes through the party and removes them.
@@ -18907,7 +18907,7 @@ void UT_ClearAllPartyMembers()
 }
 //::///////////////////////////////////////////////
 //:: DC check using an ability score only
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Does a DC check just using an ability score
@@ -18933,7 +18933,7 @@ int UT_AbilityCheck(int iDC, int iAbility, object oTarget)
 }
 //::///////////////////////////////////////////////
 //:: Make Neutral2
-//:: Copyright (c) 2003 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Searches the area and changes all objects with
@@ -18959,7 +18959,7 @@ void UT_MakeNeutral2(string sObjectTag)
 }
 //::///////////////////////////////////////////////
 //:: Make Hostile1
-//:: Copyright (c) 2003 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Searches the area and changes all objects with
@@ -18985,7 +18985,7 @@ void UT_MakeHostile1(string sObjectTag)
 }
 //::///////////////////////////////////////////////
 //:: Make Friendly1
-//:: Copyright (c) 2003 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Searches the area and changes all objects with
@@ -19011,7 +19011,7 @@ void UT_MakeFriendly1(string sObjectTag)
 }
 //::///////////////////////////////////////////////
 //:: Make Friendly2
-//:: Copyright (c) 2003 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Searches the area and changes all objects with
@@ -19037,7 +19037,7 @@ void UT_MakeFriendly2(string sObjectTag)
 }
 //::///////////////////////////////////////////////
 //:: UT_ActivateTortureCage
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     performs a standard torture cage effect
@@ -19063,7 +19063,7 @@ void UT_ActivateTortureCage(object oCage, object oTarget,float fDuration)
 }
 //::///////////////////////////////////////////////
 //:: Validate Jump
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     If the first three letters of the last module
@@ -19092,7 +19092,7 @@ int UT_ValidateJump(string sLastModule)
 }
 //::///////////////////////////////////////////////
 //:: Play On Click Reaction
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Makes the animal face the PC, do its victory
@@ -19121,7 +19121,7 @@ void UT_DoAmbientReaction(string sSound)
     use k_inc_generic
 */
 //:: Created By: Preston Watamaniuk
-//:: Copyright (c) 2002 Bioware Corp.
+
 int WALKWAYS_CURRENT_POSITION = 0;
 int WALKWAYS_END_POINT = 1;
 int WALKWAYS_SERIES_NUMBER = 2;
@@ -19163,7 +19163,7 @@ void WK_MyPrintString(string sString);
 int GN_CheckWalkWays(object oTarget);
 //::///////////////////////////////////////////////
 //:: Walk Way Points
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Makes OBJECT_SELF walk way points based on a
@@ -19339,7 +19339,7 @@ void GN_SetWalkWayPointsSeries(int nSeriesNumber)
 }
 //::///////////////////////////////////////////////
 //:: Set Spawn In Condition
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Sets the Generic Spawn In Conditions
@@ -19355,7 +19355,7 @@ void GN_SetSpawnInCondition(int nFlag, int nState = TRUE)
 }
 //::///////////////////////////////////////////////
 //:: Get Spawn In Condition
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Gets the Generic Spawn In Conditions
@@ -19375,7 +19375,7 @@ int GN_GetSpawnInCondition(int nFlag)
 }
 //::///////////////////////////////////////////////
 //:: Preston Watamaniuk
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Moves the passed in object to the last waypoint
@@ -19424,7 +19424,7 @@ void GN_MoveToLastWayPoint(object oToMove)
 }
 //::///////////////////////////////////////////////
 //:: Preston Watamaniuk
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Moves the passed in object to a random waypoint
@@ -19474,7 +19474,7 @@ void GN_MoveToRandomWayPoint(object oToMove)
 }
 //::///////////////////////////////////////////////
 //:: Preston Watamaniuk
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Moves the passed in object to a specified waypoint
@@ -19526,7 +19526,7 @@ void GN_MoveToSpecificWayPoint(object oToMove, int nArrayNumber)
 }
 //::///////////////////////////////////////////////
 //:: Get Waypooint Direction
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Determines the direction that a NPC should be
@@ -19562,7 +19562,7 @@ int GN_GetWayPointDirection(int nEndArray, int nCurrentPosition)
 }
 //::///////////////////////////////////////////////
 //:: Set Up Way Points
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Used to initialize the NPCs waypoints
@@ -19616,7 +19616,7 @@ void GN_SetUpWayPoints()
 }
 //::///////////////////////////////////////////////
 //:: Play Walk Ways Animations
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Plays an animation between way points
@@ -19680,7 +19680,7 @@ void GN_PlayWalkWaysAnimation()
 }
 //::///////////////////////////////////////////////
 //:: Are Walk Ways Available
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Are valid walkway points available for walking
@@ -19734,7 +19734,7 @@ void WK_MyPrintString(string sString)
      the chaining of creatures
 */
 //:: Created By: Preston Watamaniuk
-//:: Copyright (c) 2002 Bioware Corp.
+
 #include "k_inc_generic"
 //Function run by the trigger to catalog the control nodes followers
 void ZN_CatalogFollowers();
@@ -19748,7 +19748,7 @@ void ZN_MoveToController(object oController, object oFollower);
 int ZN_CheckFollowerReturnConditions(object oTarget);
 //::///////////////////////////////////////////////
 //:: Catalog Zone Followers
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
      Catalogs all creatures within
@@ -19785,7 +19785,7 @@ void ZN_CatalogFollowers()
 }
 //::///////////////////////////////////////////////
 //:: Check Object for Zoning
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Checks the object to see if they part of the
@@ -19809,7 +19809,7 @@ int ZN_CheckIsFollower(object oController, object oTarget)
 }
 //::///////////////////////////////////////////////
 //:: Check Return Conditions
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Checks to see if the conditions exist to
@@ -19840,7 +19840,7 @@ int ZN_CheckReturnConditions()
 }
 //::///////////////////////////////////////////////
 //:: Check Follower Return Conditions.
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Checks if the follower object needs to return
@@ -19862,7 +19862,7 @@ int ZN_CheckFollowerReturnConditions(object oTarget)
 }
 //::///////////////////////////////////////////////
 //:: Move to Controller
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Gets the follower object to move back to the
@@ -19987,7 +19987,7 @@ void main()
     Cheat Bot scripting.
 */
 //:: Created By: Preston Watamaniuk
-//:: Copyright (c) 2002 Bioware Corp.
+
 #include "k_inc_debug"
 //Takes a PLANET_ Constant
 void CH_SetPlanetaryGlobal(int nPlanetConstant);
@@ -19995,7 +19995,7 @@ void CH_SetPlanetaryGlobal(int nPlanetConstant);
 void CH_SetPartyMemberAvailable(int nNPC);
 //::///////////////////////////////////////////////
 //:: Set Planet Local
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     VARIABLE = K_CURRENT_PLANET
@@ -20061,7 +20061,7 @@ void CH_SetPlanetaryGlobal(int nPlanetConstant)
 }
 //::///////////////////////////////////////////////
 //:: Make NPC Available
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Sets an NPC as available
@@ -20115,7 +20115,7 @@ void CH_SetPartyMemberAvailable(int nNPC)
     "k_inc_debug": b"""//::///////////////////////////////////////////////
 //:: KOTOR Debug Include
 //:: k_inc_debug
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     This contains the functions for inserting
@@ -20137,7 +20137,7 @@ void Db_AssignPCDebugString(string sString);
 void Db_PostString(string sString = "",int x = 5,int y = 5,float fShow = 1.0);
 //::///////////////////////////////////////////////
 //:: Debug Print String
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Inserts a print string into the log file for
@@ -20156,7 +20156,7 @@ void Db_MyPrintString(string sString)
 }
 //::///////////////////////////////////////////////
 //:: Debug Speak String
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Makes the object running the script say a
@@ -20172,7 +20172,7 @@ void Db_MySpeakString(string sString)
 }
 //::///////////////////////////////////////////////
 //:: Assign PC Debug String
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Assigns the nearest PC a speakstring for debug
@@ -20192,7 +20192,7 @@ void Db_AssignPCDebugString(string sString)
 }
 //::///////////////////////////////////////////////
 //:: Db_PostString
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //Basically, a wrapper for AurPostString
@@ -20258,7 +20258,7 @@ void RemoveDisguises() {
     "k_inc_drop": b"""//::///////////////////////////////////////////////
 //:: KOTOR Treasure drop Include
 //:: k_inc_drop
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 // Contains the functions for handling creatures dropping random treasure
 //Only human creatures not of the beast subrace willdrop treasure dependant
@@ -20617,7 +20617,7 @@ location FAB_Behind( object oTarg, float fMult = 2.5 )
      routines for doing fake combat
 */
 //:: Created By: Jason Booth
-//:: Copyright (c) 2002 Bioware Corp.
+
 #include "k_inc_generic"
 void FAI_EnableFakeMode(object oTarget,int iFaction);
 void FAI_DisableFakeMode(object oTarget,int iFaction);
@@ -20696,7 +20696,7 @@ void FAI_PerformFakeTalent(object oAttacker,object oTarget,talent t,int bLethal 
     Force Powers Include for KOTOR
 */
 //:: Created By: Preston Watamaniuk
-//:: Copyright (c) 2002 Bioware Corp.
+
 float fLightningDuration = 1.0;
 //These variables are set in the script run area.
 int SWFP_PRIVATE_SAVE_TYPE;
@@ -20779,7 +20779,7 @@ float Sp_CalcDuration( float fBaseDuration );
 float Sp_CalcRange( float fBaseRange );
 //::///////////////////////////////////////////////
 //:: Apply Delayed Effect
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     This checks all of the delayed effect applications
@@ -20799,7 +20799,7 @@ void SP_MyApplyEffectToObject(int nDurationType, effect eEffect, object oTarget,
 }
 //::///////////////////////////////////////////////
 //:: Interative Damage
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Interates through given a time period and a
@@ -20830,7 +20830,7 @@ void SP_InterativeDamage(effect eDamage, int nSecondsRemaining, object oTarget)
 }
 //::///////////////////////////////////////////////
 //:: Blocking Checks
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Does the Spell Resistance and Immunity
@@ -21380,7 +21380,7 @@ int SP_CheckEnergyResistance(object oTarget)
 }
 //::///////////////////////////////////////////////
 //:: Runs the specified force power.
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Runs the script for the particular force power.
@@ -26049,7 +26049,7 @@ void  Sp_RunForcePowers()
 }
 //::///////////////////////////////////////////////
 //:: While Loop Effect Delivery
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Uses these values to deliver the effects in the
@@ -26177,7 +26177,7 @@ void Sp_ApplyEffects(int nBlocking, object oAnchor, float fSize, int nCounter, e
 }
 //::///////////////////////////////////////////////
 //:: Remove Buff Bonuses
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Goes through and removes all of the bonuses
@@ -26225,7 +26225,7 @@ void Sp_RemoveBuffSpell()
 }
 //::///////////////////////////////////////////////
 //:: Check for Appearance Type Turret
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Checks to see if the target is a Turret
@@ -26255,7 +26255,7 @@ int SP_CheckAppearanceTurret(object oTarget, int nFeedback = FALSE)
 }
 //::///////////////////////////////////////////////
 //:: Check Droid Appearance Type
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Checks to see if the target is a Mark 1, 2, 4
@@ -26279,7 +26279,7 @@ int SP_CheckAppearanceGeoDroid(object oTarget)
 }
 //::///////////////////////////////////////////////
 //:: Check Droid Appearance Type and and Shields
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Checks to see if the target is a Mark 1, 2, 4
@@ -26315,7 +26315,7 @@ int SP_CheckAppearanceGeoDroidShields(object oTarget, int nFeedback = FALSE)
 }
 //::///////////////////////////////////////////////
 //:: Force Push Viability
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Returns TRUE if the target can be force pushed
@@ -27120,7 +27120,7 @@ int Sp_BetterRelatedPowerExists( object oTarget, int nPowerID )
     Post Clean Up as of March 3, 2003
 */
 //:: Created By: Preston Watamaniuk
-//:: Copyright (c) 2002 Bioware Corp.
+
 #include "k_inc_gensupport"
 #include "k_inc_walkways"
 #include "k_inc_drop"
@@ -27582,7 +27582,7 @@ void GN_DetermineCombatRound(object oIntruder = OBJECT_INVALID)
 }
 //::///////////////////////////////////////////////
 //:: Do Post Determine Combat Round Checks
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Performs a series of checks in case the combat
@@ -27666,7 +27666,7 @@ int GN_DoPostDCRChecks()
 }
 //::///////////////////////////////////////////////
 //:: GN_ActionDoPostDCRChecks
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     A form of the DCR checks that can be run as
@@ -27682,7 +27682,7 @@ void GN_ActionDoPostDCRChecks()
 }
 //:://////////////////////////////////////////////
 //:: Run Default AI
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Runs the default AI for an NPC. Returns FALSE
@@ -27949,7 +27949,7 @@ int GN_RunDefaultAIRoutine(object oIntruder)
 }
 //::///////////////////////////////////////////////
 //:: Jedi Aid AI
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     AI that concentrates on keeping the party healed,
@@ -27977,7 +27977,7 @@ int GN_RunAidAIRoutine(object oIntruder = OBJECT_INVALID)
 }
 //::///////////////////////////////////////////////
 //:: Grenade AI
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Trys to use a grenades on targets not surrounded
@@ -28014,7 +28014,7 @@ int GN_RunGrenadeAIRoutine(object oIntruder = OBJECT_INVALID)
 }
 //::///////////////////////////////////////////////
 //:: Jedi Support
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     This will make the Jedi use Force Powers before
@@ -28121,7 +28121,7 @@ int GN_RunJediSupportAIRoutine(object oIntruder = OBJECT_INVALID)
 }
 //::///////////////////////////////////////////////
 //:: Boss AI: Grenade
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Run Boss Grenade AI Routine
@@ -28158,7 +28158,7 @@ int GN_RunBossGrenadeAI()
 }
 //::///////////////////////////////////////////////
 //:: Boss AI: AOE Power
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Run Boss AOE Force Power Routine
@@ -28194,7 +28194,7 @@ int GN_RunBossAOEPowerRoutine()
 }
 //::///////////////////////////////////////////////
 //:: Boss AI: Targeting
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     This will make boss monsters use targeted
@@ -28273,7 +28273,7 @@ int GN_RunBossTargetedRoutine()
 }
 //::///////////////////////////////////////////////
 //:: Boss AI
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     This will make boss monsters buff themselves
@@ -28303,7 +28303,7 @@ int GN_RunBossAIRoutine(object oIntruder = OBJECT_INVALID)
 }
 //::///////////////////////////////////////////////
 //:: Malak AI
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     This AI is just for Darth Malak on the Star
@@ -28432,7 +28432,7 @@ void GN_SetHealThreshold( int nPercentage )
 }
 //::///////////////////////////////////////////////
 //:: Healer AI Routine: Do Heal
-//:: Copyright (c) 2004 Obsidian Entertainment
+
 //:://////////////////////////////////////////////
 /*
     This subfunction is only intended to be called
@@ -28478,7 +28478,7 @@ void HealerAIDoHeal( object oPatient )
 }
 //::///////////////////////////////////////////////
 //:: Healer AI Routine
-//:: Copyright (c) 2004 Obsidian Entertainment
+
 //:://////////////////////////////////////////////
 /*
     Creatures using this AI do NOT FIGHT no matter
@@ -28615,7 +28615,7 @@ int GN_RunHealerAIRoutine( object oIntruder )
 }
 //::///////////////////////////////////////////////
 //:: Skirmish AI Routine
-//:: Copyright (c) 2004 Obsidian Entertainment
+
 //:://////////////////////////////////////////////
 /*
     This function handles the Skirmish AI.
@@ -28666,7 +28666,7 @@ int GN_RunSkirmishAIRoutine( object oIntruder )
 }
 //::///////////////////////////////////////////////
 //:: Turtle AI Routine
-//:: Copyright (c) 2004 Obsidian Entertainment
+
 //:://////////////////////////////////////////////
 /*
     This function handles the Turtle AI.
@@ -28791,7 +28791,7 @@ int GN_RunMonsterPowersAIRoutine(object oIntruder) {
 }
 //::///////////////////////////////////////////////
 //:: Shield Activation
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Organic Shields are 99 to 107
@@ -28874,7 +28874,7 @@ int GN_ActivateForceField()
 }
 //::///////////////////////////////////////////////
 //:: Resistance Activation
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     20 Resist Force
@@ -28920,7 +28920,7 @@ int GN_ActivateResistances()
 //:://///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //:://///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //:: Respond to Shout                                           ========  =       =   =======   =       =  =========   ========
-//:: Copyright (c) 2001 Bioware Corp.                          =          =       =  =       =  =       =      =      =
+
 //:://////////////////////////////////////////////             =          =       =  =       =  =       =      =      =
 /*//                                                           =          =       =  =       =  =       =      =      =
     Catches the shouts and determines the best                 =========  =========  =       =  =       =      =      =========
@@ -29094,7 +29094,7 @@ void GN_RespondToShout(object oShouter, int nShoutIndex, object oIntruder = OBJE
 }
 //::///////////////////////////////////////////////
 //:: SetListeningPatterns
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Sets the correct listen checks on the NPC by
@@ -29179,7 +29179,7 @@ void GN_SetListeningPatterns()
 }
 //::///////////////////////////////////////////////
 //:: Check for Poison
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Checks if someone in the party is poisoned.
@@ -29227,7 +29227,7 @@ object GN_CheckIfPoisoned()
 }
 //::///////////////////////////////////////////////
 //:: Check for Injuries
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Returns member index +1 or false depending on
@@ -29313,7 +29313,7 @@ int GN_CheckIfKnockedOut()
 }
 //:://///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //:: Generic Talent Routines
-//:: Copyright (c) 2001 Bioware Corp.
+
 //::////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //::////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //:: Created By: Preston Watamaniuk
@@ -29681,7 +29681,7 @@ int GN_TalentMasterRoutine(int nTalentConstant, object oTarget)
 }
 //::///////////////////////////////////////////////
 //:: Last Round Setup
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Sets the following struct up so that Last Rounds
@@ -29725,7 +29725,7 @@ void GN_SetLastRoundData()
 }
 //::///////////////////////////////////////////////
 //:: Combo Sub Routine
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     This function determines what move to do
@@ -29857,7 +29857,7 @@ talent GN_GetComboMove(int nBoss = FALSE)
 }
 //::///////////////////////////////////////////////
 //:: Check Droid Utility Usage
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Checks the target and the droid utility use
@@ -29923,7 +29923,7 @@ talent GN_CheckDroidUtilityUsage(object oTarget, talent tUse)
 }
 //::///////////////////////////////////////////////
 //:: Throw Lightsaber Check
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Checks the target and the force power to make
@@ -29965,7 +29965,7 @@ talent GN_CheckThrowLightSaberUsage(object oTarget, talent tUse)
 }
 //::///////////////////////////////////////////////
 //:: Check Droid Force Power Usage
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Checks the force power and makes sure it can
@@ -30022,7 +30022,7 @@ talent GN_CheckNonDroidForcePower(object oTarget, talent tUse)
 }
 //::///////////////////////////////////////////////
 //:: Play Ambient Animations
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Play the correct animations based on the
@@ -30161,7 +30161,7 @@ void GN_PlayAmbientAnimation()
 }
 //::///////////////////////////////////////////////
 //:: Commoner AI
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     If ever engaged in combat they will flee.
@@ -30219,7 +30219,7 @@ int GN_CommonAI()
 }
 //::///////////////////////////////////////////////
 //:: Should Commoner Flee
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Checks a number of conditions for a commoner
@@ -30256,7 +30256,7 @@ int GN_CheckShouldFlee()
 }
 //::///////////////////////////////////////////////
 //:: Reset Deactivated Droid
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Resets a Droid to his deactivated animation
@@ -30279,7 +30279,7 @@ void GN_ResetDroidDeactivationState(object oDroid = OBJECT_SELF)
 }
 //::///////////////////////////////////////////////
 //:: Determine Attack Target
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Checks the nearest seen target and oIntruder
@@ -30370,7 +30370,7 @@ object GN_DetermineAttackTarget(object oIntruder = OBJECT_INVALID)
 }
 //::///////////////////////////////////////////////
 //:: Return Talent Code
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     This function determines the state of the selected
@@ -30844,7 +30844,7 @@ int GN_RunDefaultPuppetAIRoutine(object oIntruder)
     use k_inc_generic
 */
 //:: Created By: Preston Watamaniuk
-//:: Copyright (c) 2002 Bioware Corp.
+
 //BOSS ATTACK TYPES
 int SW_BOSS_ATTACK_TYPE_GRENADE = 1;
 int SW_BOSS_ATTACK_TYPE_FORCE_POWER = 2;
@@ -31086,7 +31086,7 @@ void GN_PostShoutString(string sString = "",int x = 10,int y = 10,float fShow = 
 void GN_MyPrintShoutString(string sString);
 //::///////////////////////////////////////////////
 //:: Get Attackers
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Returns the number objects attacking the object;
@@ -31108,7 +31108,7 @@ int GN_GetAttackers(object oTarget)
 }
 //::///////////////////////////////////////////////
 //:: Am I a party member
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Returns member index +1 or false depending on
@@ -31136,7 +31136,7 @@ int GN_CheckNPCIsInParty(object oNPC)
 }
 //::///////////////////////////////////////////////
 //:: GetAttempted Spell or Attack Target State
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Returns true if the spell or attack target is
@@ -31158,7 +31158,7 @@ int GN_CheckAttemptedSpellAttackTarget()
 }
 //::///////////////////////////////////////////////
 //:: GetIsFighting
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Checks if the passed object has an Attempted
@@ -31191,7 +31191,7 @@ int GN_GetIsFighting(object oFighting)
 }
 //::///////////////////////////////////////////////
 //:: Compare Talents
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Checks the bits of Talent 1 against the bits
@@ -31212,7 +31212,7 @@ int GN_CompareTalents(int nTalent1, int nTalent2)
 }
 //::///////////////////////////////////////////////
 //:: Get Last Talent Code
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Determines the last talent that was used
@@ -31240,7 +31240,7 @@ int GN_GetPreviousTalentCode()
 }
 //::///////////////////////////////////////////////
 //:: Get Spell Talent Code
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Returns the talent code for a particular spell
@@ -31256,7 +31256,7 @@ int GN_GetSpellTalentCode(int nSpell)
 }
 //::///////////////////////////////////////////////
 //:: Get Feat Talent Code
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Returns the talent code for a particular feat
@@ -31272,7 +31272,7 @@ int GN_GetFeatTalentCode(int nFeat)
 }
 //::///////////////////////////////////////////////
 //:: Get Has Viable Talent
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Takes a talent code and searches for a viable
@@ -31293,7 +31293,7 @@ int GN_GetHasViableTalent(int nTalentCode)
 }
 //::///////////////////////////////////////////////
 //:: Get Exclusion Code
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Returns an exclusion code based on the Racial
@@ -31324,7 +31324,7 @@ int GN_GetExclusionCode(object oTarget)
 }
 //::///////////////////////////////////////////////
 //:: Get Jedi Combo
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Returns a proper Jedi Combo for Standard AI
@@ -31394,7 +31394,7 @@ int GN_GetStandardJediCombo(int nBoss = FALSE)
 }
 //::///////////////////////////////////////////////
 //:: Get Droid Combo
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Returns a proper Droid Combo for Standard AI
@@ -31445,7 +31445,7 @@ int GN_GetStandardDroidCombo(int nBoss = FALSE)
 }
 //::///////////////////////////////////////////////
 //:: Get NPC Combo
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Returns a proper NPC Combo for Standard AI
@@ -31505,7 +31505,7 @@ int GN_GetStandardNPCCombo(int nBoss = FALSE)
 }
 //::///////////////////////////////////////////////
 //:: Get Next Talent In Combo
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Looks at the combo id and returns an ability
@@ -32000,7 +32000,7 @@ talent GN_GetNextTalentInCombo(int nCombo)
 }
 //::///////////////////////////////////////////////
 //:: Force Power Get Functions
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Returns an ability based.
@@ -32411,7 +32411,7 @@ int GN_GetSeriesScream() {
 }
 //::///////////////////////////////////////////////
 //:: Force Power Series Checks
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Checks if a Jedi has 1 in a force power series
@@ -32635,7 +32635,7 @@ int GN_CheckSeriesDroidUtilities()
 }
 //::///////////////////////////////////////////////
 //:: Is Combo Valid
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Gets a combo constant and determines if the
@@ -32898,7 +32898,7 @@ int GN_GetHasDamagingForcePower()
 }
 //::///////////////////////////////////////////////
 //:: Get Weapon Type
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Return 1 if the object is a Melee Weapon and
@@ -33050,7 +33050,7 @@ int GN_GetWeaponTypeFromBaseItem(int nBaseType)
 //
 //::///////////////////////////////////////////////
 //:: Equip Appropriate Weapon
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Gets the NPC to eqyuip a melee = 1 or
@@ -33149,7 +33149,7 @@ int GN_EquipAppropriateWeapon()
 }
 //::///////////////////////////////////////////////
 //:: Check Friendly Fire on Target
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Takes a target object and a radius and
@@ -33178,7 +33178,7 @@ int GN_CheckFriendlyFireOnTarget(object oTarget, float fDistance = 4.0)
 }
 //::///////////////////////////////////////////////
 //:: Check For Enemies Around Target
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Takes a target object and a radius and
@@ -33206,7 +33206,7 @@ int GN_CheckEnemyGroupingOnTarget(object oTarget, float fDistance = 4.0)
 }
 //::///////////////////////////////////////////////
 //:: Find Grenade Target
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Searches the area and marks a group as a viable
@@ -33247,7 +33247,7 @@ object GN_FindGrenadeTarget()
 }
 //::///////////////////////////////////////////////
 //:: Find Grenade Target
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Searches the area and marks a group as a
@@ -33277,7 +33277,7 @@ object GN_FindAOETarget()
 }
 //::///////////////////////////////////////////////
 //:: Get Grenade Talent
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Returns a talent based on the target.
@@ -33730,7 +33730,7 @@ talent GN_GetGrenadeTalent(int nDroid = FALSE)
 }
 //::///////////////////////////////////////////////
 //:: Get Boss Combat Move
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Returns a talent for the boss to perform
@@ -33831,7 +33831,7 @@ talent GN_GetBossCombatMove(int nBossAttackType, int nDroid = FALSE)
 }
 //::///////////////////////////////////////////////
 //:: Get AOE Force Power
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Checks and returns a random force power that
@@ -34068,7 +34068,7 @@ talent GN_GetAOEForcePower(int nDroid = FALSE)
 }
 //::///////////////////////////////////////////////
 //:: Get Targeted Force Power
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Checks and returns a random force power that
@@ -34336,7 +34336,7 @@ talent GN_GetTargetedForcePower(int nDroid = FALSE)
 }
 //::///////////////////////////////////////////////
 //:: Get Active Party Member Count
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Returns the number of party members who
@@ -34368,7 +34368,7 @@ int GN_GetActivePartyMemberCount()
 }
 //::///////////////////////////////////////////////
 //:: Get Active Party Member
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Returns a party member who is active a not
@@ -34476,7 +34476,7 @@ object GN_GetActivePartyMember(int nDrainTarget = FALSE)
 }
 //::///////////////////////////////////////////////
 //:: Return Active Party Member
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     This function returns an active party member.
@@ -34563,7 +34563,7 @@ object GN_ReturnActivePartyMember(int nDebil = FALSE)
 }
 //:://///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //:: Generic Include Debug Commands
-//:: Copyright (c) 2001 Bioware Corp.
+
 //::////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //::////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //:: Created By: Preston Watamaniuk
@@ -34677,7 +34677,7 @@ string GN_FetchComboString(int nCombo)
 }
 //::///////////////////////////////////////////////
 //:: Return AI Style
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Returns the AI style in a string
@@ -34975,7 +34975,7 @@ void SpawnAllAvailablePartyMembers()
     Desc
 */
 //:: Created By:
-//:: Copyright (c) 2002 Bioware Corp.
+
 #include "k_inc_glob_party"
 #include "k_oei_hench_inc"
 void StopCombat()
@@ -35372,7 +35372,7 @@ int GetCurrentPlanet()
     NPC being spoken to.
 */
 //:: Created By:
-//:: Copyright (c) 2002 Bioware Corp.
+
 #include "k_inc_debug"
 //Checks the Player's inventory and determines based on OBJECT_SELF
 //whether the Player needs equipment.
@@ -35787,7 +35787,7 @@ Takes the quest crystal the player has, if any.
 Gives the player the appropriate quest crystal for their alignment/level
 */
 //:: Created By: Kevin Saunders, 06/26/04
-//:: Copyright 2004 Obsidian Entertainment
+
 #include "k_inc_utility"
 int GetPCLevel()
 {
@@ -35818,7 +35818,7 @@ int GetCrystalLevel()
      events in the game as constants.
 */
 //:: Created By: Preston Watamaniuk
-//:: Copyright (c) 2002 Bioware Corp.
+
 //DEFAULT AI EVENTS
 int KOTOR_DEFAULT_EVENT_ON_HEARTBEAT           = 1001;
 int KOTOR_DEFAULT_EVENT_ON_PERCEPTION          = 1002;
@@ -35863,7 +35863,7 @@ int KOTOR2_MISC_PC_COMBAT_FORFEIT                    = 4001;
      contains code for filling containers using treasure tables
 */
 //:: Created By:  Jason Booth
-//:: Copyright (c) 2002 Bioware Corp.
+
 //
 //  March 15, 2003  J.B.
 //      removed parts and spikes from tables
@@ -37554,7 +37554,7 @@ PlaceTreasureDisposable(oContainer, numberOfItems);
     - Added UT_MakeNeutral2(), UT_MakeHostile1(), UT_MakeFriendly1() and UT_MakeFriendly2()
 */
 //:: Created By: Jason Booth
-//:: Copyright (c) 2002 Bioware Corp.
+
 // Plot Flag Constants.
 int SW_PLOT_BOOLEAN_01 = 0;
 int SW_PLOT_BOOLEAN_02 = 1;
@@ -37864,7 +37864,7 @@ int AutoDC(int DC, int nSkill, object oTarget)
 }
 //::///////////////////////////////////////////////
 //:: IsCharismaHigh
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //  checks for high charisma
@@ -37886,7 +37886,7 @@ int IsCharismaHigh()
 }
 //::///////////////////////////////////////////////
 //:: IsCharismaLow
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //  checks for low charisma
@@ -37901,7 +37901,7 @@ int IsCharismaLow()
 }
 //::///////////////////////////////////////////////
 //:: IsCharismaNormal
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //  checks for normal charisma
@@ -37923,7 +37923,7 @@ int IsCharismaNormal()
 }
 //::///////////////////////////////////////////////
 //:: IsIntelligenceHigh
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //  checks for high intelligence
@@ -37945,7 +37945,7 @@ int IsIntelligenceHigh()
 }
 //::///////////////////////////////////////////////
 //:: IsIntelligenceLow
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //  checks for low intelligence
@@ -37960,7 +37960,7 @@ int IsIntelligenceLow()
 }
 //::///////////////////////////////////////////////
 //:: IsIntelligenceNormal
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //  checks for normal intelligence
@@ -37982,7 +37982,7 @@ int IsIntelligenceNormal()
 }
 //::///////////////////////////////////////////////
 //:: IsDarkComplete
-//:: Copyright (c) 2004 Obsidian Entertainment
+
 //:://////////////////////////////////////////////
 /*
 //  checks to see if pc is completely dark side
@@ -38005,7 +38005,7 @@ int IsDarkComplete()
 }
 //::///////////////////////////////////////////////
 //:: IsDarkHigh
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //  checks to see if pc is very dark side
@@ -38028,7 +38028,7 @@ int IsDarkHigh()
 }
 //::///////////////////////////////////////////////
 //:: IsDarkLow
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //  checks to see if pc is just a little dark side
@@ -38051,7 +38051,7 @@ int IsDarkLow()
 }
 //::///////////////////////////////////////////////
 //:: IsDark
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //  checks to see if pc is dark side
@@ -38073,7 +38073,7 @@ int IsDark()
 }
 //::///////////////////////////////////////////////
 //:: IsLightComplete
-//:: Copyright (c) 2004 Obsidian Entertainment
+
 //:://////////////////////////////////////////////
 /*
 //  checks to see if pc is completely light side
@@ -38096,7 +38096,7 @@ int IsLightComplete()
 }
 //::///////////////////////////////////////////////
 //:: IsLightHigh
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //  checks to see if pc is very light side
@@ -38119,7 +38119,7 @@ int IsLightHigh()
 }
 //::///////////////////////////////////////////////
 //:: IsLightLow
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //  checks to see if pc is slightly light side
@@ -38142,7 +38142,7 @@ int IsLightLow()
 }
 //::///////////////////////////////////////////////
 //:: IsLight
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //  checks to see if pc is light side
@@ -38164,7 +38164,7 @@ int IsLight()
 }
 //::///////////////////////////////////////////////
 //:: IsNeutral
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //  checks to see if pc is neutral
@@ -38186,7 +38186,7 @@ int IsNeutral()
 }
 //::///////////////////////////////////////////////
 //:: PadString
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //  pads a string with the given pad character to the specified length
@@ -38205,7 +38205,7 @@ string PadString(string str = "",string pad = " ",int length = 0)
 }
 //::///////////////////////////////////////////////
 //:: TalkToPC
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //  causes the given object to initiate conversation with the player
@@ -38222,7 +38222,7 @@ void TalkToPC(object oSpeaker)
 }
 //::///////////////////////////////////////////////
 //:: Get Boolean Plot Flag
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Gets the boolean state of a plot bit field
@@ -38246,7 +38246,7 @@ int UT_GetPlotBooleanFlag(object oTarget, int nIndex)
 }
 //::///////////////////////////////////////////////
 //:: Set Boolean Plot Flag
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Sets the boolean state of a plot bit field
@@ -38287,7 +38287,7 @@ void UT_SetPlotBooleanFlag(object oTarget, int nIndex, int nState)
 }
 //::///////////////////////////////////////////////
 //:: Get Talked To Flag
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Returns the state of the Talk to Flag
@@ -38311,7 +38311,7 @@ int UT_GetTalkedToBooleanFlag(object oTarget)
 }
 //::///////////////////////////////////////////////
 //:: Set Talked To Flag
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Sets the talked to flag to the given state.
@@ -38332,7 +38332,7 @@ void UT_SetTalkedToBooleanFlag(object oTarget, int nState = TRUE)
 }
 //::///////////////////////////////////////////////
 //:: UT_GetNearestPCToObject
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //Get the nearest PC to the specified object
@@ -38347,7 +38347,7 @@ object UT_GetNearestPCToObject(object oTarget = OBJECT_SELF)
 }
 //::///////////////////////////////////////////////
 //:: UT_IsObjectPC
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //Determine if object is a PC
@@ -38371,7 +38371,7 @@ int UT_IsObjectPC(object oTarget = OBJECT_INVALID)
 }
 //::///////////////////////////////////////////////
 //:: Adjust Character Alignment
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Make alignment change based on a constant
@@ -38461,7 +38461,7 @@ void UT_AdjustCharacterAlignment(object oTarget, int nScale)
 }
 //::///////////////////////////////////////////////
 //:: UT_DarkHigh
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //does a heavy darkside adjustment on the target
@@ -38477,7 +38477,7 @@ void UT_DarkHigh(object oTarget)
 }
 //::///////////////////////////////////////////////
 //:: UT_DarkMed
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //does a medium darkside adjustment on the target
@@ -38493,7 +38493,7 @@ void UT_DarkMed(object oTarget)
 }
 //::///////////////////////////////////////////////
 //:: UT_DarkSml
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //does a small darkside adjustment on the target
@@ -38509,7 +38509,7 @@ void UT_DarkSml(object oTarget)
 }
 //::///////////////////////////////////////////////
 //:: UT_LightHigh
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //does a heavy lightside adjustment on the target
@@ -38525,7 +38525,7 @@ void UT_LightHigh(object oTarget)
 }
 //::///////////////////////////////////////////////
 //:: UT_LightMed
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //does a medium lightside adjustment on the target
@@ -38541,7 +38541,7 @@ void UT_LightMed(object oTarget)
 }
 //::///////////////////////////////////////////////
 //:: UT_LightSml
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //does a small lightside adjustment on the target
@@ -38557,7 +38557,7 @@ void UT_LightSml(object oTarget)
 }
 //::///////////////////////////////////////////////
 //:: Reset Plot Booleans
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Goes through all of the plot bit fields and sets
@@ -38580,7 +38580,7 @@ void UT_ResetPlotBooleanFlags(object oToChange, int nState)
 }
 //::///////////////////////////////////////////////
 //:: Check Manaan Medical State
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Returns true if the manaan facilities have
@@ -38596,7 +38596,7 @@ int UT_GetIsKoltoDestroyed()
 }
 //::///////////////////////////////////////////////
 //:: UT_PlotMovePath
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //make object do an uninterruptible path move
@@ -38628,7 +38628,7 @@ void UT_PlotMovePath(string sWayPointTag,int nFirst, int nLast, int nRun = FALSE
 }
 //::///////////////////////////////////////////////
 //:: UT_PlotMoveObject
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //make object do an uninterruptible move to an object
@@ -38645,7 +38645,7 @@ void UT_PlotMoveObject(object oTarget,int nRun = FALSE)
 }
 //::///////////////////////////////////////////////
 //:: UT_PlotMoveLocation
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //make object do an uninterruptible move to a location
@@ -38662,7 +38662,7 @@ void UT_PlotMoveLocation(location lTarget,int nRun = FALSE)
 }
 //::///////////////////////////////////////////////
 //:: UT_SkillCheck
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //perform a skill check using a given DC
@@ -38681,7 +38681,7 @@ int UT_SkillCheck(int iDC, int iSkill, object oTarget)
 }
 //::///////////////////////////////////////////////
 //:: UT_IsDarkSidePower
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
 //test whether force power is dark side
@@ -38726,7 +38726,7 @@ int UT_IsDarkSidePower(int iSpellID)
 }
 //::///////////////////////////////////////////////
 //:: UT_CreateObject
-//:: Copyright (c) 2002 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Create an object without needing a variable
@@ -38742,7 +38742,7 @@ void UT_CreateObject(int nObjectType, string sTemplate, location lLocal)
 }
 //::///////////////////////////////////////////////
 //:: UT_JumpPartyToObject
-//:: Copyright (c) 2002 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Move the entire party to the object specified.
@@ -38775,7 +38775,7 @@ void UT_JumpPartyToObject(object oTarget)
 }
 //::///////////////////////////////////////////////
 //:: UT_JumpPartyToLocation
-//:: Copyright (c) 2002 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Move the entire party to the location specified.
@@ -38808,7 +38808,7 @@ void UT_JumpPartyToLocation(location lTarget)
 }
 //::///////////////////////////////////////////////
 //:: Spawn Messenger
-//:: Copyright (c) 2002 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Determines which messenger to spawn in for a specific planet.
@@ -38961,7 +38961,7 @@ void UT_SpawnMessenger()
 }
 //::///////////////////////////////////////////////
 //:: Exit Area
-//:: Copyright (c) 2002 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     The NPC moves to an SW_EXIT waypoint and destroys
@@ -38999,7 +38999,7 @@ void UT_ExitArea(int nRun = FALSE, int nParam = 0, object oObj = OBJECT_SELF)
 }
 //::///////////////////////////////////////////////
 //:: UT_GetNumItems
-//:: Copyright (c) 2002 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Counts the number of items with the given tag
@@ -39025,7 +39025,7 @@ int UT_GetNumItems(object oTarget, string sItemTag)
 }
 //::///////////////////////////////////////////////
 //:: Determines Item Cost
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Returns a value for how many parts or spikes
@@ -39076,7 +39076,7 @@ int UT_DeterminesItemCost(int nDC, int nSkill)
 }
 //::///////////////////////////////////////////////
 //:: Remove X number of Computer Spikes
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Remove a number of computer spikes
@@ -39104,7 +39104,7 @@ void UT_RemoveComputerSpikes(int nNumber)
 }
 //::///////////////////////////////////////////////
 //:: Remove X number of Repair Parts
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Remove a number of repair parts
@@ -39132,7 +39132,7 @@ void UT_RemoveRepairParts(int nNumber)
 }
 //::///////////////////////////////////////////////
 //:: Return item amount
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Depending on the skill chosen, returns the
@@ -39163,7 +39163,7 @@ int UT_ReturnSpikePartAmount(int nSkill)
 }
 //::///////////////////////////////////////////////
 //:: Make Neutral
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Searches the area and changes all object with
@@ -39188,7 +39188,7 @@ void UT_MakeNeutral(string sTag)
 }
 //::///////////////////////////////////////////////
 //:: Make Insane
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Searches the area and changes all objects with
@@ -39212,7 +39212,7 @@ void UT_MakeInsane(string sObjectTag)
 }
 //::///////////////////////////////////////////////
 //:: Stun Droids
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Searches the area and changes all objects with
@@ -39236,7 +39236,7 @@ void UT_StunDroids(string sObjectTag)
 }
 //::///////////////////////////////////////////////
 //:: Start a Fight
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Gets the nearest enemy that is seen and start combat
@@ -39251,7 +39251,7 @@ void UT_StartCombat(object oObject)
 }
 //::///////////////////////////////////////////////
 //:: Gas a Rooom
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Releases gas into the room and kills all biologicals in the
@@ -39292,7 +39292,7 @@ void UT_GasRoom(string sWayTag, float fDistance, int bIndiscriminant = TRUE)
 }
 //::///////////////////////////////////////////////
 //:: Overload Conduit
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Overloads a power conduit and does 10d6 damage
@@ -39360,7 +39360,7 @@ void UT_ReturnToBase(string sTag = "wp_homebase")
 }
 //::///////////////////////////////////////////////
 //:: UT_NPC_InitConversation
-//:: Copyright (c) 2002 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     The specified NPC will start a conversation
@@ -39416,7 +39416,7 @@ void UT_NPC_InitConversation(string sNPCTag,string sDlg = "",object oEntered = O
 }
 //::///////////////////////////////////////////////
 //:: Set Starmap Journal
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Sets the Journal entry for the starmap
@@ -39460,7 +39460,7 @@ void UT_SetStarmapJournal()
 }
 //::///////////////////////////////////////////////
 //:: Spawn Creatures
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Creates number of creatures with a specific template at a specified waypoint tag.
@@ -39497,7 +39497,7 @@ void UT_RunCombatEncounter(string sTemplate, string sTag, int nTotal = 3, float 
 }
 //::///////////////////////////////////////////////
 //:: Set Talk To Flag by Tag
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Loops through all object with a certain tag
@@ -39520,7 +39520,7 @@ void UT_SetTalkToFlagByTag(string sTag)
 }
 //::///////////////////////////////////////////////
 //:: Lock / Plot Twin Doors
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Loops through all doors with a certain tag
@@ -39548,7 +39548,7 @@ void UT_LockDoorDuplicates(string sTag)
 }
 //::///////////////////////////////////////////////
 //:: Can Party Member Interject
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Check to see if the Party member specified is
@@ -39618,7 +39618,7 @@ int UT_CheckCanPartyMemberInterject(int nNPC_Constant, float fDistance)
 }
 //::///////////////////////////////////////////////
 //:: Reinitialize NPC Planet Constants
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     This resets the variables for each party member
@@ -39702,7 +39702,7 @@ void UT_TeleportWholeParty(object oWP0, object oWP1, object oWP2)
 }
 //::///////////////////////////////////////////////
 //:: Action Pause Converation
-//:: Copyright (c) 2003 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
      This will stop and start a conversation in 1
@@ -39722,7 +39722,7 @@ void UT_ActionPauseConversation(float fDelay)
 }
 //::///////////////////////////////////////////////
 //:: Spawn Available NPC
-//:: Copyright (c) 2003 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Allows the uses to delay command on the creation
@@ -39738,7 +39738,7 @@ void UT_SpawnAvailableNPC(int nNPC, location lWay)
 }
 //::///////////////////////////////////////////////
 //:: Set Starmap Variables
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Advances K_STAR_MAP, sets the journal and
@@ -39792,7 +39792,7 @@ void UT_StarMap1VariableSet()
 }
 //::///////////////////////////////////////////////
 //:: Play Starmap Animations
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Plays the animations necessary for the current
@@ -39820,7 +39820,7 @@ void UT_StarMap2PlayAnimation()
 }
 //::///////////////////////////////////////////////
 //:: Returns the Appropriate Starmap Anim Loop
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Returns the appropriate animation loop for the
@@ -39857,7 +39857,7 @@ int UT_StarMap3GetLoopAnim(int nStarMapVar)
 }
 //::///////////////////////////////////////////////
 //:: Generic Starmap Handler
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Runs the entire Starmap sequence as a black
@@ -39920,7 +39920,7 @@ void UT_StoreParty()
 }
 //::///////////////////////////////////////////////
 //:: Restore NPC
-//:: Copyright (c) 2003 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     This function restore party members. It will only
@@ -39967,7 +39967,7 @@ void UT_RestoreParty()
 }
 //::///////////////////////////////////////////////
 //:: Return NPC Integer
-//:: Copyright (c) 2003 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Returns the NPC code for the given object if
@@ -40028,7 +40028,7 @@ int UT_GetNPCCode(object oNPC)
 }
 //::///////////////////////////////////////////////
 //:: Restore Party Member to 1 Vitality
-//:: Copyright (c) 2003 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Restores all party mambers to 1 hp if
@@ -40055,7 +40055,7 @@ void UT_RestorePartyToOneHealth()
 }
 //::///////////////////////////////////////////////
 //:: Heal Party
-//:: Copyright (c) 2003 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Cycles throught the entire party and heals
@@ -40081,7 +40081,7 @@ void UT_HealParty()
 }
 //::///////////////////////////////////////////////
 //:: Heal Party Member
-//:: Copyright (c) 2003 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Heals a single target to full.
@@ -40097,7 +40097,7 @@ void UT_HealNPC(object oNPC)
 }
 //::///////////////////////////////////////////////
 //:: Alter Stack
-//:: Copyright (c) 2003 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Alters the stack of a given object by the
@@ -40141,7 +40141,7 @@ void UT_AlterItemStack(object oItem,int iNum = 1,int bDecrement = TRUE)
 }
 //::///////////////////////////////////////////////
 //:: Heal All Party NPCs
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Searches through the area and heals all of the
@@ -40190,7 +40190,7 @@ void UT_HealAllPartyNPCs()
 }
 //::///////////////////////////////////////////////
 //:: Clear Party Members
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Goes through the party and removes them.
@@ -40214,7 +40214,7 @@ void UT_ClearAllPartyMembers()
 }
 //::///////////////////////////////////////////////
 //:: DC check using an ability score only
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Does a DC check just using an ability score
@@ -40240,7 +40240,7 @@ int UT_AbilityCheck(int iDC, int iAbility, object oTarget)
 }
 //::///////////////////////////////////////////////
 //:: Make Neutral2
-//:: Copyright (c) 2003 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Searches the area and changes all objects with
@@ -40266,7 +40266,7 @@ void UT_MakeNeutral2(string sObjectTag)
 }
 //::///////////////////////////////////////////////
 //:: Make Hostile1
-//:: Copyright (c) 2003 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Searches the area and changes all objects with
@@ -40292,7 +40292,7 @@ void UT_MakeHostile1(string sObjectTag)
 }
 //::///////////////////////////////////////////////
 //:: Make Friendly1
-//:: Copyright (c) 2003 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Searches the area and changes all objects with
@@ -40318,7 +40318,7 @@ void UT_MakeFriendly1(string sObjectTag)
 }
 //::///////////////////////////////////////////////
 //:: Make Friendly2
-//:: Copyright (c) 2003 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Searches the area and changes all objects with
@@ -40344,7 +40344,7 @@ void UT_MakeFriendly2(string sObjectTag)
 }
 //::///////////////////////////////////////////////
 //:: UT_ActivateTortureCage
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     performs a standard torture cage effect
@@ -40370,7 +40370,7 @@ void UT_ActivateTortureCage(object oCage, object oTarget,float fDuration)
 }
 //::///////////////////////////////////////////////
 //:: Validate Jump
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     If the first three letters of the last module
@@ -40399,7 +40399,7 @@ int UT_ValidateJump(string sLastModule)
 }
 //::///////////////////////////////////////////////
 //:: Play On Click Reaction
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Makes the animal face the PC, do its victory
@@ -40604,7 +40604,7 @@ int UT_ObjectCount(string sTag, int iName)
     use k_inc_generic
 */
 //:: Created By: Preston Watamaniuk
-//:: Copyright (c) 2002 Bioware Corp.
+
 int WALKWAYS_CURRENT_POSITION = 0;
 int WALKWAYS_END_POINT = 1;
 int WALKWAYS_SERIES_NUMBER = 2;
@@ -40675,7 +40675,7 @@ int GN_CheckWalkWays(object oTarget);
 int GN_GetNearestWaypoint(object oCharacter, int nSeriesNumber = 0);
 //::///////////////////////////////////////////////
 //:: Walk Way Points
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Makes OBJECT_SELF walk way points based on a
@@ -40878,7 +40878,7 @@ void GN_SetWalkWayPointsSeries(int nSeriesNumber)
 }
 //::///////////////////////////////////////////////
 //:: Set Spawn In Condition
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Sets the Generic Spawn In Conditions
@@ -40894,7 +40894,7 @@ void GN_SetSpawnInCondition(int nFlag, int nState = TRUE)
 }
 //::///////////////////////////////////////////////
 //:: Get Spawn In Condition
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Gets the Generic Spawn In Conditions
@@ -40914,7 +40914,7 @@ int GN_GetSpawnInCondition(int nFlag)
 }
 //::///////////////////////////////////////////////
 //:: Preston Watamaniuk
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Moves the passed in object to the last waypoint
@@ -40963,7 +40963,7 @@ void GN_MoveToLastWayPoint(object oToMove)
 }
 //::///////////////////////////////////////////////
 //:: Preston Watamaniuk
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Moves the passed in object to a random waypoint
@@ -41013,7 +41013,7 @@ void GN_MoveToRandomWayPoint(object oToMove)
 }
 //::///////////////////////////////////////////////
 //:: Preston Watamaniuk
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Moves the passed in object to a specified waypoint
@@ -41065,7 +41065,7 @@ void GN_MoveToSpecificWayPoint(object oToMove, int nArrayNumber)
 }
 //::///////////////////////////////////////////////
 //:: Get Waypooint Direction
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Determines the direction that a NPC should be
@@ -41101,7 +41101,7 @@ int GN_GetWayPointDirection(int nEndArray, int nCurrentPosition)
 }
 //::///////////////////////////////////////////////
 //:: Set Up Way Points
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Used to initialize the NPCs waypoints
@@ -41155,7 +41155,7 @@ void GN_SetUpWayPoints()
 }
 //::///////////////////////////////////////////////
 //:: Play Walk Ways Animations
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Plays an animation between way points
@@ -41219,7 +41219,7 @@ void GN_PlayWalkWaysAnimation()
 }
 //::///////////////////////////////////////////////
 //:: Are Walk Ways Available
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Are valid walkway points available for walking
@@ -41327,7 +41327,7 @@ int GN_GetNearestWaypoint( object oCharacter, int nSeriesNumber = 0 )
      the chaining of creatures
 */
 //:: Created By: Preston Watamaniuk
-//:: Copyright (c) 2002 Bioware Corp.
+
 #include "k_inc_generic"
 //Function run by the trigger to catalog the control nodes followers
 void ZN_CatalogFollowers();
@@ -41341,7 +41341,7 @@ void ZN_MoveToController(object oController, object oFollower);
 int ZN_CheckFollowerReturnConditions(object oTarget);
 //::///////////////////////////////////////////////
 //:: Catalog Zone Followers
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
      Catalogs all creatures within
@@ -41378,7 +41378,7 @@ void ZN_CatalogFollowers()
 }
 //::///////////////////////////////////////////////
 //:: Check Object for Zoning
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Checks the object to see if they part of the
@@ -41402,7 +41402,7 @@ int ZN_CheckIsFollower(object oController, object oTarget)
 }
 //::///////////////////////////////////////////////
 //:: Check Return Conditions
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Checks to see if the conditions exist to
@@ -41433,7 +41433,7 @@ int ZN_CheckReturnConditions()
 }
 //::///////////////////////////////////////////////
 //:: Check Follower Return Conditions.
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Checks if the follower object needs to return
@@ -41455,7 +41455,7 @@ int ZN_CheckFollowerReturnConditions(object oTarget)
 }
 //::///////////////////////////////////////////////
 //:: Move to Controller
-//:: Copyright (c) 2001 Bioware Corp.
+
 //:://////////////////////////////////////////////
 /*
     Gets the follower object to move back to the
@@ -41487,7 +41487,7 @@ void ZN_MoveToController(object oController, object oFollower)
     Desc
 */
 //:: Created By:
-//:: Copyright (c) 2002 Bioware Corp.
+
 // Modified by JAB-OEI 7/23/04
 // Added special scripts for the 711KOR fight with the entire party
 #include "k_inc_generic"

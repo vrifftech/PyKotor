@@ -11,7 +11,6 @@ from pykotor.common.stream import BinaryReader
 from pykotor.resource.formats.ncs.compiler.classes import EntryPointError
 from pykotor.resource.formats.ncs.ncs_auto import compile_nss, write_ncs
 from pykotor.resource.formats.ncs.ncs_data import NCSCompiler
-from pykotor.tools.encoding import decode_bytes_with_fallbacks
 from utility.misc import generate_hash
 from utility.system.path import Path
 
@@ -32,11 +31,19 @@ class InbuiltNCSCompiler(NCSCompiler):
         optimizers: list[NCSOptimizer] | None = None,
         *,
         debug: bool = False,
+        source_encoding: str | None = None,
     ):
         source_filepath: Path = Path.pathify(source_path)
         nss_data: bytes = BinaryReader.load_file(source_filepath)
-        nss_contents: str = decode_bytes_with_fallbacks(nss_data)
-        ncs: NCS = compile_nss(nss_contents, game, optimizers, library_lookup=[source_filepath.parent], debug=debug)
+        ncs: NCS = compile_nss(
+            nss_data,
+            game,
+            optimizers,
+            library_lookup=[source_filepath.parent],
+            debug=debug,
+            source_name=str(source_filepath),
+            source_encoding=source_encoding,
+        )
         write_ncs(ncs, output_path)
 
 
@@ -83,7 +90,7 @@ class KnownExternalCompilers(Enum):
         sha256="B7344408A47BE8780816CF68F5A171A09640AB47AD1A905B7F87DE30A50A0A92",
         name="KOTOR Scripting Tool",
         release_date=date(2016, 5, 18),
-        author="James Goad",  # TODO: double check
+        author="James Goad",
         commandline={
             "compile": ["-c", "--outputdir", "{output_dir}", "-o", "{output_name}", "-g", "{game_value}", "{source}"],
             "decompile": ["-d", "--outputdir", "{output_dir}", "-o", "{output_name}", "-g", "{game_value}", "{source}"],
@@ -103,10 +110,10 @@ class KnownExternalCompilers(Enum):
         author="todo",
         commandline={},
     )
-    KNSSCOMP = ExternalCompilerConfig(  # TODO: add hash and look for this in tslpatcher.reader.ConfigReader.load_compile_list()
+    KNSSCOMP = ExternalCompilerConfig(
         sha256="todo",
         name="knsscomp",
-        release_date=date(1, 1, 1),  # 2022?
+        release_date=date(1, 1, 1),
         author="Nick Hugi",
         commandline={},
     )
@@ -123,7 +130,7 @@ class KnownExternalCompilers(Enum):
 
 
 class NwnnsscompConfig:
-    """Unifies the arguments passed to each different version of nwnnsscomp, since no versions offer backwards-compatibility with each other."""
+    """Command-line options for a script tool invocation."""
 
     DEFAULT_COMMANDLINE = {
         "compile": ["-c", "{source}", "-o", "{output}"],
@@ -204,25 +211,7 @@ class ExternalNCSCompiler(NCSCompiler):
         *,
         debug: bool = False,
     ) -> NwnnsscompConfig:
-        """Configures a Nwnnsscomp run.
-
-        Args:
-        ----
-            source_file: Path to the source file to compile
-            output_file: Path to output file to generate
-            game: Game enum or integer to configure in one line
-            debug - bool (kwarg): Whether to debug Ply and verbosely output more information. Defaults to False.
-
-        Returns:
-        -------
-            NwnnsscompConfig: Config object for Nwnnsscomp run
-
-        Processing Logic:
-        ----------------
-            - Resolves source and output file paths
-            - Converts game arg to Game enum if integer
-            - Returns NwnnsscompConfig object configured with args useable with the compile_script and decompile_script functions.
-        """
+        """Resolve paths and build command-line options."""
         source_filepath = Path(source_file).absolute()
         output_filepath = Path(output_file).absolute()
         if not isinstance(game, Game):
@@ -239,38 +228,12 @@ class ExternalNCSCompiler(NCSCompiler):
         extra_args: Sequence[str] = (),
         debug: bool = False,
     ) -> tuple[str, str]:
-        """Compiles a NSS script into NCS using the external compiler.
-
-        Function is compatible with any nwnnsscomp.exe version.
-
-        Args:
-        ----
-            source_file: The path or name of the script source file to compile.
-            output_file: The path or name of the compiled module file to output.
-            game: The Game object or game ID to configure the compiler for.
-            timeout: The timeout in seconds to wait for compilation to finish before aborting.
-            extra_args: Additional command-line arguments inserted before the compile command.
-            debug - bool (kwarg): (does nothing for external compilers)
-
-        Returns:
-        -------
-            A tuple of (stdout, stderr) strings from the compilation process.
-
-        Processing Logic:
-        ----------------
-            - Configures the compiler based on the nwnnsscomp.exe used.
-            - Runs the compiler process, capturing stdout and stderr.
-            - Returns a tuple of the stdout and stderr strings on completion.
-
-        Raises:
-        ------
-            - EntryPointError: File has no entry point and is an include file, so it could not be compiled.
-        """
+        """Compile a script and return its standard output and error text."""
         config: NwnnsscompConfig = self.config(source_file, output_file, game)
 
         result: CompletedProcess[str] = subprocess.run(
             args=config.get_compile_args(str(self.nwnnsscomp_path), extra_args),
-            capture_output=True,  # Capture stdout and stderr
+            capture_output=True,
             text=True,
             timeout=timeout,
             check=False,
@@ -301,26 +264,12 @@ class ExternalNCSCompiler(NCSCompiler):
         game: Game | int,
         timeout: int = 60,
     ) -> tuple[str, str]:
-        """Decompiles a script file into C# source code.
-
-        Args:
-        ----
-            source_file: (os.PathLike | str) - Path to the script file to decompile.
-            output_file: (os.PathLike | str) - Path to output the decompiled C# source code.
-            game: (Game) - The Game object containing configuration.
-            timeout: (int) - How long to wait for decompiling to finish before aborting. Defaults to 60 seconds.
-
-        Processing Logic:
-        ----------------
-            - Checks if configuration exists and configures if not
-            - Calls nwnnsscomp subprocess to decompile script file using configuration
-            - Waits up to the provided timeout seconds for decompilation process to complete.
-        """
+        """Disassemble a script to the requested output path."""
         config: NwnnsscompConfig = self.config(source_file, output_file, game)
 
         result: CompletedProcess[str] = subprocess.run(
             args=config.get_decompile_args(str(self.nwnnsscomp_path)),
-            capture_output=True,  # Capture stdout and stderr
+            capture_output=True,
             text=True,
             timeout=timeout,
             check=False,
@@ -349,7 +298,6 @@ class ExternalNCSCompiler(NCSCompiler):
         if "Error:" in stdout:
             stdout_lines: list[str] = stdout.split("\n")
             error_line: str = ""
-            # Find and remove the line with 'Error:'
             filtered_stdout_lines: list[str] = []
             for line in stdout_lines:
                 if "Error:" in line:
@@ -357,12 +305,10 @@ class ExternalNCSCompiler(NCSCompiler):
                 else:
                     filtered_stdout_lines.append(line)
 
-            # Reconstruct stdout without the error line
             stdout = "\n".join(filtered_stdout_lines)
 
-            # Append the error line to stderr if it was found
             if error_line:
-                if stderr:  # If there's already content in stderr, add a newline before appending
+                if stderr:
                     stderr += "\n" + error_line
                 else:
                     stderr = error_line

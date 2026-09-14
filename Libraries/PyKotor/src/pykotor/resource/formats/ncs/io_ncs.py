@@ -5,39 +5,15 @@ from typing import TYPE_CHECKING
 from pykotor.resource.formats.ncs.ncs_data import NCS, NCSByteCode, NCSInstruction, NCSInstructionType, NCSInstructionTypeValue
 from pykotor.resource.type import ResourceReader, ResourceWriter, autoclose
 
+from pykotor.resource.formats.ncs.string_encoding import (
+    decode_ncs_string as _decode_ncs_string,
+    encode_ncs_string as _encode_ncs_string,
+)
+
 if TYPE_CHECKING:
     from pykotor.resource.type import SOURCE_TYPES, TARGET_TYPES
 
 
-def _decode_ncs_string(data: bytes) -> str:
-    """Decode NCS's one-byte string representation without losing undefined CP1252 bytes."""
-    result: list[str] = []
-    for byte in data:
-        raw = bytes((byte,))
-        try:
-            result.append(raw.decode("windows-1252"))
-        except UnicodeDecodeError:
-            result.append(chr(byte))
-    return "".join(result)
-
-
-def _encode_ncs_string(value: str) -> bytes:
-    """Encode an NCS string, preserving raw C1 byte values produced by NSS \\xNN escapes."""
-    result = bytearray()
-    for char in value:
-        try:
-            result.extend(char.encode("windows-1252"))
-        except UnicodeEncodeError:
-            codepoint = ord(char)
-            if 0 <= codepoint <= 0xFF:
-                result.append(codepoint)
-            else:
-                raise
-    return bytes(result)
-
-
-# NCS operands are big-endian. Keeping the fixed-width layouts in one table makes
-# the reader, writer, and size calculation use the same binary contract.
 _I32 = "i32"
 _U32 = "u32"
 _U16 = "u16"
@@ -172,28 +148,7 @@ class NCSBinaryReader(ResourceReader):
         self,
         auto_close: bool = True,
     ) -> NCS:
-        """Loads an NCS file from the reader.
-
-        Args:
-        ----
-            auto_close: {Whether to automatically close the reader after loading}.
-
-        Returns:
-        -------
-            NCS: The loaded NCS object
-
-        Raises:
-            ValueError - Corrupt NCS.
-            OSError - some operating system issue occurred.
-
-        Processing Logic:
-        ----------------
-            - Reads the file type and version headers
-            - Reads each instruction from the file into a dictionary
-            - Resolves jump offsets to reference the target instructions
-            - Adds the instructions to the NCS object
-            - Optionally closes the reader.
-        """
+        """Read an NCS stream and resolve instruction targets."""
         self._ncs = NCS()
 
         file_type = self._reader.read_string(4)
@@ -207,7 +162,7 @@ class NCSBinaryReader(ResourceReader):
             msg = "The NCS version that was loaded is not supported."
             raise ValueError(msg)
 
-        self._instructions = {}  # offset -> instruction
+        self._instructions = {}
 
         self._reader.seek(13)
         while self._reader.remaining() > 0:
@@ -265,7 +220,6 @@ class NCSBinaryReader(ResourceReader):
         raise ValueError(msg)
 
 
-
 class NCSBinaryWriter(ResourceWriter):
     def __init__(
         self,
@@ -282,19 +236,7 @@ class NCSBinaryWriter(ResourceWriter):
         self,
         auto_close: bool = True,
     ):
-        """Writes the NCS file.
-
-        Args:
-        ----
-            auto_close (bool): Whether to automatically close the writer.
-
-        Processing Logic:
-        ----------------
-            - Calculates offset and size for each instruction
-            - Writes header with file type and total size
-            - Writes each instruction using pre-calculated offset and size
-            - Closes writer if auto_close is True.
-        """
+        """Write the NCS header, instructions, and relative target offsets."""
         offset = 13
         for instruction in self._ncs.instructions:
             self._sizes[instruction] = self.determine_size(instruction)

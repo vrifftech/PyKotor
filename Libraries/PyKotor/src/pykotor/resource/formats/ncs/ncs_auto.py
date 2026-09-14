@@ -5,7 +5,6 @@ from typing import TYPE_CHECKING
 from pykotor.common.scriptdefs import KOTOR_CONSTANTS, KOTOR_FUNCTIONS, TSL_CONSTANTS, TSL_FUNCTIONS
 from pykotor.common.scriptlib import KOTOR_LIBRARY, TSL_LIBRARY
 from pykotor.resource.formats.ncs.compiler.classes import DEFAULT_MAX_INCLUDE_DEPTH
-from pykotor.resource.formats.ncs.compiler.lexer import NssLexer
 from pykotor.resource.formats.ncs.compiler.parser import NssParser
 from pykotor.resource.formats.ncs.io_ncs import NCSBinaryReader, NCSBinaryWriter
 from pykotor.resource.formats.ncs.ncs_data import NCS
@@ -26,22 +25,7 @@ def read_ncs(
     offset: int = 0,
     size: int | None = None,
 ) -> NCS:
-    """Returns an NCS instance from the source.
-
-    Args:
-    ----
-        source: The source of the data.
-        offset: The byte offset of the file inside the data.
-        size: Number of bytes to allowed to read from the stream. If not specified, uses the whole stream.
-
-    Raises:
-    ------
-        ValueError: If the file was corrupted or in an unsupported format.
-
-    Returns:
-    -------
-        An NCS instance.
-    """
+    """Read an NCS object from a file, byte buffer, or stream."""
     return NCSBinaryReader(source, offset, size or 0).load()
 
 
@@ -50,18 +34,7 @@ def write_ncs(
     target: TARGET_TYPES,
     file_format: ResourceType = ResourceType.NCS,
 ):
-    """Writes the NCS data to the target location with the specified format (NCS only).
-
-    Args:
-    ----
-        ncs: The NCS file being written.
-        target: The location to write the data to.
-        file_format: The file format.
-
-    Raises:
-    ------
-        ValueError: If an unsupported file format was given.
-    """
+    """Write an NCS object to a file or writable buffer."""
     if file_format is ResourceType.NCS:
         NCSBinaryWriter(ncs, target).write()
     else:
@@ -73,30 +46,14 @@ def bytes_ncs(
     ncs: NCS,
     file_format: ResourceType = ResourceType.NCS,
 ) -> bytearray:
-    """Returns the NCS data in the specified format (NCS only) as a bytes object.
-
-    This is a convenience method that wraps the write_ncs() method.
-
-    Args:
-    ----
-        ncs: The target NCS object.
-        file_format: The file format.
-
-    Raises:
-    ------
-        ValueError: If an unsupported file format was given.
-
-    Returns:
-    -------
-        The NCS data.
-    """
+    """Serialize an NCS object to bytes."""
     data = bytearray()
     write_ncs(ncs, data, file_format)
     return data
 
 
 def compile_nss(
-    source: str,
+    source: str | bytes,
     game: Game,
     optimizers: list[NCSOptimizer] | None = None,
     library_lookup: list[str | Path] | list[Path] | list[str] | str | Path | None = None,
@@ -104,18 +61,14 @@ def compile_nss(
     errorlog: yacc.NullLogger | None = None,
     debug: bool = False,
     max_include_depth: int = DEFAULT_MAX_INCLUDE_DEPTH,
+    source_name: str = "<string>",
+    source_encoding: str | None = None,
 ) -> NCS:
-    """Returns NCS object compiled from input source string.
+    """Compile NSS source using the selected game API and optimizers.
 
-    Attributes:
-    ----------
-        source: The source code.
-        game: Target game for the NCS object.
-        optimizers: What post-compilation optimizers to apply to the NCS object.
-        max_include_depth: Maximum compiler file level for nested includes. The
-            root script counts as level 1, matching BioWare's compiler.
+    source_name labels diagnostics. source_encoding selects UTF-8 or Windows-1252;
+    None detects each file independently. The root counts toward max_include_depth.
     """
-    NssLexer()
     nss_parser = NssParser(
         functions=KOTOR_FUNCTIONS if game.is_k1() else TSL_FUNCTIONS,
         constants=KOTOR_CONSTANTS if game.is_k1() else TSL_CONSTANTS,
@@ -124,16 +77,14 @@ def compile_nss(
         errorlog=errorlog,
         debug=debug,
         max_include_depth=max_include_depth,
+        source_encoding=source_encoding,
     )
 
     ncs = NCS()
 
-    block = nss_parser.parser.parse(source, tracking=True, debug=debug)
+    block = nss_parser.parse(source, source_name=source_name, debug=debug)
     block.compile(ncs)
 
-    # BioWare's safe optimization level removes functions that cannot be
-    # reached from the loader/call graph. Run reachability before stripping NOP
-    # labels so JSR/JMP targets still describe the original control-flow graph.
     optimizers = list(optimizers or [])
     if not any(isinstance(optimizer, RemoveUnusedBlocksOptimizer) for optimizer in optimizers):
         optimizers.insert(0, RemoveUnusedBlocksOptimizer())

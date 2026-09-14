@@ -10,6 +10,19 @@ from pykotor.common.geometry import Vector3
 from pykotor.common.script import DataType
 from pykotor.common.scriptdefs import KOTOR_FUNCTIONS
 from pykotor.resource.formats.ncs import NCSInstructionType
+from pykotor.resource.formats.ncs.compiler.numeric import float32, int32
+from pykotor.resource.formats.ncs.compiler.vm_arithmetic import (
+    divide_vector_float32,
+    k2_x86_shift_left,
+    k2_x86_shift_right,
+    k2_x86_unsigned_shift_right,
+)
+from pykotor.resource.formats.ncs.compiler.vm_values import (
+    OBJECT_INVALID_ID,
+    float32_bits_equal,
+    ncs_strings_equal,
+    resolve_object_literal,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -19,28 +32,56 @@ if TYPE_CHECKING:
 
 
 class Interpreter:
-    """This class is not used in the compiling process. This is only partially implemented, mostly for testing purposes."""
+    """Partial NCS interpreter with mocked engine calls.
 
-    def __init__(self, ncs: NCS):
+    executing_object is a resolved unsigned handle; the default is OBJECT_INVALID_ID.
+    """
+
+    def __init__(
+        self,
+        ncs: NCS,
+        *,
+        functions: list[ScriptFunction] | None = None,
+        executing_object: int = OBJECT_INVALID_ID,
+    ):
+        if type(executing_object) is not int:
+            raise TypeError("executing_object must be an unsigned 32-bit integer handle")
+        if not 0 <= executing_object <= 0xFFFFFFFF:
+            raise ValueError("executing_object must be an unsigned 32-bit integer handle")
+        self._executing_object = executing_object
+        if not ncs.instructions:
+            raise ValueError("Cannot execute an empty NCS program")
         self._ncs: NCS = ncs
-        self._cursor: NCSInstruction = ncs.instructions[0]
-        self._functions: list[ScriptFunction] = KOTOR_FUNCTIONS
+        self._cursor: NCSInstruction | None = ncs.instructions[0]
+        self._functions = KOTOR_FUNCTIONS if functions is None else functions
+        self._instruction_indices = {id(ins): index for index, ins in enumerate(ncs.instructions)}
+        self._stored_action: tuple[int, int, int] | None = None
 
         self._stack: Stack = Stack()
-        self._returns: list[NCSInstruction] = [None]
+        self._returns: list[NCSInstruction | None] = [None]
 
         self._mocks: dict[str, Callable] = {}
 
         self.stack_snapshots: list[StackSnapshot] = []
         self.action_snapshots: list[ActionSnapshot] = []
 
-    def run(self):
-        # TODO - limit how many instructions can be run before raising an error
+    @property
+    def executing_object(self) -> int:
+        """The runtime handle used by OBJECT_SELF in this execution frame."""
+        return self._executing_object
+
+    def run(self, *, max_instructions: int = 100_000) -> None:
+        """Execute instructions up to the configured budget."""
+        if max_instructions <= 0:
+            raise ValueError("Instruction budget must be positive")
+        executed = 0
         while self._cursor is not None:
-            index = self._ncs.instructions.index(self._cursor)
+            if executed >= max_instructions:
+                raise RuntimeError(f"NCS instruction budget exceeded ({max_instructions})")
+            executed += 1
+            index = self._instruction_indices[id(self._cursor)]
             jump_value = None
 
-            # print(str(index).ljust(3), str(self._cursor).ljust(40)[:40], str(self._stack.state()).ljust(30), f"BP={self._stack.base_pointer()//4}")
 
             if self._cursor.ins_type == NCSInstructionType.CONSTS:
                 self._stack.add(DataType.STRING, self._cursor.args[0])
@@ -52,7 +93,10 @@ class Interpreter:
                 self._stack.add(DataType.FLOAT, self._cursor.args[0])
 
             elif self._cursor.ins_type == NCSInstructionType.CONSTO:
-                self._stack.add(DataType.OBJECT, self._cursor.args[0])
+                self._stack.add(
+                    DataType.OBJECT,
+                    resolve_object_literal(self._cursor.args[0], self.executing_object),
+                )
 
             elif self._cursor.ins_type == NCSInstructionType.CPTOPSP:
                 self._stack.copy_to_top(self._cursor.args[0], self._cursor.args[1])
@@ -70,12 +114,20 @@ class Interpreter:
                 self._stack.move(self._cursor.args[0])
 
             elif self._cursor.ins_type in {
+                NCSInstructionType.ADDVV,
+                NCSInstructionType.SUBVV,
+                NCSInstructionType.MULVF,
+                NCSInstructionType.MULFV,
+                NCSInstructionType.DIVVF,
+            }:
+                self._stack.vector_op(self._cursor.ins_type)
+
+            elif self._cursor.ins_type in {
                 NCSInstructionType.ADDII,
                 NCSInstructionType.ADDIF,
                 NCSInstructionType.ADDFF,
                 NCSInstructionType.ADDFI,
                 NCSInstructionType.ADDSS,
-                NCSInstructionType.ADDVV,
             }:
                 self._stack.addition_op()
 
@@ -84,7 +136,6 @@ class Interpreter:
                 NCSInstructionType.SUBIF,
                 NCSInstructionType.SUBFF,
                 NCSInstructionType.SUBFI,
-                NCSInstructionType.SUBVV,
             }:
                 self._stack.subtraction_op()
 
@@ -93,8 +144,6 @@ class Interpreter:
                 NCSInstructionType.MULIF,
                 NCSInstructionType.MULFF,
                 NCSInstructionType.MULFI,
-                NCSInstructionType.MULVF,
-                NCSInstructionType.MULFV,
             }:
                 self._stack.multiplication_op()
 
@@ -103,7 +152,6 @@ class Interpreter:
                 NCSInstructionType.DIVIF,
                 NCSInstructionType.DIVFF,
                 NCSInstructionType.DIVFI,
-                NCSInstructionType.DIVVF,
             }:
                 self._stack.division_op()
 
@@ -142,6 +190,10 @@ class Interpreter:
                 NCSInstructionType.EQUALFF,
                 NCSInstructionType.EQUALSS,
                 NCSInstructionType.EQUALOO,
+                NCSInstructionType.EQUALEFFEFF,
+                NCSInstructionType.EQUALEVTEVT,
+                NCSInstructionType.EQUALLOCLOC,
+                NCSInstructionType.EQUALTALTAL,
             }:
                 self._stack.logical_equality_op()
 
@@ -150,6 +202,10 @@ class Interpreter:
                 NCSInstructionType.NEQUALFF,
                 NCSInstructionType.NEQUALSS,
                 NCSInstructionType.NEQUALOO,
+                NCSInstructionType.NEQUALEFFEFF,
+                NCSInstructionType.NEQUALEVTEVT,
+                NCSInstructionType.NEQUALLOCLOC,
+                NCSInstructionType.NEQUALTALTAL,
             }:
                 self._stack.logical_inequality_op()
 
@@ -183,6 +239,17 @@ class Interpreter:
             elif self._cursor.ins_type == NCSInstructionType.SHRIGHTII:
                 self._stack.bitwise_rightshift_op()
 
+            elif self._cursor.ins_type == NCSInstructionType.USHRIGHTII:
+                self._stack.bitwise_unsigned_rightshift_op()
+
+            elif self._cursor.ins_type in {NCSInstructionType.EQUALTT, NCSInstructionType.NEQUALTT}:
+                self._stack.structure_equality_op(
+                    self._cursor.args[0], negate=self._cursor.ins_type == NCSInstructionType.NEQUALTT
+                )
+
+            elif self._cursor.ins_type == NCSInstructionType.DESTRUCT:
+                self._stack.destruct(*self._cursor.args)
+
             elif self._cursor.ins_type == NCSInstructionType.INCIBP:
                 self._stack.increment_bp(self._cursor.args[0])
 
@@ -205,7 +272,7 @@ class Interpreter:
                 self._stack.add(DataType.STRING, "")
 
             elif self._cursor.ins_type == NCSInstructionType.RSADDO:
-                self._stack.add(DataType.OBJECT, 1)
+                self._stack.add(DataType.OBJECT, OBJECT_INVALID_ID)
 
             elif self._cursor.ins_type == NCSInstructionType.RSADDEFF:
                 self._stack.add(DataType.EFFECT, 0)
@@ -232,7 +299,7 @@ class Interpreter:
                 self._stack.copy_down_bp(self._cursor.args[0], self._cursor.args[1])
 
             elif self._cursor.ins_type == NCSInstructionType.JSR:
-                index_return_to = self._ncs.instructions.index(self._cursor) + 1
+                index_return_to = index + 1
                 return_to = self._ncs.instructions[index_return_to]
                 self._returns.append(return_to)
 
@@ -245,11 +312,15 @@ class Interpreter:
             elif self._cursor.ins_type == NCSInstructionType.STORE_STATE:
                 self.store_state()
 
+            elif self._cursor.ins_type not in {
+                NCSInstructionType.NOP, NCSInstructionType.JMP, NCSInstructionType.RETN
+            }:
+                raise NotImplementedError(f"Unsupported test-VM instruction: {self._cursor.ins_type.name}")
+
             self.stack_snapshots.append(
                 StackSnapshot(self._cursor, self._stack.state()),
             )
 
-            # Control flow
             if self._cursor.ins_type == NCSInstructionType.RETN:
                 return_to = self._returns.pop()
                 self._cursor = return_to
@@ -266,62 +337,83 @@ class Interpreter:
                 self._cursor = self._ncs.instructions[index + 1]
 
     def store_state(self):
-        self._stack.store_state()
+        """Record capture metadata; ACTION copies the selected cells when consuming it."""
+        index = self._instruction_indices[id(self._cursor)]
+        global_bytes, local_bytes = self._cursor.args
+        self._stored_action = (index, global_bytes, local_bytes)
 
-        index = self._ncs.instructions.index(self._cursor)
-        tempcursor = self._ncs.instructions[index + 2]
+    def _capture_action(self) -> ActionStackValue:
+        if self._stored_action is None:
+            raise ValueError("ACTION parameter has no preceding STORE_STATE")
+        index, global_bytes, local_bytes = self._stored_action
+        stack, base_pointer = self._stack.capture_state(global_bytes, local_bytes)
+        after = self._ncs.instructions[index + 1].jump
+        if after is None:
+            raise ValueError("STORE_STATE must be followed by a jump over its action")
+        end = self._instruction_indices[id(after)]
+        # Preserve instruction identities so deferred jump targets remain valid.
+        return ActionStackValue(
+            self._ncs.instructions[index + 2 : end - 1],
+            stack,
+            self._ncs.instructions[index + 2],
+            base_pointer,
+            self.executing_object,
+        )
 
-        block = []
-        while tempcursor.ins_type != NCSInstructionType.RETN:
-            block.append(tempcursor)
-            index = self._ncs.instructions.index(tempcursor)
-            tempcursor = self._ncs.instructions[index + 1]
+    def run_stored_action(
+        self,
+        action: ActionStackValue,
+        *,
+        executing_object: int | None = None,
+        max_instructions: int = 100_000,
+    ) -> Interpreter:
+        """Resume a captured action with its saved owner or an explicit override.
 
-        self._stack.add(DataType.ACTION, ActionStackValue(block, self._stack.state()))
+        Captured object values are unchanged; new OBJECT_SELF literals use that owner.
+        """
+        if action.entry is None:
+            raise ValueError("Captured action has no entry instruction")
+        owner = action.executing_object if executing_object is None else executing_object
+        child = Interpreter(self._ncs, functions=self._functions, executing_object=owner)
+        child._cursor = action.entry
+        child._stack._stack = [copy(value) for value in action.stack]
+        child._stack._bp = action.base_pointer
+        child._mocks = self._mocks.copy()
+        child.run(max_instructions=max_instructions)
+        return child
 
     def do_action(self, function: ScriptFunction, args: int):
         args_snap = []
-
-        for i in range(args):
-            if function.params[i].datatype == DataType.VECTOR:
-                vector_object = StackObject(
-                    DataType.VECTOR,
-                    Vector3(
-                        self._stack.pop().value,
-                        self._stack.pop().value,
-                        self._stack.pop().value,
-                    ),
-                )
-                args_snap.append(vector_object)
+        for param in function.params[:args]:
+            if param.datatype == DataType.ACTION:
+                args_snap.append(StackObject(DataType.ACTION, self._capture_action()))
+            elif param.datatype == DataType.VECTOR:
+                # Components are pushed x, y, z and popped in reverse order.
+                z = self._stack.pop().value
+                y = self._stack.pop().value
+                x = self._stack.pop().value
+                args_snap.append(StackObject(DataType.VECTOR, Vector3(x, y, z)))
             else:
                 args_snap.append(self._stack.pop())
 
-        for i in range(args):
-            if function.params[i].datatype != args_snap[i].data_type:
-                msg = f"Invoked action '{function.name}' received the wrong data type for parameter '{function.params[i].name}' valued at '{args_snap[i]}'."
-                raise ValueError(msg)
+        for param, arg in zip(function.params, args_snap):
+            if param.datatype != arg.data_type:
+                raise ValueError(
+                    f"Invoked action '{function.name}' received the wrong data type "
+                    f"for parameter '{param.name}' valued at '{arg}'."
+                )
 
-        if function.returntype != DataType.VOID:
-            if function.name in self._mocks:
-                # Execute and return the value back from the mock
-                value = self._mocks[function.name](*[arg.value for arg in args_snap])
-            else:
-                # Return value of None if no relevant mock is found
-                value = None
-
-            if function.returntype == DataType.VECTOR:
-                if value is None:
-                    self._stack.add(DataType.FLOAT, 0.0)
-                    self._stack.add(DataType.FLOAT, 0.0)
-                    self._stack.add(DataType.FLOAT, 0.0)
-                else:
-                    self._stack.add(DataType.FLOAT, value[0])
-                    self._stack.add(DataType.FLOAT, value[1])
-                    self._stack.add(DataType.FLOAT, value[2])
-            else:
-                self._stack.add(function.returntype, value)
-
-        self.action_snapshots.append(ActionSnapshot(function.name, args_snap, None))
+        value = None
+        if function.name in self._mocks:
+            value = self._mocks[function.name](*[arg.value for arg in args_snap])
+        if function.returntype == DataType.VECTOR:
+            self._stack.add(DataType.VECTOR, Vector3(0.0, 0.0, 0.0) if value is None else value)
+        elif function.returntype != DataType.VOID:
+            if function.returntype == DataType.OBJECT and value is None:
+                # Mock results are runtime handles, not CONSTO encodings.
+                value = OBJECT_INVALID_ID
+            self._stack.add(function.returntype, value)
+        self.action_snapshots.append(ActionSnapshot(function.name, args_snap, value))
 
     def print(self):
         for snap in self.stack_snapshots:
@@ -369,7 +461,6 @@ class StackV2:
         copied = self._stack[stacksize - offset : stacksize - offset + size]
         self._stack.extend(copied)
 
-    # TODO: refactor
     def add(self, datatype: DataType, value: float | int):  # noqa: PYI041,RUF100
         if datatype not in {DataType.INT, DataType.FLOAT}:
             raise NotImplementedError
@@ -382,34 +473,32 @@ class Stack:
     def __init__(self):
         self._stack: list[StackObject] = []
         self._bp: int = 0
-        self._bp_buffer: list[int] = []
 
     def state(self) -> list:
         return copy(self._stack)
 
     def add(self, data_type: DataType, value: Any):
+        if data_type == DataType.VECTOR:
+            for component in value:
+                self.add(DataType.FLOAT, component)
+            return
+        if value is not None:
+            if data_type == DataType.INT:
+                value = int32(int(value))
+            elif data_type == DataType.FLOAT:
+                value = float32(value)
         self._stack.append(StackObject(data_type, value))
 
     def _stack_index(self, offset: int) -> int:
-        if offset >= 0:
-            raise ValueError
-        offset = abs(offset)
-        index = 0
-        while offset > 0:
-            element_size = self._stack[index].data_type.size()
-            offset -= element_size
-            index -= 1
-        return index
+        if offset >= 0 or offset % 4 or -offset > self.stack_pointer():
+            raise ValueError(f"Invalid SP-relative stack offset: {offset}")
+        return offset // 4
 
     def _stack_index_bp(self, offset: int) -> int:
-        if offset >= 0:
-            raise ValueError
-        bp_index = self._bp // 4
-        relative_index = abs(offset) // 4
-        absolute_index = bp_index - relative_index
-        if absolute_index < 0:
-            raise ValueError
-        return bp_index - relative_index
+        index = (self._bp + offset) // 4
+        if offset >= 0 or offset % 4 or index < 0 or index >= len(self._stack):
+            raise ValueError(f"Invalid BP-relative stack offset: {offset}")
+        return index
 
     def stack_pointer(self) -> int:
         return len(self._stack) * 4
@@ -418,113 +507,180 @@ class Stack:
         return self._bp
 
     def peek(self, offset: int) -> Any:
-        real_index = self._stack_index(offset)
-        return self._stack[real_index]
+        return self._stack[self._stack_index(offset)]
+
+    def _range(self, start: int, size: int) -> slice:
+        if size < 0 or size % 4 or start < 0 or start + size // 4 > len(self._stack):
+            raise ValueError(f"Invalid stack range: cell {start}, {size} bytes")
+        return slice(start, start + size // 4)
 
     def copy_to_top(self, offset: int, size: int):
-        for _i in range(size // 4):
-            self._stack.append(self.peek(offset))
+        start = len(self._stack) + self._stack_index(offset)
+        self._stack.extend(self._stack[self._range(start, size)])
 
     def copy_down(self, offset: int, size: int):
-        if size % 4 != 0:
-            msg = "Size must be divisible by 4"
-            raise ValueError(msg)
-
-        num_elements = size // 4
-
-        if num_elements > len(self._stack):
-            msg = "Size exceeds the current stack size"
-            raise IndexError(msg)
-
-        # Let's find the target indices first
-        target_indices = []
-        temp_offset = offset
-
-        for _ in range(num_elements):
-            target_index = self._stack_index(temp_offset)
-            target_indices.append(target_index)
-            temp_offset += 4  # Move to the next position
-
-        # Now copy the elements down the stack
-        for i in range(num_elements):
-            source_index = -1 - i  # Counting from the end of the list
-            target_index = target_indices[-1 - i]  # The last target index corresponds to the first source index
-            self._stack[target_index] = self._stack[source_index]
+        start = len(self._stack) + self._stack_index(offset)
+        target = self._range(start, size)
+        source = self._range(len(self._stack) - size // 4, size)
+        self._stack[target] = self._stack[source]
 
     def pop(self) -> Any:
         return self._stack.pop()
 
     def move(self, offset: int):
-        if offset > 0:
-            raise ValueError
-        if offset == 0:
-            return
-        remove_to = self._stack_index(offset)
-        self._stack = self._stack[:remove_to]
+        if offset > 0 or offset % 4 or -offset > self.stack_pointer():
+            raise ValueError(f"Invalid stack adjustment: {offset}")
+        if offset:
+            del self._stack[offset // 4 :]
 
     def copy_down_bp(self, offset: int, size: int):
-        # Copy from the top of the stack down to the bp adjusted w/ offset?
-        top_value = self._stack[-1]
-        to_index = self._stack_index_bp(offset)
-        self._stack[to_index] = top_value
+        target = self._range(self._stack_index_bp(offset), size)
+        source = self._range(len(self._stack) - size // 4, size)
+        self._stack[target] = self._stack[source]
 
     def copy_top_bp(self, offset: int, size: int):
-        # Copy value relative to base pointer to the top of the stack
-        copy_index = self._stack_index_bp(offset)
-        top_value = self._stack[copy_index]
-        self._stack.append(top_value)
+        self._stack.extend(self._stack[self._range(self._stack_index_bp(offset), size)])
 
     def save_bp(self):
-        self._bp_buffer.append(self.base_pointer())
+        previous_bp = self._bp
         self._bp = self.stack_pointer()
+        self.add(DataType.INT, previous_bp // 4)
 
     def restore_bp(self):
-        self._bp = self._bp_buffer.pop()
+        previous_bp = self.pop()
+        if previous_bp.data_type != DataType.INT:
+            raise ValueError("RESTOREBP requires the saved integer BP cell on top")
+        self._bp = previous_bp.value * 4
+
+    def capture_state(self, global_bytes: int, local_bytes: int) -> tuple[list[StackObject], int]:
+        if global_bytes == 0 and local_bytes == 0:
+            # Zero sizes capture the entire state.
+            global_bytes = self._bp
+            local_bytes = self.stack_pointer() - self._bp
+        if global_bytes < 0 or local_bytes < 0 or global_bytes % 4 or local_bytes % 4:
+            raise ValueError("Captured stack sizes must be nonnegative multiples of four")
+        if global_bytes > self._bp:
+            raise ValueError("Captured global range extends below the base pointer")
+        globals_range = self._range((self._bp - global_bytes) // 4, global_bytes)
+        locals_range = self._range(len(self._stack) - local_bytes // 4, local_bytes)
+        values = self._stack[globals_range] + self._stack[locals_range]
+        return [copy(value) for value in values], global_bytes
+
+    def destruct(self, total_size: int, keep_offset: int, keep_size: int):
+        if keep_offset % 4 or keep_offset < 0 or keep_offset + keep_size > total_size:
+            raise ValueError("Invalid DESTRUCT retained range")
+        start = len(self._stack) - total_size // 4
+        removed = self._range(start, total_size)
+        kept = self._range(start + keep_offset // 4, keep_size)
+        self._stack[removed] = self._stack[kept]
+
+    @staticmethod
+    def _cells_equal(left: StackObject, right: StackObject) -> bool:
+        """Compare typed cells for scalar and struct equality."""
+        if left.data_type != right.data_type:
+            return False
+        if left.value is None or right.value is None:
+            return left.value is right.value
+        if left.data_type == DataType.STRING:
+            return ncs_strings_equal(left.value, right.value)
+        if left.data_type == DataType.FLOAT:
+            return float32_bits_equal(left.value, right.value)
+        return left.value == right.value
+
+    def structure_equality_op(self, size: int, *, negate: bool):
+        right_start = len(self._stack) - size // 4
+        left_start = right_start - size // 4
+        left = self._stack[self._range(left_start, size)]
+        right = self._stack[self._range(right_start, size)]
+        equal = all(self._cells_equal(a, b) for a, b in zip(left, right))
+        del self._stack[left_start:]
+        self.add(DataType.INT, not equal if negate else equal)
+
+    def _pop_vector(self) -> tuple[float, float, float]:
+        z, y, x = self.pop(), self.pop(), self.pop()
+        if any(component.data_type != DataType.FLOAT for component in (x, y, z)):
+            raise ValueError("Vector operation requires three float cells")
+        return x.value, y.value, z.value
+
+    def vector_op(self, instruction: NCSInstructionType):
+        if instruction in {NCSInstructionType.ADDVV, NCSInstructionType.SUBVV}:
+            right = self._pop_vector()
+            left = self._pop_vector()
+            if instruction == NCSInstructionType.ADDVV:
+                result = tuple(a + b for a, b in zip(left, right))
+            else:
+                result = tuple(a - b for a, b in zip(left, right))
+        else:
+            if instruction == NCSInstructionType.MULFV:
+                vector = self._pop_vector()
+                scalar = self.pop().value
+            else:
+                scalar = self.pop().value
+                vector = self._pop_vector()
+            if instruction == NCSInstructionType.DIVVF:
+                result = divide_vector_float32(vector, scalar)
+            else:
+                result = tuple(component * scalar for component in vector)
+        self.add(DataType.VECTOR, result)
 
     def increment(self, offset: int):
         index = self._stack_index(offset)
         self._stack[index] = copy(self._stack[index])
-        self._stack[index].value += 1
+        self._stack[index].value = int32(self._stack[index].value + 1)
 
     def decrement(self, offset: int):
         index = self._stack_index(offset)
         self._stack[index] = copy(self._stack[index])
-        self._stack[index].value -= 1
+        self._stack[index].value = int32(self._stack[index].value - 1)
 
     def increment_bp(self, offset: int):
         index = self._stack_index_bp(offset)
         self._stack[index] = copy(self._stack[index])
-        self._stack[index].value += 1
+        self._stack[index].value = int32(self._stack[index].value + 1)
 
     def decrement_bp(self, offset: int):
         index = self._stack_index_bp(offset)
         self._stack[index] = copy(self._stack[index])
-        self._stack[index].value -= 1
+        self._stack[index].value = int32(self._stack[index].value - 1)
+
+    def _pop_arithmetic_operands(self) -> tuple[DataType, Any, Any]:
+        """Pop right then left, converting mixed numeric operands to float32."""
+        right = self.pop()
+        left = self.pop()
+        if DataType.FLOAT in {left.data_type, right.data_type}:
+            return DataType.FLOAT, float32(left.value), float32(right.value)
+        return left.data_type, left.value, right.value
 
     def addition_op(self):
-        value1 = self._stack.pop()
-        value2 = self._stack.pop()
-        self.add(value2.data_type, value2.value + value1.value)
+        result_type, left, right = self._pop_arithmetic_operands()
+        self.add(result_type, left + right)
 
     def subtraction_op(self):
-        value1 = self._stack.pop()
-        value2 = self._stack.pop()
-        self.add(value2.data_type, value2.value - value1.value)
+        result_type, left, right = self._pop_arithmetic_operands()
+        self.add(result_type, left - right)
 
     def multiplication_op(self):
-        value1 = self._stack.pop()
-        value2 = self._stack.pop()
-        self.add(value1.data_type, value2.value * value1.value)
+        result_type, left, right = self._pop_arithmetic_operands()
+        self.add(result_type, left * right)
 
     def division_op(self):
-        value1 = self._stack.pop()
-        value2 = self._stack.pop()
-        self.add(value1.data_type, value2.value / value1.value)
+        result_type, left, right = self._pop_arithmetic_operands()
+        if result_type == DataType.INT:
+            self.add(DataType.INT, self._integer_quotient(left, right))
+        else:
+            self.add(DataType.FLOAT, left / right)
 
     def modulus_op(self):
         value1 = self._stack.pop()
         value2 = self._stack.pop()
-        self.add(value1.data_type, value2.value % value1.value)
+        quotient = self._integer_quotient(value2.value, value1.value)
+        self.add(DataType.INT, value2.value - quotient * value1.value)
+
+    @staticmethod
+    def _integer_quotient(dividend: int, divisor: int) -> int:
+        # Integer division truncates toward zero.
+        quotient = abs(dividend) // abs(divisor)
+        return -quotient if (dividend < 0) != (divisor < 0) else quotient
 
     def negation_op(self):
         value1 = self._stack.pop()
@@ -532,27 +688,27 @@ class Stack:
 
     def logical_not_op(self):
         value1 = self._stack.pop()
-        self.add(value1.data_type, not value1.value)
+        self.add(DataType.INT, not value1.value)
 
     def logical_and_op(self):
         value1 = self._stack.pop()
         value2 = self._stack.pop()
-        self.add(value1.data_type, value1.value and value2.value)
+        self.add(DataType.INT, bool(value2.value) and bool(value1.value))
 
     def logical_or_op(self):
         value1 = self._stack.pop()
         value2 = self._stack.pop()
-        self.add(value1.data_type, value1.value or value2.value)
+        self.add(DataType.INT, bool(value2.value) or bool(value1.value))
 
     def logical_equality_op(self):
         value1 = self._stack.pop()
         value2 = self._stack.pop()
-        self.add(value1.data_type, value1.value == value2.value)
+        self.add(DataType.INT, self._cells_equal(value2, value1))
 
     def logical_inequality_op(self):
         value1 = self._stack.pop()
         value2 = self._stack.pop()
-        self.add(value1.data_type, value1.value != value2.value)
+        self.add(DataType.INT, not self._cells_equal(value2, value1))
 
     def bitwise_not_op(self):
         value1 = self._stack.pop()
@@ -573,37 +729,40 @@ class Stack:
         value2 = self._stack.pop()
         self.add(value1.data_type, value1.value & value2.value)
 
-    def bitwise_leftshift_op(self):
-        value1 = self._stack.pop()
-        value2 = self._stack.pop()
-        self.add(value1.data_type, value2.value << value1.value)
+    def bitwise_leftshift_op(self) -> None:
+        count = self.pop().value
+        value = self.pop().value
+        self.add(DataType.INT, k2_x86_shift_left(value, count))
 
-    def bitwise_rightshift_op(self):
-        value1 = self._stack.pop()
-        value2 = self._stack.pop()
-        self.add(value1.data_type, value2.value >> value1.value)
+    def bitwise_rightshift_op(self) -> None:
+        count = self.pop().value
+        value = self.pop().value
+        self.add(DataType.INT, k2_x86_shift_right(value, count))
+
+    def bitwise_unsigned_rightshift_op(self) -> None:
+        count = self.pop().value
+        value = self.pop().value
+        self.add(DataType.INT, k2_x86_unsigned_shift_right(value, count))
 
     def compare_greaterthan_op(self):
         value1 = self._stack.pop()
         value2 = self._stack.pop()
-        self.add(value1.data_type, int(value2.value > value1.value))
+        self.add(DataType.INT, value2.value > value1.value)
 
     def compare_greaterthanorequal_op(self):
         value1 = self._stack.pop()
         value2 = self._stack.pop()
-        self.add(value1.data_type, int(value2.value >= value1.value))
+        self.add(DataType.INT, value2.value >= value1.value)
 
     def compare_lessthan_op(self):
         value1 = self._stack.pop()
         value2 = self._stack.pop()
-        self.add(value1.data_type, int(value2.value < value1.value))
+        self.add(DataType.INT, value2.value < value1.value)
 
     def compare_lessthanorequal_op(self):
         value1 = self._stack.pop()
         value2 = self._stack.pop()
-        self.add(value1.data_type, int(value2.value <= value1.value))
-
-    def store_state(self): ...
+        self.add(DataType.INT, value2.value <= value1.value)
 
 
 class StackObject:
@@ -623,8 +782,13 @@ class StackObject:
 
 
 class ActionStackValue(NamedTuple):
+    """Captured stack cells, continuation, and execution owner."""
+
     block: list[NCSInstruction]
     stack: list[StackObject]
+    entry: NCSInstruction | None = None
+    base_pointer: int = 0
+    executing_object: int = OBJECT_INVALID_ID
 
 
 class ActionSnapshot(NamedTuple):

@@ -1,4 +1,4 @@
-"""NSS (NWScript) lexer: PLY lex tokenization and keyword/operator mapping."""
+"""PLY lexer for NSS source."""
 
 from __future__ import annotations
 
@@ -19,27 +19,66 @@ from pykotor.resource.formats.ncs.compiler.classes import (
     StringExpression,
     UnaryOperatorMapping,
 )
+from pykotor.resource.formats.ncs.compiler.numeric import parse_kotor_float_literal
+from pykotor.resource.formats.ncs.compiler.source import (
+    CompileError,
+    SourceDocument,
+    decode_nss_source,
+    describe_token,
+)
 
 
 class NssLexer:
-    """NSS (NWScript Source) lexer/tokenizer.
-
-    Tokenizes NSS source code into tokens for parsing. Handles keywords, operators,
-    literals, identifiers, and special values (OBJECTSELF, OBJECTINVALID, etc.).
-
-    References:
-    ----------
-        PLY (Python Lex-Yacc) library for lexer generation
-    """
+    """Tokenize NSS keywords, operators, identifiers, and literals."""
 
     def __init__(
         self,
         errorlog: lex.NullLogger = lex.NullLogger(),  # noqa: B008
         *,
         nowarn: bool = True,
+        source_name: str = "<string>",
+        source_encoding: str | None = None,
     ):
+        self.source_name = source_name
+        self.source_encoding = source_encoding
+        self.source = SourceDocument(source_name, "")
         self.lexer: lex.Lexer = lex.lex(module=self, errorlog=errorlog, nowarn=nowarn)
+        self._ply_input = self.lexer.input
+        self._ply_token = self.lexer.token
+        self.lexer.input = self.input
+        self.lexer.token = self.token
+        self.lexer.source = self.source
         self.lexer.begin("INITIAL")
+
+    def input(self, source: str | bytes) -> None:
+        """Start a fresh source file, even when the lexer instance is reused."""
+        if isinstance(source, bytes):
+            source = decode_nss_source(source, source_name=self.source_name, encoding=self.source_encoding)
+        if not isinstance(source, str):
+            raise TypeError("NSS source must be str or bytes")
+        source = source.removeprefix("\ufeff")
+        self.source = SourceDocument(self.source_name, source)
+        self.lexer.source = self.source
+        self.lexer.lineno = 1
+        self.lexer.begin("INITIAL")
+        self._ply_input(source)
+
+    def token(self) -> lex.LexToken | None:
+        """Keep the original lexeme separately from the parser's typed value."""
+        token = self._ply_token()
+        if token is not None:
+            token.lexeme = self.source.text[token.lexpos:self.lexer.lexpos]
+            token.location = self.source.location(token.lexpos)
+        return token
+
+    def t_error(self, token):
+        """Turn lexical failures into the same located diagnostics as syntax errors."""
+        message = (
+            "Unterminated string literal"
+            if token.value.startswith('"')
+            else f"unexpected character {describe_token(token.value[0])}"
+        )
+        raise CompileError(message, location=self.source.location(token.lexpos))
 
     tokens: ClassVar[list[str]] = [
         "STRING_VALUE",
@@ -53,7 +92,6 @@ class NssLexer:
         "VOID_TYPE",
         "EVENT_TYPE",
         "EFFECT_TYPE",
-        "ITEMPROPERTY_TYPE",
         "LOCATION_TYPE",
         "STRING_TYPE",
         "TALENT_TYPE",
@@ -110,8 +148,6 @@ class NssLexer:
         "STRUCT",
         "INCREMENT",
         "DECREMENT",
-        "NOP",
-        "CONST",
     ]
 
     literals: ClassVar[list[str]] = [
@@ -129,22 +165,23 @@ class NssLexer:
         "?",
     ]
 
-    t_ignore: str = " \t\r"
+    t_ignore: str = " \t"
 
     def t_NEWLINE(self, t):
-        r"\n+"  # noqa: D300, D400, D415
-        t.lexer.lineno += len(t.value)
-
-    def t_NOP(self, t):
-        r"[Nn][Oo][Pp]"  # noqa: D300, D400, D415, D403
-        return t
+        r"\r\n|\r|\n"  # noqa: D300, D400, D415
+        t.lexer.lineno = self.source.location(t.lexer.lexpos).line
 
     def t_COMMENT(self, t):
         r"//[^\n]*"  # noqa: D300, D400, D415
+        t.lexer.lineno = self.source.location(t.lexer.lexpos).line
 
     def t_MULTILINE_COMMENT(self, t):
         r"\/\*(\*(?!\/)|[^*])*\*\/"  # noqa: D300, D400, D415
-        t.lexer.lineno += t.value.count("\n")
+        t.lexer.lineno = self.source.location(t.lexer.lexpos).line
+
+    def t_UNTERMINATED_COMMENT(self, t):
+        r"/\*(?:[^*]|\*(?!/))*\Z"
+        raise CompileError("Unterminated block comment", location=self.source.location(t.lexpos))
 
     def t_INCLUDE(self, t):
         r"\#include"  # noqa: D300, D400, D415
@@ -170,7 +207,6 @@ class NssLexer:
         t.value = IntExpression(0)
         return t
 
-    # region Control Tokens
     def t_BREAK_CONTROL(self, t):
         r"break\b"  # noqa: D300, D400, D415
         t.value = ControlKeyword.BREAK
@@ -225,13 +261,6 @@ class NssLexer:
         t.value = ControlKeyword.RETURN
         return t
 
-    def t_CONST(self, t):
-        r"const\b"  # noqa: D300, D400, D415
-        return t
-
-    # endregion
-
-    # region Type Tokens
     def t_STRUCT(self, t):
         r"struct\b"  # noqa: D300, D400, D415
         t.value = DataType.STRUCT
@@ -267,11 +296,6 @@ class NssLexer:
         t.value = DataType.EFFECT
         return t
 
-    def t_ITEMPROPERTY_TYPE(self, t):
-        r"itemproperty\b"  # noqa: D300, D400, D415
-        t.value = DataType.ITEMPROPERTY
-        return t
-
     def t_LOCATION_TYPE(self, t):
         r"location\b"  # noqa: D300, D400, D415
         t.value = DataType.LOCATION
@@ -297,9 +321,7 @@ class NssLexer:
         t.value = DataType.VECTOR
         return t
 
-    # endregion
 
-    # region Value Tokens
     def t_IDENTIFIER(self, t):
         "[a-zA-Z_]+[a-zA-Z0-9_]*"  # noqa: D300, D400, D415
         t.value = Identifier(t.value)
@@ -307,17 +329,10 @@ class NssLexer:
 
     @staticmethod
     def _decode_string_literal(value: str) -> str:
-        """Decode BioWare/NWScript string escapes without double-decoding backslashes."""
+        """Decode newline escapes and discard other backslashes."""
         source = value[1:-1]
         result: list[str] = []
         index = 0
-        simple_escapes = {
-            "n": "\n",
-            "r": "\r",
-            "t": "\t",
-            "\\": "\\",
-            '"': '"',
-        }
         while index < len(source):
             char = source[index]
             if char != "\\":
@@ -325,55 +340,30 @@ class NssLexer:
                 index += 1
                 continue
 
-            if index + 1 >= len(source):
-                # The token regex normally prevents this, but keep the decoder total.
-                result.append("\\")
-                index += 1
+            if index + 1 < len(source) and source[index + 1] == "n":
+                result.append("\n")
+                index += 2
                 continue
 
-            escape = source[index + 1]
-            if escape == "x" and index + 3 < len(source):
-                digits = source[index + 2 : index + 4]
-                if all(ch in "0123456789abcdefABCDEF" for ch in digits):
-                    byte_value = int(digits, 16)
-                    raw = bytes((byte_value,))
-                    try:
-                        # Preserve the byte through the NCS writer's Windows-1252 path
-                        # whenever that code page defines the byte (for example 0x80).
-                        result.append(raw.decode("windows-1252"))
-                    except UnicodeDecodeError:
-                        # Undefined Windows-1252 bytes are represented by their matching
-                        # C1 code point; io_ncs preserves those as raw one-byte values.
-                        result.append(chr(byte_value))
-                    index += 4
-                    continue
-
-            if escape in simple_escapes:
-                result.append(simple_escapes[escape])
-            else:
-                # BioWare's lexer consumes the slash for otherwise unrecognised escapes.
-                result.append(escape)
-            index += 2
+            index += 1
 
         return "".join(result)
 
     def t_STRING_VALUE(self, t):
-        r"\"([^\"\\]|\\.)*\""  # noqa: D300, D400, D415, D210
+        r'"[^"\n]*"'  # noqa: D300, D400, D415
+        t.lexer.lineno = self.source.location(t.lexer.lexpos).line
         t.value = StringExpression(self._decode_string_literal(t.value))
         return t
 
     def t_FLOAT_VALUE(self, t):
-        r"(?:[0-9]+\.[0-9]*|\.[0-9]+)f?|[0-9]+f"  # noqa: D300, D400, D415
-        # Beamdog/BioWare accepts a lowercase 'f' suffix but does not require one.
+        r"[0-9]+\.[0-9]*f?"  # noqa: D300, D400, D415
         literal = t.value[:-1] if t.value.endswith("f") else t.value
-        t.value = FloatExpression(float(literal))
+        t.value = FloatExpression(parse_kotor_float_literal(literal))
         return t
 
     def t_INT_HEX_VALUE(self, t):
-        r"0(?:[xX][0-9a-fA-F]+|[bB][01]+|[oO][0-7]+)"  # noqa: D300, D400, D415
-        prefix = t.value[1].lower()
-        base = {"x": 16, "b": 2, "o": 8}[prefix]
-        t.value = IntExpression(int(t.value[2:], base))
+        r"0[xX][0-9a-fA-F]+"  # noqa: D300, D400, D415
+        t.value = IntExpression(int(t.value[2:], 16))
         return t
 
     def t_INT_VALUE(self, t):
@@ -381,7 +371,6 @@ class NssLexer:
         t.value = IntExpression(int(t.value))
         return t
 
-    # endregion
 
     def t_INCREMENT(self, t):
         r"\+\+"  # noqa: D300, D400, D415
@@ -447,7 +436,6 @@ class NssLexer:
         r">>>\="  # noqa: D300, D400, D415
         return t
 
-    # region Operators
     def t_BITWISE_LEFT(self, t):
         "<<"  # noqa: D300, D400, D415
         t.value = OperatorMapping(
@@ -807,4 +795,3 @@ class NssLexer:
         )
         return t
 
-    # endregion
