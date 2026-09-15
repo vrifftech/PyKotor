@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import os
+import re
 
-from contextlib import suppress
 from typing import TYPE_CHECKING
 
 from pykotor.common.misc import Game
@@ -48,25 +48,135 @@ KOTOR_REG_PATHS = {
 }
 
 
-# amazon's k1 reg key can be found using the below code. Doesn't store it in HKLM for some reason.
-def find_software_key(software_name: str) -> str | None:
+def _registry_string(key, name: str) -> str | None:
+    """Read one named string value, ignoring inaccessible or non-string data."""
     import winreg
 
-    with winreg.ConnectRegistry(None, winreg.HKEY_USERS) as hkey_users:
-        i = 0
-        while True:
-            try:
-                # Enumerate through the SIDs
-                sid: str = winreg.EnumKey(hkey_users, i)
-                software_path = f"{sid}\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{software_name}"
-                with suppress(FileNotFoundError), winreg.OpenKey(hkey_users, software_path) as software_key:
-                    # If this point is reached, the software is installed under this SID
-                    return winreg.QueryValue(software_key, "InstallLocation")
-                i += 1
-            except OSError:  # noqa: PERF203
-                break  # No more left to iterate through.
+    try:
+        value, kind = winreg.QueryValueEx(key, name)
+        if kind not in (winreg.REG_SZ, winreg.REG_EXPAND_SZ) or not isinstance(value, str):
+            return None
+        if kind == winreg.REG_EXPAND_SZ:
+            value = winreg.ExpandEnvironmentStrings(value)
+        return value.strip().strip('"') or None
+    except OSError:
+        return None
 
+
+def _registry_views() -> tuple[int, ...]:
+    import winreg
+
+    # Query both views regardless of this Python process's architecture. On a
+    # 32-bit system unsupported views are simply ignored by the caller.
+    return tuple(dict.fromkeys((0, winreg.KEY_WOW64_32KEY, winreg.KEY_WOW64_64KEY)))
+
+
+def find_steam_registry_paths() -> list[str]:
+    """Steam's per-user and machine locations, across both registry views."""
+    try:
+        import winreg
+    except ImportError:
+        return []
+    paths: list[str] = []
+    for hive in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+        for view in _registry_views():
+            try:
+                with winreg.OpenKey(hive, r"Software\Valve\Steam", 0, winreg.KEY_READ | view) as key:
+                    for name in ("SteamPath", "InstallPath"):
+                        value = _registry_string(key, name)
+                        if value and value not in paths:
+                            paths.append(value)
+            except OSError:
+                continue
+    return paths
+
+
+def find_software_key(software_name: str) -> str | None:
+    """Find a per-user uninstall location, including Amazon's K1 entry."""
+    try:
+        import winreg
+    except ImportError:
+        return None
+    try:
+        with winreg.ConnectRegistry(None, winreg.HKEY_USERS) as users:
+            for index in range(4096):
+                try:
+                    sid = winreg.EnumKey(users, index)
+                except OSError:
+                    break
+                subkey = f"{sid}\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{software_name}"
+                for view in _registry_views():
+                    try:
+                        with winreg.OpenKey(users, subkey, 0, winreg.KEY_READ | view) as key:
+                            value = _registry_string(key, "InstallLocation")
+                            if value:
+                                return value
+                    except OSError:
+                        # A denied SID must not hide accessible later users.
+                        continue
+    except OSError:
+        pass
     return None
+
+
+def find_kotor_registry_paths() -> list[tuple[Game | None, str, str]]:
+    """Read retail/GOG/Steam/Amazon candidates without modifying the registry.
+
+    Product keys supply a game identity; display-name-only uninstall matches
+    are candidates whose identity must still be established from their files.
+    """
+    try:
+        import winreg
+    except ImportError:
+        return []
+    results: list[tuple[Game | None, str, str]] = []
+    for game, architectures in KOTOR_REG_PATHS.items():
+        keys = sorted({
+            (path.split("\\", 1)[1].replace("\\WOW6432Node", ""), name)
+            for entries in architectures.values() for path, name in entries
+        })
+        for hive, hive_name in ((winreg.HKEY_CURRENT_USER, "HKCU"), (winreg.HKEY_LOCAL_MACHINE, "HKLM")):
+            for subkey, name in keys:
+                for view in _registry_views():
+                    try:
+                        with winreg.OpenKey(hive, subkey, 0, winreg.KEY_READ | view) as key:
+                            value = _registry_string(key, name)
+                            if value:
+                                results.append((game, value, f"Registry {hive_name}\\{subkey}"))
+                    except OSError:
+                        continue
+
+    uninstall = r"Software\Microsoft\Windows\CurrentVersion\Uninstall"
+    products = {"steam app 32370": Game.K1, "steam app 208580": Game.K2,
+                "1207666283_is1": Game.K1, "1421404581_is1": Game.K2,
+                "amazongames/star wars - knights of the old": Game.K1}
+    for hive, hive_name in ((winreg.HKEY_CURRENT_USER, "HKCU"), (winreg.HKEY_LOCAL_MACHINE, "HKLM")):
+        for view in _registry_views():
+            try:
+                with winreg.OpenKey(hive, uninstall, 0, winreg.KEY_READ | view) as parent:
+                    for index in range(16384):
+                        try:
+                            name = winreg.EnumKey(parent, index)
+                        except OSError:
+                            break
+                        try:
+                            with winreg.OpenKey(parent, name, 0, winreg.KEY_READ | view) as key:
+                                game = products.get(name.casefold())
+                                display = _registry_string(key, "DisplayName") or ""
+                                display = re.sub(r"[^a-z0-9]+", " ", display.casefold())
+                                if game is None and "knights of the old republic" not in display:
+                                    continue
+                                value = _registry_string(key, "InstallLocation")
+                                if value:
+                                    results.append((game, value, f"Registry {hive_name}\\{uninstall}\\{name}"))
+                        except OSError:
+                            continue
+            except OSError:
+                continue
+    amazon = find_software_key("AmazonGames/Star Wars - Knights of the Old")
+    if amazon:
+        results.append((Game.K1, amazon, "Registry HKU Amazon Games"))
+    return list(dict.fromkeys(results))
 
 
 def resolve_reg_key_to_path(reg_key: str, keystr: str) -> str | None:

@@ -2,13 +2,11 @@ from __future__ import annotations
 
 import os
 import pathlib
-import platform
 import tempfile
 
 from functools import lru_cache
 from typing import TYPE_CHECKING
 
-from pykotor.tools.registry import find_software_key, winreg_key
 from utility.string_util import ireplace
 from utility.system.path import (
     Path as InternalPath,
@@ -361,7 +359,8 @@ if os.name != "nt":  # Wrapping is unnecessary on Windows
     create_case_insensitive_pathlib_class(CaseAwarePath)
 
 
-def get_default_paths() -> dict[str, dict[Game, list[str]]]:  # TODO(th3w1zard1): Many of these paths are incomplete and need community input.
+def get_default_paths() -> dict[str, dict[Game, list[str]]]:
+    """Legacy fallback locations; metadata discovery handles additional libraries."""
     from pykotor.common.misc import Game  # noqa: PLC0415  # pylint: disable=import-outside-toplevel
 
     return {
@@ -401,13 +400,14 @@ def get_default_paths() -> dict[str, dict[Game, list[str]]]:  # TODO(th3w1zard1)
         },
         "Linux": {
             Game.K1: [
-                "~/.local/share/steam/common/steamapps/swkotor",
-                "~/.local/share/steam/common/steamapps/swkotor",
+                "~/.local/share/Steam/steamapps/common/swkotor",
+                "~/.steam/steam/steamapps/common/swkotor",
                 "~/.local/share/steam/common/swkotor",
                 "~/.steam/debian-installation/steamapps/common/swkotor",  # verified
                 "~/.steam/root/steamapps/common/swkotor",  # executable name is `KOTOR1` no extension
                 # Flatpak
                 "~/.var/app/com.valvesoftware.Steam/.local/share/Steam/steamapps/common/swkotor",
+                "~/.var/app/com.valvesoftware.Steam/data/Steam/steamapps/common/swkotor",
                 # wsl paths
                 "/mnt/C/Program Files/Steam/steamapps/common/swkotor",
                 "/mnt/C/Program Files (x86)/Steam/steamapps/common/swkotor",
@@ -417,8 +417,8 @@ def get_default_paths() -> dict[str, dict[Game, list[str]]]:  # TODO(th3w1zard1)
                 "/mnt/C/Amazon Games/Library/Star Wars - Knights of the Old",
             ],
             Game.K2: [
-                "~/.local/share/Steam/common/steamapps/Knights of the Old Republic II",
-                "~/.local/share/Steam/common/steamapps/kotor2",  # guess
+                "~/.local/share/Steam/steamapps/common/Knights of the Old Republic II",
+                "~/.local/share/Steam/steamapps/common/kotor2",  # guess
                 "~/.local/share/aspyr-media/kotor2",
                 "~/.local/share/aspyr-media/Knights of the Old Republic II",  # guess
                 "~/.local/share/Steam/common/Knights of the Old Republic II",  # ??? wrong?
@@ -427,6 +427,7 @@ def get_default_paths() -> dict[str, dict[Game, list[str]]]:  # TODO(th3w1zard1)
                 "~/.steam/root/steamapps/common/Knights of the Old Republic II",  # executable name is `KOTOR2` no extension
                 # Flatpak
                 "~/.var/app/com.valvesoftware.Steam/.local/share/Steam/steamapps/common/Knights of the Old Republic II/steamassets",
+                "~/.var/app/com.valvesoftware.Steam/data/Steam/steamapps/common/Knights of the Old Republic II",
                 # wsl paths
                 "/mnt/C/Program Files/Steam/steamapps/common/Knights of the Old Republic II",
                 "/mnt/C/Program Files (x86)/Steam/steamapps/common/Knights of the Old Republic II",
@@ -439,49 +440,17 @@ def get_default_paths() -> dict[str, dict[Game, list[str]]]:  # TODO(th3w1zard1)
 
 
 def find_kotor_paths_from_default() -> dict[Game, list[CaseAwarePath]]:
-    """Finds paths to Knights of the Old Republic game data directories.
+    """Return identified desktop game-data roots, retaining the public API.
 
-    Returns:
-    -------
-        dict[Game, list[CaseAwarePath]]: A dictionary mapping Games to lists of existing path locations.
-
-    Processing Logic:
-    ----------------
-        - Gets default hardcoded path locations from a lookup table
-        - Resolves paths and filters out non-existing ones
-        - On Windows, also searches the registry for additional locations
-        - Returns results as lists for each Game rather than sets
+    Discovery uses launcher metadata, platform registries/application bundles and
+    known-location fallbacks. Unknown/conflicting games are available through
+    discover_kotor_installations(), but are not assigned to either list here.
     """
-    from pykotor.common.misc import Game  # noqa: PLC0415  # pylint: disable=import-outside-toplevel
+    from pykotor.common.misc import Game
+    from pykotor.tools.installations import discover_kotor_installations
 
-    os_str = platform.system()
-
-    # Build hardcoded default kotor locations
-    raw_locations: dict[str, dict[Game, list[str]]] = get_default_paths()
-    locations: dict[Game, set[CaseAwarePath]] = {
-        game: {
-            case_path
-            for case_path in (
-                CaseAwarePath(path).expanduser().resolve()
-                for path in paths
-            )
-            if case_path.safe_isdir()
-        }
-        for game, paths in raw_locations.get(os_str, {}).items()
-    }
-
-    # Build kotor locations by registry (if on windows)
-    if os_str == "Windows":
-        from utility.system.win32.registry import resolve_reg_key_to_path
-        for game, possible_game_paths in ((Game.K1, winreg_key(Game.K1)), (Game.K2, winreg_key(Game.K2))):
-            for reg_key, reg_valname in possible_game_paths:
-                path_str = resolve_reg_key_to_path(reg_key, reg_valname)
-                path = CaseAwarePath(path_str).resolve() if path_str else None
-                if path and path.name and path.safe_isdir():
-                    locations[game].add(path)
-        amazon_k1_path_str: str | None = find_software_key("AmazonGames/Star Wars - Knights of the Old")
-        if amazon_k1_path_str is not None and InternalPath(amazon_k1_path_str).safe_isdir():
-            locations[Game.K1].add(CaseAwarePath(amazon_k1_path_str))
-
-    # don't return nested sets, return as lists.
-    return {Game.K1: [*locations[Game.K1]], Game.K2: [*locations[Game.K2]]}
+    locations: dict[Game, list[CaseAwarePath]] = {Game.K1: [], Game.K2: []}
+    for installation in discover_kotor_installations():
+        if installation.game in locations:
+            locations[installation.game].append(CaseAwarePath(installation.root))
+    return locations
