@@ -75,6 +75,40 @@ SECTION_NOT_FOUND_ERROR = "The [{}] section was not found in the ini"
 REFERENCES_TRACEBACK_MSG = ", referenced by '{}={}' in [{}]"
 
 
+def _first_ini_sections(ini_text: str) -> str:
+    """Keep the first physical block of each case-insensitive INI section.
+
+    TSLPatcher reads the first matching section, whereas ConfigParser with
+    strict=False merges repeated blocks and overwrites their shared values.
+    Comment out later block bodies so missing keys cannot leak in from them.
+    Retain their headers to reset multiline parsing and preserve line numbers.
+    """
+    seen_sections: dict[str, str] = {}
+    skip_section = False
+    option_indent: int | None = None
+    lines: list[str] = []
+
+    for line in ini_text.splitlines(keepends=True):
+        value = line.strip()
+        if value and not value.startswith((";", "#")):
+            indent = len(line) - len(line.lstrip())
+            if option_indent is None or indent <= option_indent:
+                header = ConfigParser.SECTCRE.match(value)
+                if header is not None:
+                    name = header.group("header")
+                    section = name.casefold()
+                    skip_section = section in seen_sections
+                    first_name = seen_sections.setdefault(section, name)
+                    option_indent = None
+                    lines.append(line.replace(f"[{name}]", f"[{first_name}]", 1))
+                    continue
+                elif seen_sections:
+                    option_indent = indent
+        lines.append(";" + line if skip_section else line)
+
+    return "".join(lines)
+
+
 class NamespaceReader:
     """Responsible for reading and loading namespaces from the namespaces.ini file."""
 
@@ -191,7 +225,7 @@ class ConfigReader:
         # Use case-sensitive keys
         ini.optionxform = lambda optionstr: optionstr if optionstr.strip() else optionstr.strip()  # type: ignore[method-assign]
         try:
-            ini.read_string(decode_bytes_with_fallbacks(BinaryReader.load_file(resolved_file_path)))
+            ini.read_string(_first_ini_sections(decode_bytes_with_fallbacks(BinaryReader.load_file(resolved_file_path))))
         except ParsingError as e:
             e.source = str(resolved_file_path)
             raise e  # noqa: TRY201  # don't `raise from e` here!
