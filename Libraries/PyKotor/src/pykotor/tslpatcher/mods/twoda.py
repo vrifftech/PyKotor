@@ -778,7 +778,12 @@ class CopyRow2DA(Modify2DA):
 
 
 class AddColumn2DA(Modify2DA):
-    """Adds a column and applies its modifier entries in their original order."""
+    """Add a column, optionally placing it with BeforeColumn or using IfExists=Update.
+
+    Without these options, legacy append/skip behavior is unchanged. DefaultValue
+    never fills existing cells during an update; explicit I/L assignments still
+    use the current default when their value is empty. Column names match exactly.
+    """
 
     def __init__(
         self,
@@ -814,20 +819,43 @@ class AddColumn2DA(Modify2DA):
         )
 
     def apply(self, twoda: TwoDA, memory: PatcherMemory):
+        options = {key.lower(): value for key, value in self.entries if key.lower() in {"beforecolumn", "ifexists"}}
+        if_exists = options.get("ifexists", "skip").strip().lower()
+        if if_exists not in {"skip", "update"}:
+            raise ValueError(f"{self.identifier}: IfExists must be Skip or Update.")
+
         added = False
+        created = False
         header = ""
         default = ""
 
         for key, raw_value in self.entries:
             lower_key = key.lower()
+            if lower_key in {"beforecolumn", "ifexists"}:
+                continue
 
             if lower_key == "columnlabel" and not added:
                 if raw_value == "":
                     continue
                 resolved_header = self._resolve_2da_memory(raw_value, memory)
-                if resolved_header in twoda.get_headers():
+                headers = twoda.get_headers()
+                exists = resolved_header in headers
+                if exists and if_exists == "skip":
                     return
-                twoda.add_column(resolved_header)
+                if options and any(name != resolved_header and name.lower() == resolved_header.lower() for name in headers):
+                    raise ValueError(f"{self.identifier}: ColumnLabel '{resolved_header}' conflicts with a differently cased header.")
+
+                # Validate placement before adding a column or modifying any cells.
+                anchor = None
+                if "beforecolumn" in options:
+                    anchor = self._resolve_2da_memory(options["beforecolumn"], memory)
+                    if not anchor or anchor not in headers:
+                        raise ValueError(f"{self.identifier}: BeforeColumn header '{anchor}' does not exist.")
+                if not exists:
+                    twoda.add_column(resolved_header)
+                    created = True
+                if anchor is not None:
+                    twoda.move_column_before(resolved_header, anchor)
                 header = resolved_header
                 added = True
                 continue
@@ -842,6 +870,8 @@ class AddColumn2DA(Modify2DA):
                 value = self._to_internal(value)
                 old_default = default
                 default = value
+                if not created:
+                    continue
                 for row_index in range(twoda.get_height()):
                     row = twoda.get_row(row_index)
                     if row.get_string(header) == old_default:

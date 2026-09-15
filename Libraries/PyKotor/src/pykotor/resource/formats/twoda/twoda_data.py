@@ -107,6 +107,18 @@ class TwoDA:
         for row in self._rows:
             row[header] = ""
 
+    def move_column_before(self, header: str, anchor: str) -> None:
+        """Move an exact column header before another without changing any cells.
+
+        Raises KeyError if either header is missing. Moving before itself is a no-op.
+        """
+        for name in (header, anchor):
+            if name not in self._headers:
+                raise KeyError(f"The header '{name}' does not exist.")
+        if header != anchor:
+            self._headers.remove(header)
+            self._headers.insert(self._headers.index(anchor), header)
+
     def remove_column(
         self,
         header: str,
