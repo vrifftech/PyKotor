@@ -809,6 +809,7 @@ class ConfigReader:
             selector = key.find("(lang")
             if selector != -1 and key.endswith(")"):
                 substring = key[selector + 5 : -1]
+                key = key[:selector]
                 if substring.isascii() and substring.isdigit():
                     substring_id = int(substring)
                     locstring = LocalizedStringDelta()
@@ -819,7 +820,6 @@ class ConfigReader:
                         language, gender = locstring.substring_pair(substring_id)
                         locstring.set_data(language, gender, cls.normalize_tslpatcher_crlf(str_value))
                     value = FieldValueConstant(locstring)
-                    key = key[:selector]
 
         if key.startswith("2DAMEMORY") and key[9:].isascii() and key[9:].isdigit():
             path_token_id = int(key[9:])
