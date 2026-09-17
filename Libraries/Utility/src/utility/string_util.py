@@ -208,6 +208,9 @@ def striprtf(text: str) -> str:  # noqa: C901, PLR0915, PLR0912
             elif char in "{}\\":
                 if not ignorable:
                     out.append(char)
+            elif char in "\r\n":
+                if not ignorable:
+                    out.append("\n")
             elif char == "*":
                 ignorable = True
         elif word:  # \foo
