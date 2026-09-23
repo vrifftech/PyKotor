@@ -34,6 +34,7 @@ from pykotor.tslpatcher.mods.install import InstallFile
 from pykotor.tslpatcher.mods.ncs import ModificationsNCS
 from pykotor.tslpatcher.mods.nss import ModificationsNSS
 from pykotor.tslpatcher.mods.ssf import ModificationsSSF, ModifySSF
+from pykotor.tslpatcher.mods.template import convert_to_bool
 from pykotor.tslpatcher.mods.tlk import MergeTLK, ModificationsTLK, ModifyTLK
 from pykotor.tslpatcher.mods.twoda import (
     AddColumn2DA,
@@ -109,6 +110,17 @@ def _first_ini_sections(ini_text: str) -> str:
     return "".join(lines)
 
 
+def _expand_ini_newlines(ini: ConfigParser) -> None:
+    """Decode TST_IniFile value escapes after parsing, never in section names or keys."""
+    for section_name in ini.sections():
+        section = ini[section_name]
+        for key, value in section.items():
+            if value is not None:
+                expanded = value.replace("<#LF#>", "\n").replace("<#CR#>", "\r")
+                if expanded != value:
+                    section[key] = expanded
+
+
 class NamespaceReader:
     """Responsible for reading and loading namespaces from the namespaces.ini file."""
 
@@ -123,14 +135,16 @@ class NamespaceReader:
             allow_no_value=True,
             strict=False,
             interpolation=None,
+            default_section=None,
         )
         # use case insensitive keys
         ini.optionxform = lambda optionstr: optionstr.lower()  # type: ignore[method-assign]
 
-        ini.read_string(decode_bytes_with_fallbacks(BinaryReader.load_file(path)))
+        ini.read_string(_first_ini_sections(decode_bytes_with_fallbacks(BinaryReader.load_file(path))))
         return NamespaceReader(ini).load()
 
     def load(self) -> list[PatcherNamespace]:  # Case-insensitive access to section
+        _expand_ini_newlines(self.ini)
         namespaces_section_name: str | None = next((section for section in self.ini.sections() if section.lower() == "namespaces"), None)
         if namespaces_section_name is None:
             raise KeyError(SECTION_NOT_FOUND_ERROR.format("Namespaces"))
@@ -220,6 +234,7 @@ class ConfigReader:
             allow_no_value=True,
             strict=False,
             interpolation=None,
+            default_section=None,
         )
 
         # Use case-sensitive keys
@@ -272,6 +287,7 @@ class ConfigReader:
 
     def load_settings(self):
         """Loads [Settings] from ini configuration into memory."""
+        _expand_ini_newlines(self.ini)
         settings_section: str | None = self.get_section_name("settings")
         if settings_section is None:
             self.log.add_warning("[Settings] section missing from ini.")
@@ -306,12 +322,12 @@ class ConfigReader:
         for suffix in required_order:
             self.config.required_files.append(required_files[suffix])
             self.config.required_messages.append(required_messages.get(suffix, ""))
-        self.config.save_processed_scripts = int(settings_ini.get("SaveProcessedScripts", 0))
+        self.config.save_processed_scripts = int(convert_to_bool(settings_ini.get("SaveProcessedScripts", False)))
         self.config.script_compiler_flags = settings_ini.get("ScriptCompilerFlags", "") or ""
         self.config.log_level = LogLevel(int(settings_ini.get("LogLevel", LogLevel.WARNINGS.value)))
 
         # HoloPatcher optional
-        self.config.ignore_file_extensions = bool(settings_ini.get("IgnoreExtensions")) or False
+        self.config.ignore_file_extensions = convert_to_bool(settings_ini.get("IgnoreExtensions", False))
 
         lookup_game_number: str | None = settings_ini.get("LookupGameNumber")
         if lookup_game_number:
@@ -812,7 +828,7 @@ class ConfigReader:
                 key = key[:selector]
                 if substring.isascii() and substring.isdigit():
                     substring_id = int(substring)
-                    locstring = LocalizedStringDelta()
+                    locstring = LocalizedStringDelta(create_missing_substrings=False)
                     field_value = cls._deferred_gff_value(str_value, GFFFieldType.String)
                     if cls._requires_runtime_gff_resolution(str_value):
                         locstring.set_field_value(substring_id, field_value)
@@ -886,7 +902,7 @@ class ConfigReader:
             raw_iterated_value = iterated_value or ""
             if key.startswith("2DAMEMORY") and key[9:].isascii() and key[9:].isdigit():
                 token_id = int(key[9:])
-                if raw_iterated_value == "ListIndex":
+                if raw_iterated_value.lower() == "listindex":
                     modifiers.append(
                         Memory2DAModifierGFF(
                             identifier,
@@ -896,7 +912,7 @@ class ConfigReader:
                             store_list_index=True,
                         )
                     )
-                elif raw_iterated_value == "!FieldPath":
+                elif raw_iterated_value.lower() == "!fieldpath":
                     modifiers.append(
                         Memory2DAModifierGFF(
                             identifier,
@@ -966,7 +982,7 @@ class ConfigReader:
         if field_type is GFFFieldType.List:
             return FieldValueConstant(GFFList())
         if field_type is GFFFieldType.Struct:
-            raw_type_id = ini_section_dict.get("TypeId", "0") or "0"
+            raw_type_id = ini_section_dict.get("TypeId", "") or ""
             if raw_type_id.lower() == "listindex":
                 return FieldValueListIndex("listindex")
             type_id = int(raw_type_id) if raw_type_id.isascii() and raw_type_id.isdigit() else 0

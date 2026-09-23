@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import codecs
 import os
 import re
 
@@ -120,7 +121,7 @@ def compare_and_format(old_value: object, new_value: object) -> tuple[str, str]:
     return os.linesep.join(formatted_old), os.linesep.join(formatted_new)
 
 
-def striprtf(text: str) -> str:  # noqa: C901, PLR0915, PLR0912
+def striprtf(text: str) -> str:  # noqa: C901, PLR0915, PLR0912, PLR0914
     """Removes RTF tags from a string.
 
     Strips RTF encoding utterly and completely
@@ -182,24 +183,106 @@ def striprtf(text: str) -> str:  # noqa: C901, PLR0915, PLR0912
         "bullet": "\u2022",
         "lquote": "\u2018",
         "rquote": "\u2019",
-        "ldblquote": "\201C",
+        "ldblquote": "\u201c",
         "rdblquote": "\u201d",
     }
-    stack: list[tuple[int, bool]] = []
+    charset_codepages: dict[int, int] = {
+        77: 10000,
+        128: 932,
+        129: 949,
+        130: 1361,
+        134: 936,
+        136: 950,
+        161: 1253,
+        162: 1254,
+        163: 1258,
+        177: 1255,
+        178: 1256,
+        186: 1257,
+        204: 1251,
+        222: 874,
+        238: 1250,
+        255: 437,
+    }
+
+    def encoding_from_codepage(codepage: int, fallback: str = "cp1252") -> str:
+        encoding = "mac_roman" if codepage == 10000 else f"cp{codepage}"
+        try:
+            codecs.lookup(encoding)
+        except LookupError:
+            return fallback
+        return encoding
+
+    def encoding_from_charset(charset: int, ansi_encoding: str) -> str:
+        if charset in {0, 1, 2}:
+            return ansi_encoding
+        return encoding_from_codepage(charset_codepages.get(charset, 1252), ansi_encoding)
+
+    stack: list[
+        tuple[int, bool, str, str, int | None, str | None, int | None]
+    ] = []
     ignorable = False  # Whether this group (and all inside it) are "ignorable".
     ucskip = 1  # Number of ASCII characters to skip after a unicode character.
     curskip = 0  # Number of ASCII characters left to skip
+    ansi_encoding = "cp1252"
+    current_encoding = ansi_encoding
+    current_font: int | None = None
+    default_font: int | None = None
+    destination: str | None = None
+    font_definition: int | None = None
+    font_encodings: dict[int, str] = {}
+    hex_buffer = bytearray()
+    hex_encoding = current_encoding
     out: list[str] = []  # Output buffer.
+
+    def flush_hex_buffer() -> None:
+        nonlocal hex_encoding
+        if not hex_buffer:
+            return
+        out.append(bytes(hex_buffer).decode(hex_encoding, errors="replace"))
+        hex_buffer.clear()
+        hex_encoding = current_encoding
+
     for match in pattern.finditer(text):
         word, arg, hexcode, char, brace, tchar = match.groups()
+        if hexcode:
+            if curskip > 0:
+                curskip -= 1
+            elif not ignorable:
+                if hex_buffer and hex_encoding != current_encoding:
+                    flush_hex_buffer()
+                hex_encoding = current_encoding
+                hex_buffer.append(int(hexcode, 16))
+            continue
+
+        flush_hex_buffer()
         if brace:
             curskip = 0
             if brace == "{":
                 # Push state
-                stack.append((ucskip, ignorable))
+                stack.append(
+                    (
+                        ucskip,
+                        ignorable,
+                        ansi_encoding,
+                        current_encoding,
+                        current_font,
+                        destination,
+                        font_definition,
+                    )
+                )
             elif brace == "}":
                 # Pop state
-                ucskip, ignorable = stack.pop()
+                (
+                    ucskip,
+                    ignorable,
+                    ansi_encoding,
+                    current_encoding,
+                    current_font,
+                    destination,
+                    font_definition,
+                ) = stack.pop()
+                current_encoding = font_encodings.get(current_font, current_encoding)
         elif char:  # \x (not a letter)
             curskip = 0
             if char == "~":
@@ -215,31 +298,63 @@ def striprtf(text: str) -> str:  # noqa: C901, PLR0915, PLR0912
                 ignorable = True
         elif word:  # \foo
             curskip = 0
+            word = word.lower()
             if word in destinations:
+                destination = word
                 ignorable = True
+            elif destination == "fonttbl" and word == "f" and arg is not None:
+                font_definition = int(arg)
+            elif destination == "fonttbl" and word in {"fcharset", "cpg"} and arg is not None:
+                if font_definition is not None:
+                    if word == "fcharset":
+                        font_encodings[font_definition] = encoding_from_charset(int(arg), ansi_encoding)
+                    else:
+                        font_encodings[font_definition] = encoding_from_codepage(int(arg), ansi_encoding)
             elif ignorable:
                 pass
             elif word in specialchars:
                 out.append(specialchars[word])
-            elif word == "uc":
+            elif word == "ansi":
+                ansi_encoding = "cp1252"
+                current_encoding = font_encodings.get(current_font, ansi_encoding)
+            elif word == "mac":
+                ansi_encoding = "mac_roman"
+                current_encoding = font_encodings.get(current_font, ansi_encoding)
+            elif word == "pc":
+                ansi_encoding = "cp437"
+                current_encoding = font_encodings.get(current_font, ansi_encoding)
+            elif word == "pca":
+                ansi_encoding = "cp850"
+                current_encoding = font_encodings.get(current_font, ansi_encoding)
+            elif word == "ansicpg" and arg is not None:
+                ansi_encoding = encoding_from_codepage(int(arg), ansi_encoding)
+                current_encoding = font_encodings.get(current_font, ansi_encoding)
+            elif word == "f" and arg is not None:
+                current_font = int(arg)
+                current_encoding = font_encodings.get(current_font, ansi_encoding)
+            elif word == "deff" and arg is not None:
+                default_font = int(arg)
+                if current_font is None:
+                    current_font = default_font
+                    current_encoding = font_encodings.get(current_font, ansi_encoding)
+            elif word == "fcharset" and arg is not None:
+                current_encoding = encoding_from_charset(int(arg), ansi_encoding)
+            elif word == "cpg" and arg is not None:
+                current_encoding = encoding_from_codepage(int(arg), ansi_encoding)
+            elif word == "uc" and arg is not None:
                 ucskip = int(arg)
-            elif word == "u":
+            elif word == "u" and arg is not None:
                 c = int(arg)
                 if c < 0:
                     c += 0x10000
                 out.append(chr(c))
                 curskip = ucskip
-        elif hexcode:  # \'xx
-            if curskip > 0:
-                curskip -= 1
-            elif not ignorable:
-                c = int(hexcode, 16)
-                out.append(chr(c))
         elif tchar:
             if curskip > 0:
                 curskip -= 1
             elif not ignorable:
                 out.append(tchar)
+    flush_hex_buffer()
     return "".join(out)
 
 

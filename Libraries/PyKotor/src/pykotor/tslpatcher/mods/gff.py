@@ -50,6 +50,22 @@ _INTEGER_RANGES: dict[GFFFieldType, tuple[int, int]] = {
 }
 
 
+def _resolve_2da_memory_slot(
+    memory: PatcherMemory,
+    token_id: int,
+    unresolved_token: str,
+) -> str | PureWindowsPath:
+    """Match TSLPatcher's allocated-array behavior for 2DAMEMORY lookups."""
+    slots = memory.memory_2da
+    if not slots:
+        return unresolved_token
+
+    highest_slot = max((slot for slot in slots if slot > 0), default=0)
+    if token_id < 1 or token_id > highest_slot:
+        token_id = 1
+    return slots.get(token_id, "")
+
+
 def _clone_locstring(value: LocalizedString) -> LocalizedString:
     return LocalizedString(value.stringref, dict(value._substrings))
 
@@ -296,13 +312,9 @@ class FieldValueRaw(FieldValueConstant):
             return memory.memory_str.get(token_id, 0)
 
         if raw_value.startswith("2DAMEMORY"):
-            if not memory.memory_2da:
-                return raw_value
             suffix = raw_value[9:]
             token_id = int(suffix) if _ASCII_DIGITS.fullmatch(suffix) else 1
-            if token_id not in memory.memory_2da:
-                token_id = 1
-            return memory.memory_2da.get(token_id, raw_value)
+            return _resolve_2da_memory_slot(memory, token_id, raw_value)
 
         return raw_value
 
@@ -322,10 +334,7 @@ class FieldValue2DAMemory(FieldValue):
 
     def resolve(self, memory: PatcherMemory) -> Any:
         token = f"2DAMEMORY{self.token_id}"
-        if not memory.memory_2da:
-            return token
-        token_id = self.token_id if self.token_id in memory.memory_2da else 1
-        return memory.memory_2da.get(token_id, token)
+        return _resolve_2da_memory_slot(memory, self.token_id, token)
 
 
 class FieldValueTLKMemory(FieldValue):
@@ -337,10 +346,16 @@ class FieldValueTLKMemory(FieldValue):
 
 
 class LocalizedStringDelta(LocalizedString):
-    def __init__(self, stringref: FieldValue | None = None):
+    def __init__(
+        self,
+        stringref: FieldValue | None = None,
+        *,
+        create_missing_substrings: bool = True,
+    ):
         super().__init__(-1)
         self.stringref: FieldValue | None = stringref  # type: ignore[assignment]
         self._deferred_substrings: dict[int, FieldValue] = {}
+        self.create_missing_substrings = create_missing_substrings
 
     def __str__(self):
         return f"LocalizedStringDelta(stringref={self.stringref!r})"
@@ -366,6 +381,8 @@ class LocalizedStringDelta(LocalizedString):
                 changed = True
 
         for language, gender, text in self:
+            if not self.create_missing_substrings and not locstring.exists(language, gender):
+                continue
             if locstring.get(language, gender) != text:
                 locstring.set_data(language, gender, text)
                 changed = True
@@ -374,6 +391,8 @@ class LocalizedStringDelta(LocalizedString):
             raw_text = field_value.resolve(memory)
             text = str(raw_text).replace("<#LF#>", "\n").replace("<#CR#>", "\r")
             language, gender = self.substring_pair(substring_id)
+            if not self.create_missing_substrings and not locstring.exists(language, gender):
+                continue
             if locstring.get(language, gender) != text:
                 locstring.set_data(language, gender, text)
                 changed = True

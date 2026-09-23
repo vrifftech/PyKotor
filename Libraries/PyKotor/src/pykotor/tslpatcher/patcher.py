@@ -687,15 +687,14 @@ class ModInstaller:
 
         config = PatcherConfig()
         config.load(ini_text, self.patch_data_path, self.log, self.tslpatchdata_path)
-        self._config = config
 
-        if self._config.required_files:
+        if config.required_files:
             override_folder = self._resolve_relative_folder_within(
                 self.game_path,
                 "override",
                 "required-file destination",
             )
-            for i, files in enumerate(self._config.required_files):
+            for i, files in enumerate(config.required_files):
                 for file in files:
                     requiredfile_path = self._resolve_relative_file_within(
                         override_folder,
@@ -705,11 +704,12 @@ class ModInstaller:
                     if not requiredfile_path.safe_isfile():
                         requiredfile_path = None
                     if requiredfile_path is None:
-                        required_message = self._config.required_messages[i].strip()
+                        required_message = config.required_messages[i].strip()
                         if not required_message:
                             required_message = f"Cannot locate required file {file}, unable to continue with install!"
                         raise ImportError(required_message)
-        return self._config
+        self._config = config
+        return config
 
     def backup(self) -> tuple[CaseAwarePath, set]:
         """Creates a backup of the patch files.

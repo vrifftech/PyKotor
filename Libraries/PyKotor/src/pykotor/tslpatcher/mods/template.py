@@ -138,33 +138,23 @@ class PatcherModifications(ABC):
         self.sourcefolder = file_section_dict.pop("!SourceFolder", default_sourcefolder)
 
 
-def convert_to_bool(value: bool | str) -> bool:
-    # sourcery skip: assign-if-exp, reintroduce-else
-    """Convert a value to boolean.
+def convert_to_bool(value: bool | str | int | None) -> bool:
+    """Parse Boolean flags without ever treating an unrecognized string as true.
 
-    The value can be:
-    - A boolean (True or False)
-    - A string "1" (which should be converted to True)
-    - A string "0" (which should be converted to False)
-
-    This function is redundant, but provided for users that may not understand Python.
-
-    Args:
-    ----
-        value (bool or str): The value to be converted to a boolean.
-
-    Returns:
-    -------
-        bool: The converted boolean value.
+    Accept true/false (case-insensitive) and decimal integers (zero is false).
+    Missing or empty values are false. Invalid nonempty values raise ValueError.
     """
-    # Check if the value is the string "1". If so, return True.
-    if value == "1":
-        return True
-
-    # Check if the value is the string "0". If so, return False.
-    if value == "0":
+    if value is None:
         return False
-
-    # If the value is not a string "1" or "0", it must be a boolean.
-    # So, return it as it is.
-    return value  # type: ignore[type]
+    if isinstance(value, (bool, int)):
+        return bool(value)
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"", "false"}:
+            return False
+        if normalized == "true":
+            return True
+        digits = normalized[1:] if normalized[:1] in {"+", "-"} else normalized
+        if digits.isascii() and digits.isdigit():
+            return int(normalized) != 0
+    raise ValueError(f"Invalid Boolean value {value!r}; expected true/false or a decimal integer.")
