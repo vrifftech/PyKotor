@@ -5,9 +5,10 @@ HoloPatcher and Holocron Toolset repositories. The distribution is named
 **PyKotorUtility** to distinguish it from unrelated packages called Utility.
 Its import name remains `utility`; no application imports need changing.
 
-It includes the maintained path, platform-dialog, logging, error, tooltip and
-RTF/RTE helpers. The unused updater/crypto and alternate GUI communication
-frameworks are no longer part of this distribution. Tcl/Tk is provided by the
+It includes the maintained path, logging, error, event, tooltip and RTF/RTE
+helpers used by HoloPatcher and Holocron Toolset. Unused updater/crypto, native
+platform-dialog, process/COM/shell and alternate GUI helper implementations are
+not part of this application-scoped distribution. Tcl/Tk is provided by the
 Python/system installation, not by a pip dependency.
 
 ## Build and installation

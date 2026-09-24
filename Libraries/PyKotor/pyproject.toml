@@ -19,7 +19,6 @@ hook-dirs = "pykotor.__pyinstaller:get_hook_dirs"
 secure_xml = ["defusedxml>=0.7,<1"]
 encodings = ["charset-normalizer>=2,<4"]
 images = ["Pillow>=9.5"]
-font = ["PyKotorFont==1.7"]
 
 [tool.setuptools]
 package-dir = {"" = "src"}

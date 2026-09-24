@@ -45,7 +45,7 @@ jobs:
         run: |
           import subprocess
           import sys
-          for project in ("Utility", "PyKotor", "PyKotorGL", "PyKotorFont"):
+          for project in ("Utility", "PyKotor", "PyKotorGL"):
               subprocess.run([sys.executable, "-m", "build", "--no-isolation", "--outdir", "dist", "Libraries/" + project], check=True)
       - name: Install the built libraries together
         shell: python
@@ -58,7 +58,7 @@ jobs:
       - run: python -m pip check
       - name: Check installed namespace ownership
         working-directory: ${{ runner.temp }}
-        run: python -c "import pykotor.resource.formats.gff, pykotor.gl.scene, pykotor.font.draw, utility.system.path"
+        run: python -c "import pykotor.resource.formats.gff, pykotor.gl.scene, utility.system.path"
 
   lint:
     runs-on: ubuntu-latest

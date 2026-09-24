@@ -17,13 +17,13 @@ python -m pytest tests -ra
 python -m ruff check Libraries tests
 ```
 
-Pytest registers the four source directories through the root `pyproject.toml`.
+Pytest registers the three source directories through the root `pyproject.toml`.
 Ruff is the only configured formatter/linter. Its default gate checks syntax-level
 errors without rewriting legacy style. `ruff format` may be used deliberately on
 files being edite.
 
 The core CI job installs only the core/decoding test requirements. The separate
-wheel job builds all four libraries and installs their actual runtime dependencies.
+wheel job builds all three libraries and installs their actual runtime dependencies.
 It does not silently skip failing tests or use a source-directory `.pth` to conceal
 missing wheel contents.
 
@@ -36,18 +36,16 @@ With `build`, setuptools and wheel already installed, run from this root:
 python -m build --no-isolation --outdir dist Libraries/Utility
 python -m build --no-isolation --outdir dist Libraries/PyKotor
 python -m build --no-isolation --outdir dist Libraries/PyKotorGL
-python -m build --no-isolation --outdir dist Libraries/PyKotorFont
 ```
 
 The commands use each library's explicit PEP 517/621 metadata, not a custom
 `setup.py` parser. No GUI/test packages are included in the core wheels, and the
-core/GL/font wheels do not overlap in owned files.
+core and GL wheels do not overlap in owned files.
 
-For offline installation into a separate environment, include both these four
-matching wheels and the necessary third-party wheels in the local wheel directory:
+For offline installation into a separate environment, include these three matching wheels and the necessary third-party wheels in the local wheel directory:
 
 ```text
-python -m pip install --no-index --find-links /path/to/wheels PyKotor PyKotorGL PyKotorFont
+python -m pip install --no-index --find-links /path/to/wheels PyKotor PyKotorGL
 python -m pip check
 ```
 

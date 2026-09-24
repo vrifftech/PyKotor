@@ -2,7 +2,7 @@
 [tool.ruff]
 target-version = "py310"
 line-length = 175
-src = ["Libraries/PyKotor/src", "Libraries/Utility/src", "Libraries/PyKotorGL/src", "Libraries/PyKotorFont/src", "tests"]
+src = ["Libraries/PyKotor/src", "Libraries/Utility/src", "Libraries/PyKotorGL/src", "tests"]
 extend-exclude = ["build", "dist", "wheelhouse", ".venv", ".venv-*", "**/*.egg-info"]
 
 [tool.ruff.lint]
@@ -14,7 +14,7 @@ line-ending = "auto"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["Libraries/PyKotor/src", "Libraries/Utility/src", "Libraries/PyKotorGL/src", "Libraries/PyKotorFont/src"]
+pythonpath = ["Libraries/PyKotor/src", "Libraries/Utility/src", "Libraries/PyKotorGL/src"]
 log_cli = true
 log_cli_level = "CRITICAL"
 log_cli_format = "%(message)s"
