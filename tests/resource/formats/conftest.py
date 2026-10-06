@@ -325,6 +325,8 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo) -> pytes
         # Skip setup phase
         return None
     if call.excinfo is not None and call.when == "call":
+        if call.excinfo.errisinstance(pytest.skip.Exception):
+            return None
         # This means the test has failed
         # Construct and return a TestReport object
 

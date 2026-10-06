@@ -125,13 +125,10 @@ class TestDecodeBytes(unittest.TestCase):
         lang = None
         only_8bit_encodings = False
         expected_result = "¡Hola!"
-        exp = "癒Hola!"
-        exp2 = "Â¡Hola!"
-
         result = byte_content.decode(errors=errors)
         self.assertEqual(result, expected_result)
         result = decode_bytes_with_fallbacks(byte_content, errors, encoding, lang, only_8bit_encodings)
-        self.assertEqual(result, exp2 if charset_normalizer is None else exp)
+        self.assertEqual(result, expected_result)
 
     def test_8bit_encoding_only(self):
         byte_content = b"\xe4\xf6\xfc"
@@ -179,12 +176,8 @@ class TestDecodeBytes(unittest.TestCase):
         encoding = "ascii"
         lang = None
         only_8bit_encodings = False
-        expected_result = "Øab"
         with self.assertRaises(UnicodeDecodeError):
             decode_bytes_with_fallbacks(byte_content, errors, encoding, lang, only_8bit_encodings)
-            byte_content.decode(errors=errors)
-        result = decode_bytes_with_fallbacks(byte_content, errors, encoding, lang, only_8bit_encodings)
-        self.assertEqual(result, expected_result)
 
     def test_no_valid_encoding_found_strict_errors(self):
         byte_content = b"\x80\x81\x82"

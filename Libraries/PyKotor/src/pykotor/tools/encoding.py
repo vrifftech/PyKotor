@@ -60,6 +60,10 @@ def decode_bytes_with_fallbacks(
             provided_encoding = "windows-1252" if only_8bit_encodings else "utf-8"
         return byte_content.decode(encoding=provided_encoding, errors=errors)
 
+    if not only_8bit_encodings:
+        with suppress(UnicodeDecodeError):
+            return byte_content.decode(encoding="utf-8-sig", errors="strict")
+
     # Store the detections as there's no need to recalc
     detected_encodings: CharsetMatches | None = None
 

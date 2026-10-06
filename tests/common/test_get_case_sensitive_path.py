@@ -203,19 +203,6 @@ class TestCaseAwarePath(TestCase):
         if os.name == "nt":
             self.assertEqual(str(relative).lower(), "somedir\\somefile.txt")
 
-    @unittest.skip("unfinished")
-    def test_chmod(self):
-        file_path: pathlib.Path = self.temp_path / "file.txt"
-        case_aware_file_path = CaseAwarePath(f"{self.temp_path!s}/FILE.txt")
-
-        file_path.mkdir(parents=True, exist_ok=True)
-        file_path.touch()
-        original_permissions = file_path.stat().st_mode
-        case_aware_file_path.chmod(original_permissions | 0o777)
-
-        modified_permissions = file_path.stat().st_mode
-        self.assertNotEqual(original_permissions, modified_permissions)
-
     def test_open_read_write(self):
         file_path: pathlib.Path = self.temp_path / "file.txt"
         case_aware_file_path = CaseAwarePath(f"{self.temp_path!s}/FILE.txt")
@@ -268,30 +255,6 @@ class TestCaseAwarePath(TestCase):
 
         self.assertFalse(original_file.exists())
         self.assertTrue(renamed_file.exists())
-
-    @unittest.skip("unfinished")
-    def test_symlink_to(self):
-        source_file = self.temp_path / "source.txt"
-        link_file = self.temp_path / "link.txt"
-        case_aware_link_file = CaseAwarePath(f"{self.temp_path!s}/LINK.txt")
-
-        source_file.touch()
-        case_aware_link_file.symlink_to(source_file)
-
-        self.assertTrue(link_file.is_symlink())
-        self.assertTrue(link_file.resolve().samefile(source_file))
-
-    @unittest.skip("unfinished")
-    def test_hardlink_to(self):
-        source_file = self.temp_path / "source.txt"
-        hardlink_file = self.temp_path / "hardlink.txt"
-        case_aware_hardlink_file = CaseAwarePath(f"{self.temp_path!s}/HARDLINK.txt")
-
-        source_file.touch()
-        case_aware_hardlink_file.hardlink_to(source_file)
-
-        self.assertTrue(hardlink_file.exists())
-        self.assertTrue(os.path.samefile(str(hardlink_file), str(source_file)))
 
 
 if __name__ == "__main__":

@@ -72,7 +72,7 @@ class TestPathlibMixedSlashes(unittest.TestCase):
     @unittest.skipIf(os.name != "posix", "Test only supported on POSIX systems.")
     def test_posix_exists_alternatives(self):
         test_classes: tuple[type, ...] = (CustomPath, CaseAwarePath)
-        test_path = "/dev/vcsa6"
+        test_path = os.devnull
         self.assertFalse(os.access("C:\\nonexistent\\path", os.F_OK))
         test_access: bool = os.access(test_path, os.F_OK)
         self.assertEqual(test_access, True)

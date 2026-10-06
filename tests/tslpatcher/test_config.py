@@ -44,21 +44,6 @@ class TestLookupResourceFunction(unittest.TestCase):
     def tearDown(self):
         Path("test.mod").unlink(missing_ok=True)
 
-    @unittest.skip("broken test")
-    def test_lookup_resource_replace_file_true(self):
-        # Arrange
-        self.patch.replace_file = True
-
-        mock_binary_reader = MagicMock()
-        mock_binary_reader.read_all.return_value = "BinaryReader read_all result"
-
-        with patch("pykotor.common.stream.BinaryReader.from_auto", return_value=mock_binary_reader):
-            # Act
-            result = self.config.lookup_resource(self.patch, self.output_container_path)  # type: ignore[arg-type, reportGeneralTypeIssues]
-
-            # Assert
-            self.assertEqual(result, "BinaryReader read_all result")
-
     def test_lookup_resource_capsule_exists_true(self):
         self.patch.replace_file = False
 
@@ -74,57 +59,6 @@ class TestLookupResourceFunction(unittest.TestCase):
                 capsule,
             )
             self.assertEqual(result, None)
-
-    @unittest.skip("broken test")
-    def test_lookup_resource_no_capsule_exists_true(self):
-        # Arrange
-        self.patch.replace_file = False
-
-        mock_binary_reader = MagicMock()
-        mock_binary_reader.read_all.return_value = "BinaryReader read_all result"
-
-        with patch("pykotor.common.stream.BinaryReader.from_auto", return_value=mock_binary_reader):
-            result = self.config.lookup_resource(
-                self.patch,
-                self.output_container_path,  # type: ignore[arg-type, reportGeneralTypeIssues]
-                True,
-                None,
-            )
-            self.assertEqual(result, "BinaryReader read_all result")
-
-    @unittest.skip("broken test")
-    def test_lookup_resource_no_capsule_exists_false(self):
-        # Arrange
-        self.patch.replace_file = False
-
-        mock_binary_reader = MagicMock()
-        mock_binary_reader.read_all.return_value = "BinaryReader read_all result"
-
-        with patch("pykotor.common.stream.BinaryReader.from_auto", return_value=mock_binary_reader):
-            result = self.config.lookup_resource(
-                self.patch,
-                self.output_container_path,  # type: ignore[arg-type, reportGeneralTypeIssues]
-                False,
-                None,
-            )
-            self.assertEqual(result, "BinaryReader read_all result")
-
-    @unittest.skip("broken test")
-    def test_lookup_resource_capsule_exists_false(self):
-        self.patch.replace_file = False
-
-        mock_binary_reader = MagicMock()
-        mock_binary_reader.read_all.return_value = "BinaryReader read_all result"
-
-        capsule = Capsule("test.mod", create_nonexisting=True)
-        with patch("pykotor.common.stream.BinaryReader.from_auto", return_value=mock_binary_reader):
-            result = self.config.lookup_resource(
-                self.patch,
-                self.output_container_path,  # type: ignore[arg-type, reportGeneralTypeIssues]
-                False,
-                capsule,
-            )
-            self.assertEqual(result, "BinaryReader read_all result")
 
     def test_lookup_resource_replace_file_true_no_file(self):
         # Arrange

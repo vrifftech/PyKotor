@@ -286,13 +286,14 @@ class NssParser:
     def p_global_variable_tail(self, p):
         """
         global_variable_tail : '=' expression
+                             | '=' expression ',' variable_declarators
                              | ',' variable_declarators
                              |
         """  # noqa: D400, D212, D415, D205
         if len(p) == 1:
             p[0] = (None, [])
         elif p[1] == "=":
-            p[0] = (p[2], [])
+            p[0] = (p[2], p[4] if len(p) == 5 else [])
         else:
             p[0] = (None, p[2])
 
@@ -436,24 +437,24 @@ class NssParser:
 
     def p_variable_declarators(self, p):
         """
-        variable_declarators : uninitialized_declarators
-                             | uninitialized_declarators '=' expression
-        """  # noqa: D400, D212, D415, D205
-        declarators = p[1]
-        if len(p) == 4:
-            declarators[-1] = VariableInitializer(declarators[-1].identifier, p[3])
-        p[0] = declarators
-
-    def p_uninitialized_declarators(self, p):
-        """
-        uninitialized_declarators : IDENTIFIER
-                                  | uninitialized_declarators ',' IDENTIFIER
+        variable_declarators : variable_declarator
+                             | variable_declarators ',' variable_declarator
         """  # noqa: D400, D212, D415, D205
         if len(p) == 2:
-            p[0] = [VariableDeclarator(p[1])]
+            p[0] = [p[1]]
         else:
-            p[1].append(VariableDeclarator(p[3]))
+            p[1].append(p[3])
             p[0] = p[1]
+
+    def p_variable_declarator(self, p):
+        """
+        variable_declarator : IDENTIFIER
+                            | IDENTIFIER '=' expression
+        """  # noqa: D400, D212, D415, D205
+        if len(p) == 2:
+            p[0] = VariableDeclarator(p[1])
+        else:
+            p[0] = VariableInitializer(p[1], p[3])
 
     def p_normal_assignment(self, p):
         """

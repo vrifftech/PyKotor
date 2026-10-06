@@ -455,14 +455,6 @@ def bizarre_compiler(
     return ncs
 
 
-@unittest.skipIf(
-    (
-        not NWNNSSCOMP_PATH
-        or not Path(NWNNSSCOMP_PATH).exists()
-        or ((not K1_PATH or not Path(K1_PATH).joinpath("chitin.key").exists()) and (not K2_PATH or not Path(K2_PATH).joinpath("chitin.key").exists()))
-    ),
-    "K1_PATH/K2_PATH/NWNNSSCOMP_PATH environment variable is not set or not found on disk.",
-)
 class TestCompileInstallation(unittest.TestCase):
     # define these here otherwise mypy complains
     ext_compiler1: ExternalNCSCompiler | None = ExternalNCSCompiler(NWNNSSCOMP_PATH) if NWNNSSCOMP_PATH and Path(NWNNSSCOMP_PATH).exists() else None

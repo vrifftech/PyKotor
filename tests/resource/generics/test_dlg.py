@@ -414,6 +414,7 @@ class TestDLGReplySerialization(unittest.TestCase):
         # Link entries and replies together
         reply1.links.append(DLGLink(node=entry1))
         entry1.links.append(DLGLink(node=reply2))
+        reply2.links.append(DLGLink(node=entry2))
         entry2.links.append(DLGLink(node=reply3))  # Reuse R249
 
         # Serialize and deserialize reply1
@@ -626,6 +627,7 @@ class TestDLGLinkSerialization(unittest.TestCase):
 
         entry1.links.append(link1)
         reply1.links.extend([link2, link3])
+        reply2.links.append(DLGLink(node=entry1))
         entry2.links.append(link4)  # Reuse R249
 
         serialized = link1.to_dict()

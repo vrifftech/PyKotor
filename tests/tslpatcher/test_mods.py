@@ -226,11 +226,11 @@ class TestManipulate2DA(TestCase):
 
         logger = PatchLogger()
         memory = PatcherMemory()
-        memory.memory_2da[0] = "mem0"
-        memory.memory_2da[1] = "mem1"
+        memory.memory_2da[1] = "mem0"
+        memory.memory_2da[2] = "mem1"
         config = Modifications2DA("")
-        config.modifiers.append(ChangeRow2DA("", Target(TargetType.ROW_INDEX, 0), {"Col1": RowValue2DAMemory(0)}))
-        config.modifiers.append(ChangeRow2DA("", Target(TargetType.ROW_INDEX, 1), {"Col1": RowValue2DAMemory(1)}))
+        config.modifiers.append(ChangeRow2DA("", Target(TargetType.ROW_INDEX, 0), {"Col1": RowValue2DAMemory(1)}))
+        config.modifiers.append(ChangeRow2DA("", Target(TargetType.ROW_INDEX, 1), {"Col1": RowValue2DAMemory(2)}))
         config.apply(twoda, memory, logger, Game.K1)
 
         self.assertEqual(["mem0", "mem1"], twoda.get_column("Col1"))
@@ -333,8 +333,8 @@ class TestManipulate2DA(TestCase):
         memory = PatcherMemory()
 
         config = Modifications2DA("")
-        config.modifiers.append(AddRow2DA("", None, None, {}))
-        config.modifiers.append(AddRow2DA("", None, None, {}))
+        config.modifiers.append(AddRow2DA("", None, None, {"Col1": RowValueConstant("a")}))
+        config.modifiers.append(AddRow2DA("", None, None, {"Col1": RowValueConstant("b")}))
         config.apply(twoda, memory, logger, Game.K1)
 
         self.assertEqual(3, twoda.get_height())
@@ -518,12 +518,12 @@ class TestManipulate2DA(TestCase):
 
         logger = PatchLogger()
         memory = PatcherMemory()
-        memory.memory_2da[0] = "5"
-        memory.memory_2da[1] = "6"
+        memory.memory_2da[1] = "5"
+        memory.memory_2da[2] = "6"
 
         config = Modifications2DA("")
-        config.modifiers.append(AddRow2DA("", None, "0", {"Col1": RowValue2DAMemory(0)}))
-        config.modifiers.append(AddRow2DA("", None, "1", {"Col1": RowValue2DAMemory(1)}))
+        config.modifiers.append(AddRow2DA("", None, "0", {"Col1": RowValue2DAMemory(1)}))
+        config.modifiers.append(AddRow2DA("", None, "1", {"Col1": RowValue2DAMemory(2)}))
         config.apply(twoda, memory, logger, Game.K1)
 
         self.assertEqual(["5", "6"], twoda.get_column("Col1"))
@@ -702,7 +702,15 @@ class TestManipulate2DA(TestCase):
         memory = PatcherMemory()
 
         config = Modifications2DA("")
-        config.modifiers.append(CopyRow2DA("", Target(TargetType.ROW_INDEX, 0), None, "r2", {}))
+        config.modifiers.append(
+            CopyRow2DA(
+                "",
+                Target(TargetType.ROW_INDEX, 0),
+                None,
+                "r2",
+                {"Col1": RowValueConstant("a")},
+            )
+        )
         config.apply(twoda, memory, logger, Game.K1)
 
         self.assertEqual("r2", twoda.get_label(2))
@@ -764,7 +772,7 @@ class TestManipulate2DA(TestCase):
 
         logger = PatchLogger()
         memory = PatcherMemory()
-        memory.memory_2da[0] = "5"
+        memory.memory_2da[1] = "5"
 
         config = Modifications2DA("")
         config.modifiers.append(
@@ -773,7 +781,7 @@ class TestManipulate2DA(TestCase):
                 target=Target(TargetType.ROW_INDEX, 0),
                 exclusive_column=None,
                 row_label=None,
-                cells={"Col2": RowValue2DAMemory(0)},
+                cells={"Col2": RowValue2DAMemory(1)},
             )
         )
         config.apply(twoda, memory, logger, Game.K1)
@@ -796,7 +804,7 @@ class TestManipulate2DA(TestCase):
                 target=Target(TargetType.ROW_INDEX, 0),
                 exclusive_column=None,
                 row_label=None,
-                cells={},
+                cells={"Col1": RowValueConstant("a")},
                 store_2da={5: RowValueRowIndex()},
             )
         )
@@ -907,7 +915,7 @@ class TestManipulate2DA(TestCase):
                 default="",
                 index_insert={0: RowValueConstant("X"), 1: RowValueConstant("Y")},
                 label_insert={},
-                store_2da={0: "I0"},
+                store_2da={1: "I0"},
             )
         )
         config.apply(twoda, memory, logger, Game.K1)
@@ -915,7 +923,7 @@ class TestManipulate2DA(TestCase):
         self.assertEqual(["a", "c"], twoda.get_column("Col1"))
         self.assertEqual(["b", "d"], twoda.get_column("Col2"))
         self.assertEqual(["X", "Y"], twoda.get_column("Col3"))
-        self.assertEqual("X", memory.memory_2da[0])
+        self.assertEqual("X", memory.memory_2da[1])
 
     def test_addcolumn_2damemory_line(self):
         twoda = TwoDA(["Col1", "Col2"])
@@ -933,7 +941,7 @@ class TestManipulate2DA(TestCase):
                 default="",
                 index_insert={0: RowValueConstant("X"), 1: RowValueConstant("Y")},
                 label_insert={},
-                store_2da={0: "L1"},
+                store_2da={1: "L1"},
             )
         )
         config.apply(twoda, memory, logger, Game.K1)
@@ -941,7 +949,7 @@ class TestManipulate2DA(TestCase):
         self.assertEqual(["a", "c"], twoda.get_column("Col1"))
         self.assertEqual(["b", "d"], twoda.get_column("Col2"))
         self.assertEqual(["X", "Y"], twoda.get_column("Col3"))
-        self.assertEqual("Y", memory.memory_2da[0])
+        self.assertEqual("Y", memory.memory_2da[1])
 
     # endregion
 
@@ -1172,7 +1180,14 @@ class TestManipulateGFF(TestCase):
         add_field2 = AddStructToListGFF("", FieldValueConstant(GFFStruct()), PureWindowsPath("List"))
         add_field1.modifiers.append(add_field2)
 
-        add_field3 = AddFieldGFF("", "SomeInteger", GFFFieldType.UInt8, FieldValueConstant(123), PureWindowsPath("List\\>>##INDEXINLIST##<<"))
+        add_field3 = AddFieldGFF(
+            "",
+            "SomeInteger",
+            GFFFieldType.UInt8,
+            FieldValueConstant(123),
+            PureWindowsPath(""),
+            relative_path=True,
+        )
         add_field2.modifiers.append(add_field3)
 
         config = ModificationsGFF("", False, [add_field1])

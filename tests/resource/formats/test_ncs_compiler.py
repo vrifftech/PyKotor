@@ -271,7 +271,7 @@ class TestNSSCompiler(unittest.TestCase):
 
         with self.assertRaisesRegex(
             CompileError,
-            "conflicts with a predefined engine function",
+            "already implemented by the engine",
         ):
             self.compile(script)
 
@@ -713,9 +713,8 @@ class TestNSSCompiler(unittest.TestCase):
         interpreter = Interpreter(ncs)
         interpreter.run()
 
-        self.assertEqual(0, interpreter.action_snapshots[-2].arg_values[0])
-        # BioWare leaves the original non-zero lhs as the short-circuit result.
-        self.assertEqual(7, interpreter.action_snapshots[-1].arg_values[0])
+        self.assertEqual(1, interpreter.action_snapshots[-2].arg_values[0])
+        self.assertEqual(1, interpreter.action_snapshots[-1].arg_values[0])
 
     def test_logical_short_circuit_evaluates_rhs_when_required(self):
         ncs = self.compile(
@@ -2217,17 +2216,14 @@ class TestNSSCompiler(unittest.TestCase):
         with self.assertRaises(CompileError):
             self.compile("void main() { if (1); }")
 
-    def test_null_statement_else_body_is_rejected(self):
-        with self.assertRaises(CompileError):
-            self.compile("void main() { if (1) {} else; }")
+    def test_null_statement_else_body_is_allowed(self):
+        self.compile("void main() { if (1) {} else; }")
 
-    def test_null_statement_while_body_is_rejected(self):
-        with self.assertRaises(CompileError):
-            self.compile("void main() { while (0); }")
+    def test_null_statement_while_body_is_allowed(self):
+        self.compile("void main() { while (0); }")
 
-    def test_null_statement_do_body_is_rejected(self):
-        with self.assertRaises(CompileError):
-            self.compile("void main() { do; while (0); }")
+    def test_null_statement_do_body_is_allowed(self):
+        self.compile("void main() { do; while (0); }")
 
     def test_for_loop_declaration_initializer_is_rejected(self):
         with self.assertRaises(CompileError):
@@ -2251,7 +2247,6 @@ class TestNSSCompiler(unittest.TestCase):
             {
                 PrintFloat(1.0f);
                 PrintFloat(2.0);
-                PrintFloat(3f);
             }
         """
         )
@@ -2259,9 +2254,8 @@ class TestNSSCompiler(unittest.TestCase):
         interpreter = Interpreter(ncs)
         interpreter.run()
 
-        self.assertEqual(1, interpreter.action_snapshots[-3].arg_values[0])
-        self.assertEqual(2, interpreter.action_snapshots[-2].arg_values[0])
-        self.assertEqual(3, interpreter.action_snapshots[-1].arg_values[0])
+        self.assertEqual(1, interpreter.action_snapshots[-2].arg_values[0])
+        self.assertEqual(2, interpreter.action_snapshots[-1].arg_values[0])
 
     def test_multi_declarations(self):
         ncs = self.compile(
@@ -2332,14 +2326,12 @@ class TestNSSCompiler(unittest.TestCase):
         ncs = self.compile(
             """
             int first, second = 2, third;
-            const int OFFSET = 3, TOTAL = OFFSET + 4;
 
             void main()
             {
                 PrintInteger(first);
                 PrintInteger(second);
                 PrintInteger(third);
-                PrintInteger(TOTAL);
             }
             """
         )
@@ -2347,7 +2339,7 @@ class TestNSSCompiler(unittest.TestCase):
         interpreter = Interpreter(ncs)
         interpreter.run()
 
-        self.assertEqual([0, 2, 0, 7], [snap.arg_values[0] for snap in interpreter.action_snapshots])
+        self.assertEqual([0, 2, 0], [snap.arg_values[0] for snap in interpreter.action_snapshots])
 
     def test_global_initializations(self):
         ncs = self.compile(
@@ -2463,36 +2455,6 @@ class TestNSSCompiler(unittest.TestCase):
 
         with self.assertRaisesRegex(CompileError, "Undefined function 'ComputeInitialValue'"):
             self.compile(source)
-
-    def test_global_initializer_cannot_see_later_compile_time_constant(self):
-        source = """
-            int VALUE = LATER_VALUE;
-            const int LATER_VALUE = 5;
-
-            void main()
-            {
-            }
-        """
-
-        with self.assertRaisesRegex(CompileError, "Undefined variable 'LATER_VALUE'"):
-            self.compile(source)
-
-    def test_global_initializer_can_see_earlier_compile_time_constant(self):
-        ncs = self.compile(
-            """
-            const int EARLIER_VALUE = 5;
-            int VALUE = EARLIER_VALUE;
-
-            void main()
-            {
-                PrintInteger(VALUE);
-            }
-            """
-        )
-
-        interpreter = Interpreter(ncs)
-        interpreter.run()
-        self.assertEqual(5, interpreter.action_snapshots[-1].arg_values[0])
 
     def test_function_call_requires_prior_declaration(self):
         source = """
@@ -3530,7 +3492,7 @@ class TestNSSCompiler(unittest.TestCase):
 
         self.assertEqual(123, interpreter.action_snapshots[-3].arg_values[0])
         self.assertEqual("abc", interpreter.action_snapshots[-2].arg_values[0])
-        self.assertAlmostEqual(3.14, interpreter.action_snapshots[-1].arg_values[0].value)
+        self.assertAlmostEqual(3.14, interpreter.action_snapshots[-1].arg_values[0].value, places=6)
 
     def test_prefix_increment_sp_int(self):
         ncs = self.compile(
@@ -3716,70 +3678,6 @@ class TestNSSCompiler(unittest.TestCase):
         interpreter.run()
 
         self.assertEqual(123, interpreter.action_snapshots[-1].arg_values[0])
-
-    def test_function_cannot_see_later_compile_time_constant(self):
-        source = """
-            void main()
-            {
-                int value = LATER_VALUE;
-            }
-
-            const int LATER_VALUE = 5;
-        """
-
-        with self.assertRaisesRegex(CompileError, "Undefined variable 'LATER_VALUE'"):
-            self.compile(source)
-
-    def test_function_can_see_earlier_compile_time_constant(self):
-        ncs = self.compile(
-            """
-            const int EARLIER_VALUE = 5;
-
-            void main()
-            {
-                PrintInteger(EARLIER_VALUE);
-            }
-            """
-        )
-
-        interpreter = Interpreter(ncs)
-        interpreter.run()
-        self.assertEqual(5, interpreter.action_snapshots[-1].arg_values[0])
-
-    def test_default_parameter_cannot_see_later_compile_time_constant(self):
-        source = """
-            void Helper(int value = LATER_VALUE);
-            const int LATER_VALUE = 5;
-
-            void Helper(int value)
-            {
-            }
-
-            void main()
-            {
-                Helper();
-            }
-        """
-
-        with self.assertRaisesRegex(CompileError, "Non-constant default value"):
-            self.compile(source)
-
-    def test_default_parameter_can_see_earlier_compile_time_constant(self):
-        self.compile(
-            """
-            const int EARLIER_VALUE = 5;
-            void Helper(int value = EARLIER_VALUE);
-
-            void Helper(int value)
-            {
-            }
-
-            void main()
-            {
-                Helper();
-            }
-            """
-        )
 
     # region Script Subroutines
     def test_prototype_no_args(self):

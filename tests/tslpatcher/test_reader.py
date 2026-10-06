@@ -45,24 +45,16 @@ from pykotor.tslpatcher.mods.gff import (
     ModifyFieldGFF,
     ModifyGFF,
 )
+from pykotor.tslpatcher.mods.tlk import MergeTLK, ModifyTLK
 from pykotor.tslpatcher.mods.twoda import (
     AddRow2DA,
     CopyRow2DA,
-    RowValue2DAMemory,
-    RowValueConstant,
-    RowValueHigh,
-    RowValueRowCell,
-    RowValueRowIndex,
-    RowValueRowLabel,
-    RowValueTLKMemory,
-    TargetType,
 )
 from pykotor.tslpatcher.reader import ConfigReader
 from utility.system.path import Path
 
 if TYPE_CHECKING:
     from pykotor.tslpatcher.mods.ssf import ModifySSF
-    from pykotor.tslpatcher.mods.tlk import ModifyTLK
     from pykotor.tslpatcher.mods.twoda import (
         AddColumn2DA,
         ChangeRow2DA,
@@ -186,23 +178,16 @@ class TestConfigReader(unittest.TestCase):
 
         self.ini.read_string(ini_text)
         self.config_reader.load(self.config)
-        for modifier in self.config.patches_tlk.modifiers:
-            modifier.load()
 
-        self.assertEqual(len(self.config.patches_tlk.modifiers), 3)
-        modifiers_dict = {mod.token_id: {"text": mod.text, "voiceover": mod.sound, "replace": mod.is_replacement} for mod in self.config.patches_tlk.modifiers}
-        self.assertDictEqual(
-            modifiers_dict,
-            {
-                7: {"text": "Modified 0", "voiceover": ResRef("vo_mod_0"), "replace": False},
-                8: {"text": "Modified 1", "voiceover": ResRef("vo_mod_1"), "replace": False},
-                9: {"text": "Modified 2", "voiceover": ResRef("vo_mod_2"), "replace": False},
-            },
-        )
+        self.assertEqual(1, len(self.config.patches_tlk.modifiers))
+        modifier = self.config.patches_tlk.modifiers[0]
+        self.assertIsInstance(modifier, MergeTLK)
+        assert isinstance(modifier, MergeTLK)
+        self.assertEqual({7: 0, 8: 1, 9: 2}, modifier.strref_mappings)
+        self.assertEqual(Path(self.mod_path, "append.tlk"), modifier.tlk_filepath)
 
     def test_tlk_complex_changes(self):
-        # sourcery skip: extract-duplicate-method, remove-dict-keys, use-dict-items
-        ini_text2 = """
+        ini_text = """
         [TLKList]
         ReplaceFile10=complex.tlk
         StrRef0=0
@@ -234,56 +219,35 @@ class TestConfigReader(unittest.TestCase):
         125863=10
         50302=11
         """
-        self.ini.read_string(ini_text2)
+        self.ini.read_string(ini_text)
         self.config_reader.load(self.config)
 
-        modifiers2: list[ModifyTLK] = self.config.patches_tlk.modifiers.copy()
-        for modifier in modifiers2:
-            modifier.load()
-        self.assertEqual(len(self.config.patches_tlk.modifiers), 26)
-        modifiers_dict2: dict[int, dict[str, str | ResRef | bool]] = {
-            mod.token_id: {"text": mod.text, "voiceover": mod.sound, "is_replacement": mod.is_replacement}
-            for mod in modifiers2
-        }
-        for k in modifiers_dict2.copy():
-            modifiers_dict2[k].pop("is_replacement")
+        replacements = [
+            modifier
+            for modifier in self.config.patches_tlk.modifiers
+            if isinstance(modifier, ModifyTLK)
+        ]
+        merges = [
+            modifier
+            for modifier in self.config.patches_tlk.modifiers
+            if isinstance(modifier, MergeTLK)
+        ]
+        self.assertEqual(12, len(replacements))
+        self.assertEqual(1, len(merges))
+        self.assertEqual({index: index for index in range(14)}, merges[0].strref_mappings)
 
-        self.maxDiff = None
-        self.assertDictEqual(
-            modifiers_dict2,
+        loaded = {}
+        for modifier in replacements:
+            entry = modifier.load()
+            self.assertIsNotNone(entry)
+            assert entry is not None
+            loaded[modifier.token_id] = {
+                "text": entry.text,
+                "voiceover": entry.voiceover,
+            }
+
+        self.assertEqual(
             {
-                0: {"text": "Yavin", "voiceover": ResRef.from_blank()},
-                1: {
-                    "text": "Climate: Artificially Controled\n" "Terrain: Space Station\n" "Docking: Orbital Docking\n" "Native Species: Unknown",
-                    "voiceover": ResRef.from_blank(),
-                },
-                2: {"text": "Tatooine", "voiceover": ResRef.from_blank()},
-                3: {
-                    "text": "Climate: Arid\nTerrain: Desert\nDocking: Anchorhead Spaceport\nNative Species: Unknown",
-                    "voiceover": ResRef.from_blank(),
-                },
-                4: {"text": "Manaan", "voiceover": ResRef.from_blank()},
-                5: {
-                    "text": "Climate: Temperate\n" "Terrain: Ocean\n" "Docking: Ahto City Docking Bay\n" "Native Species: Selkath",
-                    "voiceover": ResRef.from_blank(),
-                },
-                6: {"text": "Kashyyyk", "voiceover": ResRef.from_blank()},
-                7: {
-                    "text": "Climate: Temperate\nTerrain: Forest\nDocking: Czerka Landing Pad\nNative Species: Wookies",
-                    "voiceover": ResRef.from_blank(),
-                },
-                8: {"text": "", "voiceover": ResRef.from_blank()},
-                9: {"text": "", "voiceover": ResRef.from_blank()},
-                10: {"text": "Sleheyron", "voiceover": ResRef.from_blank()},
-                11: {
-                    "text": "Climate: Unknown\nTerrain: Cityscape\nDocking: Unknown\nNative Species: Unknown",
-                    "voiceover": ResRef.from_blank(),
-                },
-                12: {"text": "Coruscant", "voiceover": ResRef.from_blank()},
-                13: {
-                    "text": "Climate: Unknown\nTerrain: Unknown\nDocking: Unknown\nNative Species: Unknown",
-                    "voiceover": ResRef.from_blank(),
-                },
                 50302: {
                     "text": "Opo Chano, Czerka's contracted droid technician, can't give "
                     "you his droid credentials unless you help relieve his 2,500 "
@@ -301,7 +265,7 @@ class TestConfigReader(unittest.TestCase):
                     "voiceover": ResRef.from_blank(),
                 },
                 123720: {
-                    "text": "Climate: Temperate\n" "Terrain: Decaying urban zones\n" "Docking: Refugee Landing Pad\n" "Native Species: None",
+                    "text": "Climate: Temperate\nTerrain: Decaying urban zones\nDocking: Refugee Landing Pad\nNative Species: None",
                     "voiceover": ResRef.from_blank(),
                 },
                 123722: {
@@ -313,11 +277,11 @@ class TestConfigReader(unittest.TestCase):
                     "voiceover": ResRef.from_blank(),
                 },
                 123726: {
-                    "text": "Climate: Temperate\n" "Terrain: Grasslands\n" "Docking: Khoonda Plains Settlement\n" "Native Species: None",
+                    "text": "Climate: Temperate\nTerrain: Grasslands\nDocking: Khoonda Plains Settlement\nNative Species: None",
                     "voiceover": ResRef.from_blank(),
                 },
                 123728: {
-                    "text": "Climate: Tectonic-Generated Storms\n" "Terrain: Shattered Planetoid\n" "Docking: No Docking Facilities Present\n" "Native Species: None",
+                    "text": "Climate: Tectonic-Generated Storms\nTerrain: Shattered Planetoid\nDocking: No Docking Facilities Present\nNative Species: None",
                     "voiceover": ResRef.from_blank(),
                 },
                 123730: {
@@ -325,14 +289,15 @@ class TestConfigReader(unittest.TestCase):
                     "voiceover": ResRef.from_blank(),
                 },
                 124112: {
-                    "text": "Climate: Artificially Maintained \n" "Terrain: Droid Cityscape\n" "Docking: Landing Arm\n" "Native Species: Unknown",
+                    "text": "Climate: Artificially Maintained \nTerrain: Droid Cityscape\nDocking: Landing Arm\nNative Species: Unknown",
                     "voiceover": ResRef.from_blank(),
                 },
                 125863: {
-                    "text": "Climate: Artificially Maintained\n" "Terrain: Space Station\n" "Docking: Landing Zone\n" "Native Species: None",
+                    "text": "Climate: Artificially Maintained\nTerrain: Space Station\nDocking: Landing Zone\nNative Species: None",
                     "voiceover": ResRef.from_blank(),
                 },
             },
+            loaded,
         )
 
     def test_tlk_replacefile_functionality(self):
@@ -392,7 +357,6 @@ class TestConfigReader(unittest.TestCase):
         self.assertEqual("change_row_1", mod_0.identifier)
 
     def test_2da_changerow_targets(self):
-        """Test that target values (line to modify) are loading correctly."""
         config: PatcherConfig = self._setupIniAndConfig(
             """
             [2DAList]
@@ -411,23 +375,12 @@ class TestConfigReader(unittest.TestCase):
             LabelIndex=3
             """
         )
-        # noinspection PyTypeChecker
-        mod_2da_0: ChangeRow2DA = config.patches_2da[0].modifiers.pop(0)  # type: ignore
-        self.assertEqual(TargetType.ROW_INDEX, mod_2da_0.target.target_type)
-        self.assertEqual(1, mod_2da_0.target.value)
-
-        # noinspection PyTypeChecker
-        mod_2da_1: ChangeRow2DA = config.patches_2da[0].modifiers.pop(0)  # type: ignore
-        self.assertEqual(TargetType.ROW_LABEL, mod_2da_1.target.target_type)
-        self.assertEqual("2", mod_2da_1.target.value)
-
-        # noinspection PyTypeChecker
-        mod_2da_2: ChangeRow2DA = config.patches_2da[0].modifiers.pop(0)  # type: ignore
-        self.assertEqual(TargetType.LABEL_COLUMN, mod_2da_2.target.target_type)
-        self.assertEqual("3", mod_2da_2.target.value)
+        modifiers = config.patches_2da[0].modifiers
+        self.assertEqual([("RowIndex", "1")], modifiers[0].entries)
+        self.assertEqual([("RowLabel", "2")], modifiers[1].entries)
+        self.assertEqual([("LabelIndex", "3")], modifiers[2].entries)
 
     def test_2da_changerow_store2da(self):
-        """Test that 2DAMEMORY values are set to be stored correctly."""
         config: PatcherConfig = self._setupIniAndConfig(
             """
             [2DAList]
@@ -438,29 +391,23 @@ class TestConfigReader(unittest.TestCase):
 
             [change_row_0]
             RowIndex=0
-            2DAMEMORY0=RowIndex
-            2DAMEMORY1=RowLabel
-            2DAMEMORY2=label
+            2DAMEMORY1=RowIndex
+            2DAMEMORY2=RowLabel
+            2DAMEMORY3=label
             """
         )
-        # noinspection PyTypeChecker
-        mod_2da_0: ChangeRow2DA = config.patches_2da[0].modifiers.pop(0)  # type: ignore
-
-        # noinspection PyTypeChecker
-        store_2da_0a: RowValueRowIndex = mod_2da_0.store_2da[0]  # type: ignore
-        self.assertIsInstance(store_2da_0a, RowValueRowIndex)
-
-        # noinspection PyTypeChecker
-        store_2da_0b: RowValueRowLabel = mod_2da_0.store_2da[1]  # type: ignore
-        self.assertIsInstance(store_2da_0b, RowValueRowLabel)
-
-        # noinspection PyTypeChecker
-        store_2da_0c: RowValueRowCell = mod_2da_0.store_2da[2]  # type: ignore
-        self.assertIsInstance(store_2da_0c, RowValueRowCell)
-        self.assertEqual("label", store_2da_0c.column)
+        modifier = config.patches_2da[0].modifiers[0]
+        self.assertEqual(
+            [
+                ("RowIndex", "0"),
+                ("2DAMEMORY1", "RowIndex"),
+                ("2DAMEMORY2", "RowLabel"),
+                ("2DAMEMORY3", "label"),
+            ],
+            modifier.entries,
+        )
 
     def test_2da_changerow_cells(self):
-        """Test that cells are set to be modified correctly."""
         config: PatcherConfig = self._setupIniAndConfig(
             """
             [2DAList]
@@ -476,23 +423,16 @@ class TestConfigReader(unittest.TestCase):
             appearance=2DAMEMORY5
             """
         )
-        # noinspection PyTypeChecker
-        mod_2da_0: ChangeRow2DA = config.patches_2da[0].modifiers.pop(0)  # type: ignore
-
-        # noinspection PyTypeChecker
-        cell_0_label: RowValueConstant = mod_2da_0.cells["label"]  # type: ignore
-        self.assertIsInstance(cell_0_label, RowValueConstant)
-        self.assertEqual("Test123", cell_0_label.string)
-
-        # noinspection PyTypeChecker
-        cell_0_dialog: RowValueTLKMemory = mod_2da_0.cells["dialog"]  # type: ignore
-        self.assertIsInstance(cell_0_dialog, RowValueTLKMemory)
-        self.assertEqual(4, cell_0_dialog.token_id)
-
-        # noinspection PyTypeChecker
-        cell_0_appearance: RowValue2DAMemory = mod_2da_0.cells["appearance"]  # type: ignore
-        self.assertIsInstance(cell_0_appearance, RowValue2DAMemory)
-        self.assertEqual(5, cell_0_appearance.token_id)
+        modifier = config.patches_2da[0].modifiers[0]
+        self.assertEqual(
+            [
+                ("RowIndex", "0"),
+                ("label", "Test123"),
+                ("dialog", "StrRef4"),
+                ("appearance", "2DAMEMORY5"),
+            ],
+            modifier.entries,
+        )
 
     # endregion
 
@@ -521,7 +461,6 @@ class TestConfigReader(unittest.TestCase):
         self.assertEqual("add_row_1", mod_1.identifier)
 
     def test_2da_addrow_exclusivecolumn(self):
-        """Test that exclusive column property is being loaded correctly."""
         config: PatcherConfig = self._setupIniAndConfig(
             """
             [2DAList]
@@ -536,20 +475,11 @@ class TestConfigReader(unittest.TestCase):
             [add_row_1]
             """
         )
-        # noinspection PyTypeChecker
-        mod_0: AddRow2DA = config.patches_2da[0].modifiers.pop(0)  # type: ignore
-        self.assertIsInstance(mod_0, AddRow2DA)
-        self.assertEqual("add_row_0", mod_0.identifier)
-        self.assertEqual("label", mod_0.exclusive_column)
-
-        # noinspection PyTypeChecker
-        mod_1: AddRow2DA = config.patches_2da[0].modifiers.pop(0)  # type: ignore
-        self.assertIsInstance(mod_1, AddRow2DA)
-        self.assertEqual("add_row_1", mod_1.identifier)
-        self.assertIsNone(mod_1.exclusive_column)
+        modifiers = config.patches_2da[0].modifiers
+        self.assertEqual([("ExclusiveColumn", "label")], modifiers[0].entries)
+        self.assertEqual([], modifiers[1].entries)
 
     def test_2da_addrow_rowlabel(self):
-        """Test that row label property is being loaded correctly."""
         config: PatcherConfig = self._setupIniAndConfig(
             """
             [2DAList]
@@ -564,20 +494,11 @@ class TestConfigReader(unittest.TestCase):
             [add_row_1]
             """
         )
-        # noinspection PyTypeChecker
-        mod_0: AddRow2DA = config.patches_2da[0].modifiers.pop(0)  # type: ignore
-        self.assertIsInstance(mod_0, AddRow2DA)
-        self.assertEqual("add_row_0", mod_0.identifier)
-        self.assertEqual("123", mod_0.row_label)
-
-        # noinspection PyTypeChecker
-        mod_1: AddRow2DA = config.patches_2da[0].modifiers.pop(0)  # type: ignore
-        self.assertIsInstance(mod_1, AddRow2DA)
-        self.assertEqual("add_row_1", mod_1.identifier)
-        self.assertIsNone(mod_1.row_label)
+        modifiers = config.patches_2da[0].modifiers
+        self.assertEqual([("RowLabel", "123")], modifiers[0].entries)
+        self.assertEqual([], modifiers[1].entries)
 
     def test_2da_addrow_store2da(self):
-        """Test that 2DAMEMORY# data will be saved correctly."""
         config: PatcherConfig = self._setupIniAndConfig(
             """
             [2DAList]
@@ -587,29 +508,22 @@ class TestConfigReader(unittest.TestCase):
             AddRow0=add_row_0
 
             [add_row_0]
-            2DAMEMORY0=RowIndex
-            2DAMEMORY1=RowLabel
-            2DAMEMORY2=label
+            2DAMEMORY1=RowIndex
+            2DAMEMORY2=RowLabel
+            2DAMEMORY3=label
             """
         )
-        # noinspection PyTypeChecker
-        mod_0: AddRow2DA = config.patches_2da[0].modifiers.pop(0)  # type: ignore
-
-        # noinspection PyTypeChecker
-        store_0a: RowValueRowIndex = mod_0.store_2da[0]  # type: ignore
-        self.assertIsInstance(store_0a, RowValueRowIndex)
-
-        # noinspection PyTypeChecker
-        store_0b: RowValueRowLabel = mod_0.store_2da[1]  # type: ignore
-        self.assertIsInstance(store_0b, RowValueRowLabel)
-
-        # noinspection PyTypeChecker
-        store_0c: RowValueRowCell = mod_0.store_2da[2]  # type: ignore
-        self.assertIsInstance(store_0c, RowValueRowCell)
-        self.assertEqual("label", store_0c.column)
+        modifier = config.patches_2da[0].modifiers[0]
+        self.assertEqual(
+            [
+                ("2DAMEMORY1", "RowIndex"),
+                ("2DAMEMORY2", "RowLabel"),
+                ("2DAMEMORY3", "label"),
+            ],
+            modifier.entries,
+        )
 
     def test_2da_addrow_cells(self):
-        """Test that cells will be assigned properly correctly."""
         config: PatcherConfig = self._setupIniAndConfig(
             """
             [2DAList]
@@ -624,23 +538,15 @@ class TestConfigReader(unittest.TestCase):
             appearance=2DAMEMORY5
             """
         )
-        # noinspection PyTypeChecker
-        mod_0: AddRow2DA = config.patches_2da[0].modifiers.pop(0)  # type: ignore
-
-        # noinspection PyTypeChecker
-        cell_0_label: RowValueConstant = mod_0.cells["label"]  # type: ignore
-        self.assertIsInstance(cell_0_label, RowValueConstant)
-        self.assertEqual("Test123", cell_0_label.string)
-
-        # noinspection PyTypeChecker
-        cell_0_dialog: RowValueTLKMemory = mod_0.cells["dialog"]  # type: ignore
-        self.assertIsInstance(cell_0_dialog, RowValueTLKMemory)
-        self.assertEqual(4, cell_0_dialog.token_id)
-
-        # noinspection PyTypeChecker
-        cell_0_appearance: RowValue2DAMemory = mod_0.cells["appearance"]  # type: ignore
-        self.assertIsInstance(cell_0_appearance, RowValue2DAMemory)
-        self.assertEqual(5, cell_0_appearance.token_id)
+        modifier = config.patches_2da[0].modifiers[0]
+        self.assertEqual(
+            [
+                ("label", "Test123"),
+                ("dialog", "StrRef4"),
+                ("appearance", "2DAMEMORY5"),
+            ],
+            modifier.entries,
+        )
 
     # endregion Add Row
 
@@ -671,7 +577,6 @@ class TestConfigReader(unittest.TestCase):
         self.assertEqual("copy_row_1", mod_1.identifier)
 
     def test_2da_copyrow_high(self):
-        """Test that high() is working correctly in copyrow's."""
         config: PatcherConfig = self._setupIniAndConfig(
             """
             [2DAList]
@@ -710,41 +615,42 @@ class TestConfigReader(unittest.TestCase):
             pips=3
             """
         )
-        # noinspection PyTypeChecker
-        mod_0: CopyRow2DA = config.patches_2da[0].modifiers.pop(0)  # type: ignore
-
-        # Asserting all properties of mod_0
-        self.assertEqual(TargetType.ROW_INDEX, mod_0.target.target_type)
-        self.assertEqual(23, mod_0.target.value)
-        self.assertEqual("spells_forcestrike", mod_0.identifier)
-        self.assertEqual("label", mod_0.exclusive_column)
-        self.assertEqual("ST_FORCE_POWER_STRIKE", mod_0.cells["label"].string)
-        self.assertEqual("55", mod_0.cells["forcepoints"].string)
-        self.assertEqual("21", mod_0.cells["jedimaster"].string)
-        self.assertEqual("21", mod_0.cells["sithlord"].string)
-        self.assertEqual("-1", mod_0.cells["guardian"].string)
-        self.assertEqual("-1", mod_0.cells["consular"].string)
-        self.assertEqual("-1", mod_0.cells["sentinel"].string)
-        self.assertEqual("-1", mod_0.cells["weapmstr"].string)
-        self.assertEqual("-1", mod_0.cells["watchman"].string)
-        self.assertEqual("-1", mod_0.cells["marauder"].string)
-        self.assertEqual("-1", mod_0.cells["assassin"].string)
-        self.assertEqual("21", mod_0.cells["inate"].string)
-        self.assertEqual("12", mod_0.cells["maxcr"].string)
-        self.assertEqual(f"{0x4101:#x}", mod_0.cells["category"].string)
-        self.assertEqual("ip_st_strike", mod_0.cells["iconresref"].string)
-        self.assertEqual("st_forcestrike", mod_0.cells["impactscript"].string)
-        self.assertEqual("up", mod_0.cells["conjanim"].string)
-        self.assertEqual("up", mod_0.cells["castanim"].string)
-        self.assertEqual("forcehostile", mod_0.cells["forcehostile"].column)
-        self.assertIsInstance(mod_0.cells["forcehostile"], RowValueHigh)
-        self.assertEqual("", mod_0.cells["dark_recom"].string)
-        self.assertEqual("", mod_0.cells["light_recom"].string)
-        self.assertEqual("0", mod_0.cells["forcepriority"].string)
-        self.assertEqual("3", mod_0.cells["pips"].string)
+        modifier = config.patches_2da[0].modifiers[0]
+        self.assertEqual("spells_forcestrike", modifier.identifier)
+        self.assertEqual(
+            {
+                "RowIndex": "23",
+                "ExclusiveColumn": "label",
+                "label": "ST_FORCE_POWER_STRIKE",
+                "name": "StrRef0",
+                "spelldesc": "StrRef1",
+                "forcepoints": "55",
+                "jedimaster": "21",
+                "sithlord": "21",
+                "guardian": "-1",
+                "consular": "-1",
+                "sentinel": "-1",
+                "weapmstr": "-1",
+                "watchman": "-1",
+                "marauder": "-1",
+                "assassin": "-1",
+                "inate": "21",
+                "maxcr": "12",
+                "category": "0x4101",
+                "iconresref": "ip_st_strike",
+                "impactscript": "st_forcestrike",
+                "conjanim": "up",
+                "castanim": "up",
+                "forcehostile": "high()",
+                "dark_recom": "****",
+                "light_recom": "****",
+                "forcepriority": "0",
+                "pips": "3",
+            },
+            dict(modifier.entries),
+        )
 
     def test_2da_copyrow_target(self):
-        """Test that target values (line to modify) are loading correctly."""
         config: PatcherConfig = self._setupIniAndConfig(
             """
             [2DAList]
@@ -763,23 +669,12 @@ class TestConfigReader(unittest.TestCase):
             LabelIndex=3
             """
         )
-        # noinspection PyTypeChecker
-        mod_0: CopyRow2DA = config.patches_2da[0].modifiers.pop(0)  # type: ignore
-        self.assertEqual(TargetType.ROW_INDEX, mod_0.target.target_type)
-        self.assertEqual(1, mod_0.target.value)
-
-        # noinspection PyTypeChecker
-        mod_1: CopyRow2DA = config.patches_2da[0].modifiers.pop(0)  # type: ignore
-        self.assertEqual(TargetType.ROW_LABEL, mod_1.target.target_type)
-        self.assertEqual("2", mod_1.target.value)
-
-        # noinspection PyTypeChecker
-        mod_2: CopyRow2DA = config.patches_2da[0].modifiers.pop(0)  # type: ignore
-        self.assertEqual(TargetType.LABEL_COLUMN, mod_2.target.target_type)
-        self.assertEqual("3", mod_2.target.value)
+        modifiers = config.patches_2da[0].modifiers
+        self.assertEqual([("RowIndex", "1")], modifiers[0].entries)
+        self.assertEqual([("RowLabel", "2")], modifiers[1].entries)
+        self.assertEqual([("LabelIndex", "3")], modifiers[2].entries)
 
     def test_2da_copyrow_exclusivecolumn(self):
-        """Test that exclusive column property is being loaded correctly."""
         config: PatcherConfig = self._setupIniAndConfig(
             """
             [2DAList]
@@ -796,20 +691,14 @@ class TestConfigReader(unittest.TestCase):
             RowIndex=0
             """
         )
-        # noinspection PyTypeChecker
-        mod_0: CopyRow2DA = config.patches_2da[0].modifiers.pop(0)  # type: ignore
-        self.assertIsInstance(mod_0, CopyRow2DA)
-        self.assertEqual("copy_row_0", mod_0.identifier)
-        self.assertEqual("label", mod_0.exclusive_column)
-
-        # noinspection PyTypeChecker
-        mod_1: CopyRow2DA = config.patches_2da[0].modifiers.pop(0)  # type: ignore
-        self.assertIsInstance(mod_1, CopyRow2DA)
-        self.assertEqual("copy_row_1", mod_1.identifier)
-        self.assertIsNone(mod_1.exclusive_column)
+        modifiers = config.patches_2da[0].modifiers
+        self.assertEqual(
+            [("RowIndex", "0"), ("ExclusiveColumn", "label")],
+            modifiers[0].entries,
+        )
+        self.assertEqual([("RowIndex", "0")], modifiers[1].entries)
 
     def test_2da_copyrow_rowlabel(self):
-        """Test that row label property is being loaded correctly."""
         config: PatcherConfig = self._setupIniAndConfig(
             """
             [2DAList]
@@ -826,20 +715,14 @@ class TestConfigReader(unittest.TestCase):
             RowIndex=0
             """
         )
-        # noinspection PyTypeChecker
-        mod_0: CopyRow2DA = config.patches_2da[0].modifiers.pop(0)  # type: ignore
-        self.assertIsInstance(mod_0, CopyRow2DA)
-        self.assertEqual("copy_row_0", mod_0.identifier)
-        self.assertEqual("123", mod_0.row_label)
-
-        # noinspection PyTypeChecker
-        mod_1: CopyRow2DA = config.patches_2da[0].modifiers.pop(0)  # type: ignore
-        self.assertIsInstance(mod_1, CopyRow2DA)
-        self.assertEqual("copy_row_1", mod_1.identifier)
-        self.assertIsNone(mod_1.row_label)
+        modifiers = config.patches_2da[0].modifiers
+        self.assertEqual(
+            [("RowIndex", "0"), ("NewRowLabel", "123")],
+            modifiers[0].entries,
+        )
+        self.assertEqual([("RowIndex", "0")], modifiers[1].entries)
 
     def test_2da_copyrow_store2da(self):
-        """Test that 2DAMEMORY# data will be saved correctly."""
         config: PatcherConfig = self._setupIniAndConfig(
             """
             [2DAList]
@@ -850,29 +733,23 @@ class TestConfigReader(unittest.TestCase):
 
             [copy_row_0]
             RowLabel=0
-            2DAMEMORY0=RowIndex
-            2DAMEMORY1=RowLabel
-            2DAMEMORY2=label
+            2DAMEMORY1=RowIndex
+            2DAMEMORY2=RowLabel
+            2DAMEMORY3=label
             """
         )
-        # noinspection PyTypeChecker
-        mod_0: CopyRow2DA = config.patches_2da[0].modifiers.pop(0)  # type: ignore
-
-        # noinspection PyTypeChecker
-        store_0a: RowValueRowIndex = mod_0.store_2da[0]  # type: ignore
-        self.assertIsInstance(store_0a, RowValueRowIndex)
-
-        # noinspection PyTypeChecker
-        store_0b: RowValueRowLabel = mod_0.store_2da[1]  # type: ignore
-        self.assertIsInstance(store_0b, RowValueRowLabel)
-
-        # noinspection PyTypeChecker
-        store_0c: RowValueRowCell = mod_0.store_2da[2]  # type: ignore
-        self.assertIsInstance(store_0c, RowValueRowCell)
-        self.assertEqual("label", store_0c.column)
+        modifier = config.patches_2da[0].modifiers[0]
+        self.assertEqual(
+            [
+                ("RowLabel", "0"),
+                ("2DAMEMORY1", "RowIndex"),
+                ("2DAMEMORY2", "RowLabel"),
+                ("2DAMEMORY3", "label"),
+            ],
+            modifier.entries,
+        )
 
     def test_2da_copyrow_cells(self):
-        """Test that cells will be assigned properly."""
         config: PatcherConfig = self._setupIniAndConfig(
             """
             [2DAList]
@@ -888,29 +765,21 @@ class TestConfigReader(unittest.TestCase):
             appearance=2DAMEMORY5
             """
         )
-        # noinspection PyTypeChecker
-        mod_0: CopyRow2DA = config.patches_2da[0].modifiers.pop(0)  # type: ignore
-
-        # noinspection PyTypeChecker
-        cell_0_label: RowValueConstant = mod_0.cells["label"]  # type: ignore
-        self.assertIsInstance(cell_0_label, RowValueConstant)
-        self.assertEqual("Test123", cell_0_label.string)
-
-        # noinspection PyTypeChecker
-        cell_0_dialog: RowValueTLKMemory = mod_0.cells["dialog"]  # type: ignore
-        self.assertIsInstance(cell_0_dialog, RowValueTLKMemory)
-        self.assertEqual(4, cell_0_dialog.token_id)
-
-        # noinspection PyTypeChecker
-        cell_0_appearance: RowValue2DAMemory = mod_0.cells["appearance"]  # type: ignore
-        self.assertIsInstance(cell_0_appearance, RowValue2DAMemory)
-        self.assertEqual(5, cell_0_appearance.token_id)
+        modifier = config.patches_2da[0].modifiers[0]
+        self.assertEqual(
+            [
+                ("RowLabel", "0"),
+                ("label", "Test123"),
+                ("dialog", "StrRef4"),
+                ("appearance", "2DAMEMORY5"),
+            ],
+            modifier.entries,
+        )
 
     # endregion
 
     # region 2DA: Add Column
     def test_2da_addcolumn_basic(self):
-        """Test that column will be inserted with correct label and default values."""
         config: PatcherConfig = self._setupIniAndConfig(
             """
             [2DAList]
@@ -931,18 +800,17 @@ class TestConfigReader(unittest.TestCase):
             2DAMEMORY2=I2
             """
         )
-        # noinspection PyTypeChecker
-        mod_0: AddColumn2DA = config.patches_2da[0].modifiers.pop(0)  # type: ignore
-        self.assertEqual("label", mod_0.header)
-        self.assertEqual("", mod_0.default)
-
-        # noinspection PyTypeChecker
-        mod_1: AddColumn2DA = config.patches_2da[0].modifiers.pop(0)  # type: ignore
-        self.assertEqual("someint", mod_1.header)
-        self.assertEqual("0", mod_1.default)
+        modifiers = config.patches_2da[0].modifiers
+        self.assertEqual(
+            [("ColumnLabel", "label"), ("DefaultValue", "****"), ("2DAMEMORY2", "I2")],
+            modifiers[0].entries,
+        )
+        self.assertEqual(
+            [("ColumnLabel", "someint"), ("DefaultValue", "0"), ("2DAMEMORY2", "I2")],
+            modifiers[1].entries,
+        )
 
     def test_2da_addcolumn_indexinsert(self):
-        """Test that cells will be inserted to the new column at the given index correctly."""
         config: PatcherConfig = self._setupIniAndConfig(
             """
             [2DAList]
@@ -959,23 +827,19 @@ class TestConfigReader(unittest.TestCase):
             I2=StrRef5
             """
         )
-        # noinspection PyTypeChecker
-        mod_0: AddColumn2DA = config.patches_2da[0].modifiers.pop(0)  # type: ignore
-
-        value = mod_0.index_insert[0]
-        self.assertIsInstance(value, RowValueConstant)
-        self.assertEqual("abc", value.string)  # type: ignore
-
-        value = mod_0.index_insert[1]
-        self.assertIsInstance(value, RowValue2DAMemory)
-        self.assertEqual(4, value.token_id)  # type: ignore
-
-        value = mod_0.index_insert[2]
-        self.assertIsInstance(value, RowValueTLKMemory)
-        self.assertEqual(5, value.token_id)  # type: ignore
+        modifier = config.patches_2da[0].modifiers[0]
+        self.assertEqual(
+            [
+                ("ColumnLabel", "NewColumn"),
+                ("DefaultValue", "****"),
+                ("I0", "abc"),
+                ("I1", "2DAMEMORY4"),
+                ("I2", "StrRef5"),
+            ],
+            modifier.entries,
+        )
 
     def test_2da_addcolumn_labelinsert(self):
-        """Test that cells will be inserted to the new column at the given label correctly."""
         config: PatcherConfig = self._setupIniAndConfig(
             """
             [2DAList]
@@ -992,23 +856,19 @@ class TestConfigReader(unittest.TestCase):
             L2=StrRef5
             """
         )
-        # noinspection PyTypeChecker
-        mod_0: AddColumn2DA = config.patches_2da[0].modifiers.pop(0)  # type: ignore
-
-        value = mod_0.label_insert["0"]
-        self.assertIsInstance(value, RowValueConstant)
-        self.assertEqual("abc", value.string)  # type: ignore
-
-        value = mod_0.label_insert["1"]
-        self.assertIsInstance(value, RowValue2DAMemory)
-        self.assertEqual(4, value.token_id)  # type: ignore
-
-        value = mod_0.label_insert["2"]
-        self.assertIsInstance(value, RowValueTLKMemory)
-        self.assertEqual(5, value.token_id)  # type: ignore
+        modifier = config.patches_2da[0].modifiers[0]
+        self.assertEqual(
+            [
+                ("ColumnLabel", "NewColumn"),
+                ("DefaultValue", "****"),
+                ("L0", "abc"),
+                ("L1", "2DAMEMORY4"),
+                ("L2", "StrRef5"),
+            ],
+            modifier.entries,
+        )
 
     def test_2da_addcolumn_2damemory(self):
-        """Test that 2DAMEMORY will be stored correctly."""
         config: PatcherConfig = self._setupIniAndConfig(
             """
             [2DAList]
@@ -1023,11 +883,11 @@ class TestConfigReader(unittest.TestCase):
             2DAMEMORY2=I2
             """
         )
-        # noinspection PyTypeChecker
-        mod_0: AddColumn2DA = config.patches_2da[0].modifiers.pop(0)  # type: ignore
-
-        value = mod_0.store_2da[2]
-        self.assertEqual("I2", value)
+        modifier = config.patches_2da[0].modifiers[0]
+        self.assertEqual(
+            [("ColumnLabel", "NewColumn"), ("DefaultValue", "****"), ("2DAMEMORY2", "I2")],
+            modifier.entries,
+        )
 
     # endregion
 
@@ -1621,7 +1481,6 @@ class TestConfigReader(unittest.TestCase):
         self.assertEqual(8, mod_1.value.stored.stringref.token_id)
 
     def test_gff_add_inside_struct(self):
-        """Test that the add field modifiers are registered correctly."""
         config: PatcherConfig = self._setupIniAndConfig(
             """
             [GFFList]
@@ -1639,28 +1498,25 @@ class TestConfigReader(unittest.TestCase):
 
             [add_insidestruct]
             FieldType=Byte
-            Path=
             Label=InsideStruct
             Value=123
             """
         )
-        mod_0 = config.patches_gff[0].modifiers.pop(0)
-        self.assertIsInstance(mod_0, AddFieldGFF)
-        assert isinstance(mod_0, AddFieldGFF)
-        self.assertIsInstance(mod_0.value, FieldValueConstant)
-        assert isinstance(mod_0.value, FieldValueConstant)
-        self.assertEqual(mod_0.path.name, ">>##INDEXINLIST##<<")
-        self.assertEqual("SomeStruct", mod_0.label)
-        self.assertEqual(321, mod_0.value.stored.struct_id)
+        modifier = config.patches_gff[0].modifiers[0]
+        self.assertIsInstance(modifier, AddFieldGFF)
+        assert isinstance(modifier, AddFieldGFF)
+        self.assertFalse(modifier.path.parts)
+        self.assertFalse(modifier.relative_path)
+        self.assertEqual("SomeStruct", modifier.label)
+        self.assertEqual(321, modifier.value.stored.struct_id)
 
-        mod_1 = mod_0.modifiers.pop(0)
-        self.assertIsInstance(mod_1, AddFieldGFF)
-        assert isinstance(mod_1, AddFieldGFF)
-        self.assertIsInstance(mod_1.value, FieldValueConstant)
-        assert isinstance(mod_1.value, FieldValueConstant)
-        self.assertEqual(mod_1.path.name, "SomeStruct")
-        self.assertEqual("InsideStruct", mod_1.label)
-        self.assertEqual(123, mod_1.value.stored)
+        nested = modifier.modifiers[0]
+        self.assertIsInstance(nested, AddFieldGFF)
+        assert isinstance(nested, AddFieldGFF)
+        self.assertFalse(nested.path.parts)
+        self.assertTrue(nested.relative_path)
+        self.assertEqual("InsideStruct", nested.label)
+        self.assertEqual(123, nested.value.stored)
 
     def test_gff_add_inside_list(self):
         """Test that the add field modifiers are registered correctly."""

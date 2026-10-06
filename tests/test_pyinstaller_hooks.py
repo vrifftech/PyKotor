@@ -15,9 +15,19 @@ class PyInstallerHookTests(unittest.TestCase):
         spec.loader.exec_module(module)
         self.assertEqual(module.get_hook_dirs(), [str(HOOK_DIR)])
 
-    def test_ply_grammar_keeps_source(self):
+    def test_ply_grammar_uses_generated_tables(self):
         hook = runpy.run_path(str(HOOK_DIR / "hook-pykotor.resource.formats.ncs.compiler.py"))
-        self.assertEqual(hook["module_collection_mode"], "pyz+py")
+        self.assertNotIn("module_collection_mode", hook)
+        self.assertEqual(
+            hook["hiddenimports"],
+            [
+                "pykotor.resource.formats.ncs.compiler.lextab",
+                "pykotor.resource.formats.ncs.compiler.parsetab",
+            ],
+        )
+        compiler_dir = ROOT / "Libraries/PyKotor/src/pykotor/resource/formats/ncs/compiler"
+        self.assertTrue((compiler_dir / "lextab.py").is_file())
+        self.assertTrue((compiler_dir / "parsetab.py").is_file())
 
     def test_wheel_hook_entry_point(self):
         metadata = (ROOT / "Libraries/PyKotor/pyproject.toml").read_text(encoding="utf-8")

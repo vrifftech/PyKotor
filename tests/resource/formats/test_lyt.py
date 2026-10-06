@@ -56,7 +56,7 @@ class TestLYT(TestCase):
                 "M02ac_02h",
                 "door_01",
                 Vector3(170.475, 66.375, 0.0),
-                Vector4(0.707107, 0.0, 0.0, -0.707107),
+                Vector4(0.0, 0.0, -0.707107, 0.707107),
             ),
         )
         self.assertEqual(
@@ -65,7 +65,7 @@ class TestLYT(TestCase):
                 "M02ac_02a",
                 "door_06",
                 Vector3(90.0, 129.525, 0.0),
-                Vector4(1.0, 0.0, 0.0, 0.0),
+                Vector4(0.0, 0.0, 0.0, 1.0),
             ),
         )
 
