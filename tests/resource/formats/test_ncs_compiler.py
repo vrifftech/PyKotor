@@ -601,27 +601,12 @@ class TestNSSCompiler(unittest.TestCase):
     # endregion
 
     # region Logical Operator
-    def test_unary_plus_int_and_float(self):
-        ncs = self.compile(
-            """
-            void main()
-            {
-                int integerValue = +7;
-                float floatValue = +2.5;
-                int precedence = +1 * 3 + 4;
-                PrintInteger(integerValue);
-                PrintFloat(floatValue);
-                PrintInteger(precedence);
-            }
-            """
-        )
-
-        interpreter = Interpreter(ncs)
-        interpreter.run()
-
-        self.assertEqual(7, interpreter.action_snapshots[-3].arg_values[0])
-        self.assertEqual(2.5, interpreter.action_snapshots[-2].arg_values[0])
-        self.assertEqual(7, interpreter.action_snapshots[-1].arg_values[0])
+    def test_unary_plus_is_rejected(self):
+        for data_type, value in (("int", "+7"), ("float", "+2.5")):
+            with self.subTest(data_type=data_type):
+                source = f"void main() {{ {data_type} value = {value}; }}"
+                with self.assertRaisesRegex(CompileError, r"unexpected '\+'"):
+                    self.compile(source)
 
     def test_not_op(self):
         ncs = self.compile(
@@ -4675,10 +4660,11 @@ class TestNSSCompiler(unittest.TestCase):
         """
         )
 
-        interpreter = Interpreter(ncs)
+        executing_object = 0x12345678
+        interpreter = Interpreter(ncs, executing_object=executing_object)
         interpreter.run()
 
-        self.assertEqual([8, 0], interpreter.action_snapshots[-1].arg_values)
+        self.assertEqual([8, executing_object], interpreter.action_snapshots[-1].arg_values)
 
     def test_switch_scope_b(self):
         ncs = self.compile(

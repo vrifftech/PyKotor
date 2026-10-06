@@ -519,7 +519,7 @@ class Module:  # noqa: PLR0904
             RobustRootLogger().debug("Finding textures/lightmaps for model '%s'...", model.identifier())
             try:
                 model_data = model.data()
-            except OSError:
+            except OSError as e:
                 RobustRootLogger().warning("Suppressed known exception while executing %s.reload_resources() while getting model data '%s': %s", repr(self), model.identifier(), e)
                 continue
             else:
