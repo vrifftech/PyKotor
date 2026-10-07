@@ -27,5 +27,5 @@ them together. For offline installation, use `pip --no-index --find-links` with
 the local backend wheels and the required third-party wheels. Do not substitute
 an unrelated package-index build for a matching audited backend component.
 
-See the repository root README for the full four-package build sequence. The
+See the repository root README for the full three-package build sequence. The
 license text is retained unchanged in `LICENSE`.

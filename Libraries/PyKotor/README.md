@@ -3,7 +3,7 @@
 The audited core game-resource library and TSLPatcher-compatible installation
 backend. This package retains the engine-verified format and preservation repairs;
 it is not the unmodified upstream 1.7 source despite retaining that base version.
-See the repository's `SOURCE_SNAPSHOT.json` for exact provenance.
+Use the repository commit and release build metadata to identify the exact source revision.
 
 The wheel requires the matching **PyKotorUtility** distribution and PLY for the
 NSS compiler. `secure_xml`, `encodings` and `images` are optional extras.
