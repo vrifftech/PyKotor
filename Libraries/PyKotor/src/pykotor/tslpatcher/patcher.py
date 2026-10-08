@@ -231,8 +231,6 @@ class ModInstaller:
         for part in parts:
             if part == ".." and allow_parent:
                 continue
-            if pathlib.PureWindowsPath(part).suffix.lower() == ".sav":
-                raise ValueError(f"Invalid {description} '{raw_path}': SAV archives are not supported.")
             if part.endswith((" ", ".")):
                 raise ValueError(f"Invalid {description} '{raw_path}': path components cannot end with a space or period.")
             if any(character in invalid_characters or ord(character) < 32 for character in part):
