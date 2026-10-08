@@ -29,13 +29,6 @@ Ruff is the only configured formatter/linter. The CI gate checks syntax errors,
 undefined names and other fatal Python errors without rewriting legacy style.
 `ruff format` may be used deliberately on files being edited.
 
-The core CI job installs only the core/decoding test requirements. The separate
-wheel job builds all three libraries and installs their actual runtime dependencies.
-Environment-dependent tests may skip when their required game installation,
-platform or external compiler is unavailable. Ordinary failures are not converted
-into successful skips, and the wheel job does not use a source-directory `.pth` to
-conceal missing wheel contents.
-
 
 ## Building distributable libraries
 
@@ -62,6 +55,4 @@ python -m pip check
 
 Set `PYKOTOR_ROOT` to this repository and run either frontend's `run.py --backend-info` to verify selection. Application-specific
 `HOLOPATCHER_PYKOTOR_ROOT` and `HOLOCRON_PYKOTOR_ROOT` overrides take precedence.
-Frozen application builds embed the explicitly selected backend checkout rather
-than silently choosing an unrelated installed copy.
 
