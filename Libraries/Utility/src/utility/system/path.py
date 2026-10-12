@@ -252,8 +252,8 @@ class PurePath(pathlib.PurePath, metaclass=PurePathType):  # type: ignore[misc]
             formatted_path = _UNIX_EXTRA_SLASHES_RE.sub("/", formatted_path)
 
 
-        # Strip any trailing slashes, don't call rstrip if the formatted path == "/"
-        if len(formatted_path) != 1:
+        # Strip trailing separators without removing a filesystem root.
+        if (ntpath if slash == "\\" else posixpath).splitdrive(formatted_path)[1] != slash:
             formatted_path = formatted_path.rstrip(slash)
         return formatted_path or "."
 
