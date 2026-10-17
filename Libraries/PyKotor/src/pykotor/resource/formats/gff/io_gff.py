@@ -191,6 +191,7 @@ class GFFBinaryWriter(ResourceWriter):
         self._list_indices_writer: BinaryWriter = BinaryWriter.to_bytearray()
 
         self._labels: list[str] = []
+        self._label_indices: dict[str, int] = {}
 
         self._struct_count: int = 0
         self._field_count: int = 0
@@ -360,7 +361,9 @@ class GFFBinaryWriter(ResourceWriter):
         self,
         label: str,
     ) -> int:
-        if label in self._labels:
-            return self._labels.index(label)
-        self._labels.append(label)
-        return len(self._labels) - 1
+        index = self._label_indices.get(label)
+        if index is None:
+            index = len(self._labels)
+            self._labels.append(label)
+            self._label_indices[label] = index
+        return index

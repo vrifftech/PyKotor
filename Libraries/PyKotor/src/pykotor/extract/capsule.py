@@ -122,12 +122,15 @@ class LazyCapsule(FileResource):
             - Returns results dict.
         """
         results: dict[ResourceIdentifier, ResourceResult | None] = {}
+        resources: list[FileResource] | None = None
         with BinaryReader.from_file(self._filepath) as reader:
             for query in queries:
                 results[query] = None
 
+                if resources is None:
+                    resources = self.resources()
                 resource: FileResource | None = next(
-                    (resource for resource in self.resources() if resource == query),
+                    (resource for resource in resources if resource == query),
                     None,
                 )
                 if resource is None:
@@ -290,9 +293,7 @@ class LazyCapsule(FileResource):
             container.build_day = now.timetuple().tm_yday
         self._write_container(container)
 
-        self._hash_task_running = True
-        self._file_hash = ""
-        self._hash_task_running = False
+        object.__setattr__(self, "_file_hash", "")
 
     def delete(
         self,
@@ -321,9 +322,7 @@ class LazyCapsule(FileResource):
         container.remove(resname, restype)
         self._write_container(container)
 
-        self._hash_task_running = True
-        self._file_hash = ""
-        self._hash_task_running = False
+        object.__setattr__(self, "_file_hash", "")
 
     def as_cached_erf(self, erf_type: ERFType | None = None) -> ERF:
         container = self._load_container()
@@ -422,18 +421,12 @@ class LazyCapsule(FileResource):
         offset_to_entries = reader.read_uint32()
 
         reader.seek(offset_to_entries)
-        keys = []
-        records = []
         for _ in range(entry_count):
             resref = str(ResRef.from_bytes(reader.read_bytes(16)))
             restype = ResourceType.from_id(reader.read_uint32())
-            resid = reader.read_uint32()
-            keys.append((resref, restype, resid))
-            records.append((reader.read_uint32(), reader.read_uint32()))
-        for resref, restype, resid in keys:
-            if resid >= entry_count:
-                raise ValueError(f"RIM resource ID {resid} has no payload record.")
-            offset, size = records[resid]
+            reader.skip(4)
+            offset = reader.read_uint32()
+            size = reader.read_uint32()
             resources.append(FileResource(resref, restype, size, offset, self._filepath))
         return resources
 

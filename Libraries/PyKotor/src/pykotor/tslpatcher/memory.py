@@ -7,9 +7,21 @@ if TYPE_CHECKING:
     from utility.system.path import PureWindowsPath
 
 
+class _Memory2DA(dict[int, "str | PureWindowsPath"]):
+    """Installer slots are assigned or overwritten, never removed."""
+
+    def __init__(self):
+        super().__init__()
+        self.highest_slot: int = 0
+
+    def __setitem__(self, token_id: int, value: str | PureWindowsPath) -> None:
+        super().__setitem__(token_id, value)
+        self.highest_slot = max(self.highest_slot, token_id)
+
+
 class PatcherMemory:
     def __init__(self):
-        self.memory_2da: dict[int, str | PureWindowsPath] = {}  # 2DAMemory# (token) -> str
+        self.memory_2da = _Memory2DA()  # 2DAMemory# (token) -> str or field path
         self.memory_str: dict[int, int] = {}  # StrRef# (token) -> dialog.tlk index
 
     def __repr__(self):

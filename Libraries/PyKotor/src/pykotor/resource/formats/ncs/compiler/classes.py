@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
@@ -44,6 +46,14 @@ class MissingIncludeError(CompileError):
 
 DEFAULT_MAX_INCLUDE_DEPTH = 16
 MAX_FUNCTION_PARAMETERS = 32
+
+
+@dataclass
+class IncludeSourceCache:
+    """Source bytes for one fixed include search path, excluding staged rewrites."""
+
+    sources: dict[str, tuple[str, bytes]] = field(default_factory=dict)
+    mutable_paths: set[str] = field(default_factory=set)
 
 
 class IncludeContext:
@@ -664,9 +674,11 @@ class CodeRoot:
         max_include_depth: int = DEFAULT_MAX_INCLUDE_DEPTH,
         *,
         source_encoding: str | None = None,
+        include_cache: IncludeSourceCache | None = None,
     ):
         self.objects: list[TopLevelObject] = []
         self.source_encoding = source_encoding
+        self.include_cache = IncludeSourceCache() if include_cache is None else include_cache
 
         self.library: dict[str, bytes] = library
         self.include_context = IncludeContext(max_include_depth)
@@ -1836,6 +1848,7 @@ class IncludeScript(TopLevelObject):
             lookup_paths,
             max_include_depth=root.include_context.max_depth,
             source_encoding=root.source_encoding,
+            include_cache=root.include_cache,
         )
         source_name, source_bytes = self._get_script(root)
         return parser.parse(source_bytes, source_name=source_name)
@@ -1847,20 +1860,32 @@ class IncludeScript(TopLevelObject):
 
     def _get_script(self, root: CodeRoot) -> tuple[str, bytes]:
         """Load bytes and their identity; the parser uses the shared source decoder."""
+        cached = root.include_cache.sources.get(self.file.value)
+        if cached is not None:
+            return cached
+        cacheable = True
         for folder in root.library_lookup:
             filepath = folder / f"{self.file.value}.nss"
+            if os.path.abspath(filepath).casefold() in root.include_cache.mutable_paths:
+                cacheable = False
             if filepath.is_file():
                 try:
-                    return str(filepath), filepath.read_bytes()
+                    source = str(filepath), filepath.read_bytes()
                 except OSError as exc:
                     raise MissingIncludeError(
                         f"Failed to read include file '{filepath}': {exc}"
                     ) from exc
+                if cacheable:
+                    root.include_cache.sources[self.file.value] = source
+                return source
 
         canonical_name = IncludeContext.canonicalize(self.file.value)
         for library_name, source_bytes in self.library.items():
             if IncludeContext.canonicalize(library_name) == canonical_name:
-                return f"{library_name}.nss", source_bytes
+                source = f"{library_name}.nss", source_bytes
+                if cacheable:
+                    root.include_cache.sources[self.file.value] = source
+                return source
 
         search_paths = [str(folder) for folder in root.library_lookup]
         raise MissingIncludeError(

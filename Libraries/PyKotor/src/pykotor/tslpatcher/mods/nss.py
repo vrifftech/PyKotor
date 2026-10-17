@@ -13,7 +13,7 @@ from pykotor.resource.formats.ncs import (
     bytes_ncs,
     compile_nss as compile_with_builtin,
 )
-from pykotor.resource.formats.ncs.compiler.classes import EntryPointError
+from pykotor.resource.formats.ncs.compiler.classes import EntryPointError, IncludeSourceCache
 from pykotor.resource.formats.ncs.compilers import ExternalNCSCompiler
 from pykotor.resource.formats.ncs.compiler.source import decode_nss_source
 from pykotor.resource.formats.ncs.string_encoding import encode_ncs_string
@@ -43,10 +43,14 @@ class MutableString:
 class ModificationsNSS(PatcherModifications):
     def __init__(self, filename, replace=None, modifiers=None):
         super().__init__(filename, replace, modifiers)
+        self.compile_filename: str = filename
         self.saveas = str(PurePath(filename).with_suffix(".ncs"))
         self.action: str = "Compile"
         self.nwnnsscomp_path: Path | None = None
+        self.external_compilers: dict[Path, tuple[ExternalNCSCompiler, str]] = {}
         self.temp_script_folder: Path | None = None
+        self.include_folders: list[CaseAwarePath] = []
+        self.include_cache = IncludeSourceCache()
         self.compiler_flags: str = ""
         self.skip_if_not_replace = True
 
@@ -77,11 +81,16 @@ class ModificationsNSS(PatcherModifications):
         is_windows = os.name == "nt"
         nwnnsscomp_exists = self.nwnnsscomp_path is not None and self.nwnnsscomp_path.safe_isfile()
         if is_windows and self.nwnnsscomp_path and nwnnsscomp_exists:
-            nwnnsscompiler = ExternalNCSCompiler(self.nwnnsscomp_path)
-            try:
-                detected_nwnnsscomp: str = nwnnsscompiler.get_info().name
-            except ValueError:
-                detected_nwnnsscomp: str = "<UNKNOWN>"
+            cached_compiler = self.external_compilers.get(self.nwnnsscomp_path)
+            if cached_compiler is None:
+                nwnnsscompiler = ExternalNCSCompiler(self.nwnnsscomp_path)
+                try:
+                    detected_nwnnsscomp: str = nwnnsscompiler.get_info().name
+                except ValueError:
+                    detected_nwnnsscomp = "<UNKNOWN>"
+                cached_compiler = nwnnsscompiler, detected_nwnnsscomp
+                self.external_compilers[self.nwnnsscomp_path] = cached_compiler
+            nwnnsscompiler, detected_nwnnsscomp = cached_compiler
             if detected_nwnnsscomp != "TSLPATCHER":
                 logger.add_warning(
                     "The nwnnsscomp.exe in the tslpatchdata folder is not the expected TSLPatcher version.\n"
@@ -109,8 +118,9 @@ class ModificationsNSS(PatcherModifications):
                 source.value,
                 game,
                 [],
-                library_lookup=[CaseAwarePath.pathify(self.temp_script_folder)],
+                library_lookup=[CaseAwarePath.pathify(self.temp_script_folder), *self.include_folders],
                 source_name=self.sourcefile,
+                include_cache=self.include_cache,
             )
         except EntryPointError as e:
             logger.add_note(str(e))
@@ -127,7 +137,7 @@ class ModificationsNSS(PatcherModifications):
         """Replace StrRef and 2DAMEMORY tokens in the mutable source string."""
         def replace_tokens(token_name: str, memory_dict: dict[int, Any]) -> None:
             search_pattern = re.compile(rf"#{token_name}([0-9]+)#")
-            highest_token = max(memory_dict, default=0) if token_name == "2DAMEMORY" else 0
+            highest_token = memory.memory_2da.highest_slot if token_name == "2DAMEMORY" else 0
             previous_token = -1
             while True:
                 token_ids = {

@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from copy import copy
 from utility.system.path import Path
-from typing import TYPE_CHECKING, NoReturn, Sequence, cast
+from typing import TYPE_CHECKING, ClassVar, NoReturn, Sequence, cast
 
 from ply import yacc
 
@@ -74,6 +75,7 @@ if TYPE_CHECKING:
     from pykotor.common.script import DataType, ScriptConstant, ScriptFunction
     from pykotor.resource.formats.ncs.compiler.classes import (
         Expression,
+        IncludeSourceCache,
         TopLevelObject,
     )
 else:
@@ -82,6 +84,8 @@ else:
 
 class NssParser:
     """Parse NSS source into an abstract syntax tree."""
+
+    _grammar_tables: ClassVar[dict[type, yacc.LRTable]] = {}
 
     def __init__(
         self,
@@ -94,19 +98,40 @@ class NssParser:
         debug: bool = False,
         max_include_depth: int = DEFAULT_MAX_INCLUDE_DEPTH,
         source_encoding: str | None = None,
+        include_cache: IncludeSourceCache | None = None,
     ):
         self.source_encoding = source_encoding
         self.source: SourceDocument | None = None
-        self.parser: yacc.LRParser = yacc.yacc(
-            module=self,
-            errorlog=errorlog,
-            write_tables=False,
-            debug=debug,
-        )
+        parser_type = type(self)
+        if parser_type not in self._grammar_tables:
+            parser = yacc.yacc(
+                module=self,
+                errorlog=errorlog,
+                write_tables=False,
+                debug=debug,
+            )
+            table = yacc.LRTable()
+            table.lr_action = parser.action
+            table.lr_goto = parser.goto
+            table.lr_productions = parser.productions
+            for production in table.lr_productions:
+                production.callable = None
+            self._grammar_tables[parser_type] = table
+
+        # Share grammar tables, but bind productions to this parser's state.
+        table = copy(self._grammar_tables[parser_type])
+        table.lr_productions = [copy(production) for production in table.lr_productions]
+        table.bind_callables({
+            production.func: getattr(self, production.func)
+            for production in table.lr_productions
+            if production.func
+        })
+        self.parser: yacc.LRParser = yacc.LRParser(table, self.p_error)
         self.functions: list[ScriptFunction] = functions
         self.constants: list[ScriptConstant] = constants
         self.library: dict[str, bytes] = library
         self.max_include_depth = max_include_depth
+        self.include_cache = include_cache
         if library_lookup is None:
             lookup_items: list[str | Path] = []
         elif isinstance(library_lookup, (str, Path)):
@@ -176,6 +201,7 @@ class NssParser:
                 library=self.library,
                 max_include_depth=self.max_include_depth,
                 source_encoding=self.source_encoding,
+                include_cache=self.include_cache,
             )
 
     def p_code_root_object(self, p):

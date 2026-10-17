@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from ply import yacc
 
     from pykotor.common.misc import Game
+    from pykotor.resource.formats.ncs.compiler.classes import IncludeSourceCache
     from pykotor.resource.formats.ncs.ncs_data import NCSOptimizer
     from pykotor.resource.type import SOURCE_TYPES, TARGET_TYPES
     from utility.system.path import Path
@@ -63,11 +64,14 @@ def compile_nss(
     max_include_depth: int = DEFAULT_MAX_INCLUDE_DEPTH,
     source_name: str = "<string>",
     source_encoding: str | None = None,
+    include_cache: IncludeSourceCache | None = None,
 ) -> NCS:
     """Compile NSS source using the selected game API and optimizers.
 
     source_name labels diagnostics. source_encoding selects UTF-8 or Windows-1252;
     None detects each file independently. The root counts toward max_include_depth.
+    Share include_cache only while lookup paths and library contents stay fixed;
+    its mutable_paths are absolute, case-folded paths to staged scripts.
     """
     nss_parser = NssParser(
         functions=KOTOR_FUNCTIONS if game.is_k1() else TSL_FUNCTIONS,
@@ -78,6 +82,7 @@ def compile_nss(
         debug=debug,
         max_include_depth=max_include_depth,
         source_encoding=source_encoding,
+        include_cache=include_cache,
     )
 
     ncs = NCS()

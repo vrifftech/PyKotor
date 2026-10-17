@@ -45,14 +45,14 @@ class ModifySSF:
 
     def _resolve(self, memory: PatcherMemory) -> Any:
         if isinstance(self.stringref, TokenUsageTLK):
-            return memory.memory_str.get(self.stringref.token_id, 0)
+            return memory.memory_str[self.stringref.token_id]
 
         if isinstance(self.stringref, TokenUsage2DA):
             raw_value = f"2DAMEMORY{self.stringref.token_id}"
             if not memory.memory_2da:
                 return raw_value
             token_id = self.stringref.token_id
-            if not 1 <= token_id <= max(memory.memory_2da):
+            if not 1 <= token_id <= memory.memory_2da.highest_slot:
                 token_id = 1
             return memory.memory_2da.get(token_id, "")
 
@@ -62,7 +62,7 @@ class ModifySSF:
                 return raw_value
             suffix = raw_value[9:]
             token_id = int(suffix) if _ASCII_DIGITS.fullmatch(suffix) else 1
-            if not 1 <= token_id <= max(memory.memory_2da):
+            if not 1 <= token_id <= memory.memory_2da.highest_slot:
                 token_id = 1
             return memory.memory_2da.get(token_id, "")
 

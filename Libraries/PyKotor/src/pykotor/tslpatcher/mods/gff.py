@@ -60,7 +60,7 @@ def _resolve_2da_memory_slot(
     if not slots:
         return unresolved_token
 
-    highest_slot = max((slot for slot in slots if slot > 0), default=0)
+    highest_slot = slots.highest_slot
     if token_id < 1 or token_id > highest_slot:
         token_id = 1
     return slots.get(token_id, "")
@@ -309,7 +309,7 @@ class FieldValueRaw(FieldValueConstant):
 
         if lower_value.startswith("strref") and _ASCII_DIGITS.fullmatch(raw_value[6:]):
             token_id = int(raw_value[6:])
-            return memory.memory_str.get(token_id, 0)
+            return memory.memory_str[token_id]
 
         if raw_value.startswith("2DAMEMORY"):
             suffix = raw_value[9:]
@@ -342,7 +342,7 @@ class FieldValueTLKMemory(FieldValue):
         self.token_id: int = token_id
 
     def resolve(self, memory: PatcherMemory) -> Any:
-        return memory.memory_str.get(self.token_id, 0)
+        return memory.memory_str[self.token_id]
 
 
 class LocalizedStringDelta(LocalizedString):
@@ -759,6 +759,7 @@ class Memory2DAModifierGFF(ModifyGFF):
                 context.result.applied = True
             if field.value() != parsed_value:
                 field._value = parsed_value
+                field.raw_data = None
                 return True
             return False
 
@@ -817,7 +818,12 @@ class ModifyFieldGFF(ModifyGFF):
         if field_type in {GFFFieldType.Struct, GFFFieldType.List}:
             return False
 
-        raw_value = self._resolve_field_pointer(root_struct, self.value.resolve(memory))
+        raw_value = (
+            self.value.stored
+            if field_type is GFFFieldType.LocalizedString and isinstance(self.value, FieldValueRaw)
+            else self.value.resolve(memory)
+        )
+        raw_value = self._resolve_field_pointer(root_struct, raw_value)
         if raw_value is _INVALID:
             return False
 

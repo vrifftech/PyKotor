@@ -44,7 +44,6 @@ class RIMBinaryReader(ResourceReader):
         self._rim.reserved = self._reader.read_bytes(100)
 
         resrefs: list[ResRef] = []
-        resids: list[int] = []
         restypes: list[int] = []
         resoffsets: list[int] = []
         ressizes: list[int] = []
@@ -52,15 +51,13 @@ class RIMBinaryReader(ResourceReader):
         for _ in range(entry_count):
             resrefs.append(ResRef.from_bytes(self._reader.read_bytes(16)))
             restypes.append(self._reader.read_uint32())
-            resids.append(self._reader.read_uint32())
+            self._reader.skip(4)
             resoffsets.append(self._reader.read_uint32())
             ressizes.append(self._reader.read_uint32())
 
-        for i, resid in enumerate(resids):
-            if resid >= entry_count:
-                raise ValueError(f"RIM resource ID {resid} has no payload record.")
-            self._reader.seek(resoffsets[resid])
-            resdata = self._reader.read_bytes(ressizes[resid])
+        for i in range(entry_count):
+            self._reader.seek(resoffsets[i])
+            resdata = self._reader.read_bytes(ressizes[i])
             self._rim.append(RIMResource(resrefs[i], ResourceType.from_id(restypes[i]), resdata))
 
         return self._rim

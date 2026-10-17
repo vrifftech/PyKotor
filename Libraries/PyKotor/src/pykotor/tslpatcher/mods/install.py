@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shlex
 import shutil
 
 from typing import TYPE_CHECKING
@@ -8,10 +9,12 @@ from pykotor.common.stream import BinaryReader
 from pykotor.tools.path import CaseAwarePath
 from pykotor.tslpatcher.mods.template import PatcherModifications
 from utility.error_handling import universal_simplify_exception
-from utility.system.path import PurePath
+from utility.system.path import Path, PurePath, PureWindowsPath
 
 if TYPE_CHECKING:
     import os
+
+    from typing import Callable
 
     from typing_extensions import Literal
 
@@ -23,23 +26,29 @@ if TYPE_CHECKING:
 
 def create_backup(
     log: PatchLogger,
-    destination_filepath: CaseAwarePath,
-    backup_folderpath: CaseAwarePath,
+    destination_filepath: Path,
+    backup_folderpath: Path,
     processed_files: set,
     subdirectory_path: os.PathLike | str | None = None,
     *,
-    is_new_file: bool = False,
+    uninstall_folder: Path,
+    directory_cache: dict[str, Path],
+    record_new_file: Callable[[str], None],
+    destination_exists: bool,
 ):
     """Creates a backup of the provided file.
 
     Args:
     ----
         log: PatchLogger - Logger for logging messages
-        destination_filepath: CaseAwarePath - Filepath to backup
-        backup_folderpath: CaseAwarePath - Folder to store backups
+        destination_filepath: Path - Filepath to backup
+        backup_folderpath: Path - Folder to store backups
         processed_files: set - Set of already backed up files
         subdirectory_path: os.PathLike/str/None - Optional subdirectory path
-        is_new_file: bool - Register the destination for removal instead of backing it up
+        uninstall_folder: Path - Resolved uninstall directory for this installation
+        directory_cache: Created backup directories for this installation
+        record_new_file: Record and flush a new file's uninstall entry before installation
+        destination_exists: bool - Whether the destination exists at this operation's lookup
 
     Processing Logic:
     ----------------
@@ -51,28 +60,28 @@ def create_backup(
     """
     destination_file_str = str(destination_filepath)
     destination_file_str_lower: str = destination_file_str.lower()
-    subdirectory_backup_path: CaseAwarePath | None = None
-    backup_filepath: CaseAwarePath
-    if subdirectory_path:
-        subdirectory_backup_path = CaseAwarePath.get_case_sensitive_path(backup_folderpath / subdirectory_path)
-        backup_filepath = subdirectory_backup_path / destination_filepath.name.lower()
-    else:
-        backup_filepath = backup_folderpath / destination_filepath.name.lower()
-
     if destination_file_str_lower not in processed_files:
         # Write a list of files that should be removed in order to uninstall the mod
-        uninstall_folder = CaseAwarePath.get_case_sensitive_path(backup_folderpath.parent.parent / "uninstall")
         uninstall_str_lower: str = str(uninstall_folder).lower()
         if uninstall_str_lower not in processed_files:
             uninstall_folder.mkdir(exist_ok=True)
 
             # Write the PowerShell/Bash uninstall scripts to the uninstall folder
             subdir_temp: PurePath | None = PurePath(subdirectory_path) if subdirectory_path else None
-            game_folder: CaseAwarePath = destination_filepath.parents[len(subdir_temp.parts)] if subdir_temp else destination_filepath.parent
+            game_folder: Path = destination_filepath.parents[len(subdir_temp.parts)] if subdir_temp else destination_filepath.parent
             create_uninstall_scripts(backup_folderpath, uninstall_folder, game_folder)
             processed_files.add(uninstall_str_lower)
 
-        if destination_filepath.is_file() and not is_new_file:
+        if destination_exists:
+            relative_folder = PureWindowsPath(subdirectory_path or ".")
+            folder_key = str(relative_folder).casefold()
+            backup_directory = directory_cache.get(folder_key)
+            if backup_directory is None:
+                resolved = CaseAwarePath.get_case_sensitive_path(backup_folderpath.joinpath(*relative_folder.parts))
+                backup_directory = Path(*resolved.parts)
+                backup_directory.mkdir(exist_ok=True, parents=True)
+                directory_cache[folder_key] = backup_directory
+            backup_filepath = backup_directory / destination_filepath.name.lower()
             # Check if the backup path exists and generate a new one if necessary
             i = 2
             filestem: str = backup_filepath.stem
@@ -81,29 +90,25 @@ def create_backup(
                 i += 1
 
             log.add_note(f"Backing up '{destination_file_str}'...")
-            if subdirectory_backup_path:
-                subdirectory_backup_path.mkdir(exist_ok=True, parents=True)
             try:  # sourcery skip: remove-redundant-exception
                 shutil.copy(destination_filepath, backup_filepath)
             except (OSError, PermissionError) as e:
                 log.add_error(f"Failed to create backup of '{destination_file_str}': {universal_simplify_exception(e)}")
                 raise
         else:
-            # Write the file path to remove these files.txt in backup directory
-            removal_files_txt: CaseAwarePath = backup_folderpath.joinpath("remove these files.txt")
-            line: str = ("\n" if removal_files_txt.is_file() else "") + destination_file_str
-            with removal_files_txt.open(mode="a", encoding="utf-8") as f:
-                f.write(line)
+            record_new_file(destination_file_str)
 
         # Add the lowercased path string to the processed_files set
         processed_files.add(destination_file_str_lower)
 
 
-def create_uninstall_scripts(backup_dir: CaseAwarePath, uninstall_folder: CaseAwarePath, main_folder: CaseAwarePath):
+def create_uninstall_scripts(backup_dir: Path, uninstall_folder: Path, main_folder: Path):
+    powershell_game_path = str(main_folder).replace("'", "''")
     with uninstall_folder.joinpath("uninstall.ps1").open("w", encoding="utf-8") as f:
         f.write(
             rf"""#!/usr/bin/env pwsh
-$backupParentFolder = Get-Item -Path "..$([System.IO.Path]::DirectorySeparatorChar)backup"
+$ErrorActionPreference = 'Stop'
+$backupParentFolder = Get-Item -LiteralPath (Join-Path $PSScriptRoot '../backup')
 $mostRecentBackupFolder = Get-ChildItem -LiteralPath $backupParentFolder.FullName -Directory | ForEach-Object {{
     $dirName = $_.Name
     try {{
@@ -120,13 +125,7 @@ $mostRecentBackupFolder = Get-ChildItem -LiteralPath $backupParentFolder.FullNam
     }}
 }} | Sort-Object DateTime -Descending | Select-Object -ExpandProperty Directory -First 1
 if ($null -eq $mostRecentBackupFolder -or -not $mostRecentBackupFolder -or -not (Test-Path -LiteralPath $mostRecentBackupFolder -ErrorAction SilentlyContinue)) {{
-    $mostRecentBackupFolder = "{backup_dir}"
-    if (-not (Test-Path -LiteralPath $mostRecentBackupFolder -ErrorAction SilentlyContinue)) {{
-        Write-Host "No backups found in '$($backupParentFolder.FullName)'"
-        Pause
-        exit
-    }}
-    Write-Host "Using hardcoded backup dir: '$mostRecentBackupFolder'"
+    throw "No backups found in '$($backupParentFolder.FullName)'"
 }} else {{
     Write-Host "Selected backup folder '$mostRecentBackupFolder'"
 }}
@@ -179,7 +178,7 @@ if ($confirmation.Trim().ToLower() -notin $validConfirmations) {{
 $deletedCount = 0
 foreach ($file in $existingFiles) {{
     if ($file -and (Test-Path -LiteralPath $file -ErrorAction SilentlyContinue)) {{
-        Remove-Item $file -Force
+        Remove-Item -LiteralPath $file -Force
         Write-Host "Removed $file..."
         $deletedCount++
     }}
@@ -192,19 +191,17 @@ if ($deletedCount -ne 0) {{
 foreach ($file in $filesInBackup) {{
     try {{
         $relativePath = $file.FullName.Substring($mostRecentBackupFolder.Length)
-        $destinationPath = Join-Path "{main_folder}" -ChildPath $relativePath
+        $destinationPath = Join-Path '{powershell_game_path}' -ChildPath $relativePath
 
         # Create the directory structure if it doesn't exist
         $destinationDir = [System.IO.Path]::GetDirectoryName($destinationPath)
-        if (-not (Test-Path -LiteralPath $destinationDir)) {{
-            New-Item -LiteralPath $destinationDir -ItemType Directory -Force
-        }}
+        [System.IO.Directory]::CreateDirectory($destinationDir) | Out-Null
 
         # Copy the file to the destination
         Copy-Item -LiteralPath $file.FullName -Destination $destinationPath -Force
         Write-Host "Restoring backup of '$($file.Name)' to '$destinationDir'..."
     }} catch {{
-        Write-Host "Failed to restore backup of $($file.Name) because of: $($_.Exception.Message)"
+        throw
     }}
 }}
 Pause
@@ -212,32 +209,28 @@ Pause
         )
     with uninstall_folder.joinpath("uninstall.sh").open("w", encoding="utf-8", newline="\n") as f:
         f.write(
-            rf"""
-#!/bin/bash
+            rf"""#!/bin/bash
+set -eo pipefail
 
-backupParentFolder="../backup"
-mostRecentBackupFolder=$(ls -d "$backupParentFolder"/* | while read -r dir; do
+gameFolder={shlex.quote(str(main_folder))}
+backupParentFolder="$(cd -- "$(dirname -- "${{BASH_SOURCE[0]}}")/../backup" && pwd)"
+mostRecentBackupFolder=$(for dir in "$backupParentFolder"/*; do
     dirName=$(basename "$dir")
     if [[ "$dirName" =~ ^[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}_[0-9]{{2}}\.[0-9]{{2}}\.[0-9]{{2}}$ ]]; then
         # Convert the directory name to a sortable format YYYYMMDDHHMMSS and echo both the sortable format and the original directory
-        echo "${{dirName:0:4}}${{dirName:5:2}}${{dirName:8:2}}${{dirName:11:2}}${{dirName:14:2}}${{dirName:17:2}} $dir"
+        printf '%s %s\n' "${{dirName:0:4}}${{dirName:5:2}}${{dirName:8:2}}${{dirName:11:2}}${{dirName:14:2}}${{dirName:17:2}}" "$dir"
     else
         if [[ -n "$dirName" && ! "$dirName" =~ ^[[:space:]]*$ ]]; then
             echo "Ignoring directory '$dirName'" >&2
         fi
     fi
-done | sort -r | awk 'NR==1 {{print $2}}')
+done | sort -r | awk 'NR==1 {{sub(/^[^ ]+ /, ""); print}}')
 
 
 
 if [[ ! -d "$mostRecentBackupFolder" ]]; then
-    mostRecentBackupFolder="{backup_dir}"
-    if [[ ! -d "$mostRecentBackupFolder" ]]; then
-        echo "No backups found in '$backupParentFolder'"
-        read -rp "Press enter to continue..."
-        exit 1
-    fi
-    echo "Using hardcoded backup dir: '$mostRecentBackupFolder'"
+    echo "No backups found in '$backupParentFolder'" >&2
+    exit 1
 else
     echo "Selected backup folder '$mostRecentBackupFolder'"
 fi
@@ -252,7 +245,6 @@ else
     mapfile -t filesToDelete < "$deleteListFile"
     echo "Building file lists..."
     for file in "${{filesToDelete[@]}}"; do
-        normalizedFile=$(echo "$file" | tr '\\' '/')
         if [[ -n "$file" && -f "$file" ]]; then
             existingFiles+=("$file")
         else
@@ -267,7 +259,9 @@ folderCount=$(find "$mostRecentBackupFolder" -type d | wc -l)
 
 # Display relative file paths if file count is less than 6
 if [[ $fileCount -lt 6 ]]; then
-    find "$mostRecentBackupFolder" -type f ! -name 'remove these files.txt' | sed "s|^$mostRecentBackupFolder/||"
+    find "$mostRecentBackupFolder" -type f ! -name 'remove these files.txt' -print0 | while IFS= read -r -d '' file; do
+        printf '%s\n' "${{file#"$mostRecentBackupFolder"/}}"
+    done
 fi
 
 read -rp "Really uninstall ${{#existingFiles[@]}} files and restore the most recent backup (containing $fileCount files and $folderCount folders)? " confirmation
@@ -281,7 +275,7 @@ for file in "${{existingFiles[@]}}"; do
     if [[ -f "$file" ]]; then
         rm -f "$file"
         echo "Removed $file..."
-        ((deletedCount++))
+        ((++deletedCount))
     fi
 done
 
@@ -289,15 +283,16 @@ if [[ $deletedCount -ne 0 ]]; then
     echo "Deleted $deletedCount files."
 fi
 
-while IFS= read -r -d $'\0' file; do
-    relativePath=${{file#$mostRecentBackupFolder}}
-    destinationPath="{main_folder}/$relativePath"
+find "$mostRecentBackupFolder" -type f ! -name 'remove these files.txt' -print0 | while IFS= read -r -d '' file; do
+    relativePath=${{file#"$mostRecentBackupFolder"/}}
+    destinationPath="$gameFolder/$relativePath"
     destinationDir=$(dirname "$destinationPath")
     if [[ ! -d "$destinationDir" ]]; then
         mkdir -p "$destinationDir"
     fi
-    cp "$file" "$destinationPath" && echo "Restoring backup of '$(basename $file)' to '$destinationDir'..."
-done < <(find "$mostRecentBackupFolder" -type f ! -name 'remove these files.txt' -print0)
+    cp "$file" "$destinationPath"
+    echo "Restoring backup of '$(basename "$file")' to '$destinationDir'..."
+done
 
 read -rp "Press enter to continue..."
 

@@ -25,6 +25,8 @@ class LogType(IntEnum):
 class PatchLogger:
     def __init__(self):
         self.all_logs: list[PatchLog] = []
+        self.error_count: int = 0
+        self.warning_count: int = 0
 
         self.verbose_observable: Observable = Observable()
         self.note_observable: Observable = Observable()
@@ -80,11 +82,13 @@ class PatchLogger:
     def add_warning(self, message: str):
         log_obj = PatchLog(message, LogType.WARNING)
         self.all_logs.append(log_obj)
+        self.warning_count += 1
         self.warning_observable.fire(log_obj)
 
     def add_error(self, message: str):
         log_obj = PatchLog(message, LogType.ERROR)
         self.all_logs.append(log_obj)
+        self.error_count += 1
         self.error_observable.fire(log_obj)
 
 
@@ -93,8 +97,9 @@ class PatchLog:
         self.message: str = message
         self.log_type: LogType = ltype
         self.timestamp = datetime.now(tz=timezone.utc).astimezone().time()
+        self._formatted_message = f"[{self.log_type}] [{self.timestamp.strftime('%H:%M:%S')}] {self.message}"
         print(self.formatted_message, file=sys.stderr if ltype is LogType.ERROR else sys.stdout)
 
     @property
     def formatted_message(self) -> str:  # REM: log_type should be first for kotormodsync support.
-        return f"[{self.log_type}] [{self.timestamp.strftime('%H:%M:%S')}] {self.message}"
+        return self._formatted_message

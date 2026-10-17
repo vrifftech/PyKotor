@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from configparser import ConfigParser
 from copy import copy
 from enum import IntEnum
 from typing import TYPE_CHECKING
@@ -89,9 +88,9 @@ class PatcherConfig:
             - Set the ConfigParser to use case-insensitive keys. Ini is inherently case-insensitive by default.
             - Call the load method on the ConfigReader, passing self to populate the configuration instance.
         """
-        from pykotor.tslpatcher.reader import ConfigReader, _first_ini_sections  # noqa: PLC0415  Prevent circular imports.
+        from pykotor.tslpatcher.reader import ConfigReader, PatcherConfigParser  # noqa: PLC0415  Prevent circular imports.
 
-        ini = ConfigParser(
+        ini = PatcherConfigParser(
             delimiters=("="),
             allow_no_value=True,
             strict=False,
@@ -100,7 +99,7 @@ class PatcherConfig:
         )
 
         ini.optionxform = lambda optionstr: optionstr  # type: ignore[method-assign]  # use case-sensitive keys
-        ini.read_string(_first_ini_sections(ini_text))
+        ini.read_string(ini_text)
 
         ConfigReader(ini, mod_path, logger, tslpatchdata_path).load(self)
 

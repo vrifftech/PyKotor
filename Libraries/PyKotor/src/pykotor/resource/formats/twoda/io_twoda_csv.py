@@ -33,16 +33,16 @@ class TwoDACSVReader(ResourceReader):
         _csv = csv.reader(io.StringIO(data))
 
         try:
-            headers: list[str] = next(_csv)[1:]
+            headers: list[str] = [header.strip() for header in next(_csv)[1:]]
             if not headers:
                 msg = "CSV header is missing or not formatted correctly."
                 raise ValueError(msg)
 
             for header in headers:
-                if not header.strip():
+                if not header:
                     msg = "Empty header detected, CSV is not valid."
                     raise ValueError(msg)
-                self._twoda.add_column(header.strip())
+                self._twoda.add_column(header)
 
             for i, row in enumerate(_csv, start=1):
                 if len(row) != len(headers) + 1:

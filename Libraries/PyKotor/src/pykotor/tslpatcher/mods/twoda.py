@@ -264,7 +264,7 @@ class Modify2DA(ABC):
         if not slots:
             return value
 
-        highest_slot = max((token_id for token_id in slots if token_id > 0), default=0)
+        highest_slot = slots.highest_slot
         if cls._is_unsigned_decimal(suffix):
             token_id = int(suffix)
             if token_id < 1:
@@ -283,7 +283,7 @@ class Modify2DA(ABC):
     @classmethod
     def _resolve_strref(cls, value: str, memory: PatcherMemory) -> str:
         if len(value) > 6 and value[:6].lower() == "strref" and cls._is_unsigned_decimal(value[6:]):
-            return str(memory.memory_str.get(int(value[6:]), 0))
+            return str(memory.memory_str[int(value[6:])])
         return value
 
     @classmethod
@@ -303,7 +303,7 @@ class Modify2DA(ABC):
         header = cls._find_header(twoda, column)
         if header is None or not 0 <= row_index < twoda.get_height():
             return False
-        twoda.get_row(row_index).set_string(header, cls._to_internal(value))
+        twoda.get_row(row_index).set_string(header, value)
         return True
 
     @classmethod
@@ -356,7 +356,7 @@ class Modify2DA(ABC):
                     captured = twoda.get_row(selected_row).get_string(column_header)
 
         if captured is not None:
-            memory.memory_2da[token_id] = cls._to_memory(captured)
+            memory.memory_2da[token_id] = captured
         return True
 
     @classmethod
@@ -623,7 +623,7 @@ class AddRow2DA(Modify2DA):
                 value = self._resolve_2da_memory(value, memory)
                 if value != "":
                     if row_index is None:
-                        row_index = twoda.add_row(str(twoda.get_height()), {})
+                        row_index = twoda.add_row(str(twoda.get_height()), dict.fromkeys(twoda.get_headers(), "****"))
                     twoda.set_label(row_index, value)
                 continue
 
@@ -633,7 +633,7 @@ class AddRow2DA(Modify2DA):
                 continue
 
             if row_index is None:
-                row_index = twoda.add_row(str(twoda.get_height()), {})
+                row_index = twoda.add_row(str(twoda.get_height()), dict.fromkeys(twoda.get_headers(), "****"))
 
             header = self._find_header(twoda, key)
             if header is None:
@@ -827,7 +827,7 @@ class AddColumn2DA(Modify2DA):
         added = False
         created = False
         header = ""
-        default = ""
+        default = "****"
 
         for key, raw_value in self.entries:
             lower_key = key.lower()
@@ -853,6 +853,8 @@ class AddColumn2DA(Modify2DA):
                         raise ValueError(f"{self.identifier}: BeforeColumn header '{anchor}' does not exist.")
                 if not exists:
                     twoda.add_column(resolved_header)
+                    for row_index in range(twoda.get_height()):
+                        twoda.set_cell(row_index, resolved_header, "****")
                     created = True
                 if anchor is not None:
                     twoda.move_column_before(resolved_header, anchor)
@@ -867,7 +869,6 @@ class AddColumn2DA(Modify2DA):
                 if raw_value == "":
                     continue
                 value = self._resolve_tokens(raw_value, memory)
-                value = self._to_internal(value)
                 old_default = default
                 default = value
                 if not created:
@@ -920,6 +921,11 @@ class Modifications2DA(PatcherModifications):
         logger: PatchLogger,
         game: Game,
     ):
+        # Keep loaded blanks (****) distinct from token-assigned empty strings.
+        for row_index in range(twoda.get_height()):
+            for header in twoda.get_headers():
+                twoda.set_cell(row_index, header, Modify2DA._to_memory(twoda.get_cell(row_index, header)))
+
         for row in self.modifiers:
             try:
                 row.apply(twoda, memory)
@@ -932,3 +938,7 @@ class Modifications2DA(PatcherModifications):
                 else:
                     logger.add_error(msg)
                     break
+
+        for row_index in range(twoda.get_height()):
+            for header in twoda.get_headers():
+                twoda.set_cell(row_index, header, Modify2DA._to_internal(twoda.get_cell(row_index, header)))

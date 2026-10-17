@@ -488,6 +488,12 @@ class Installation:
             else path.safe_iterdir()
         )
 
+        resources_list = self._build_resources_list(files_iter)
+        if not resources_list:
+            self._log.warning("No resources found at '%s' when loading the installation, skipping...", r_path)
+        return resources_list
+
+    def _build_resources_list(self, files_iter: Iterable[Path]) -> list[FileResource]:
         resources_list: list[FileResource] = []
 
         if self.use_multithreading:
@@ -505,8 +511,6 @@ class Installation:
                 if not resource:
                     continue
                 resources_list.append(resource)
-        if not resources_list:
-            self._log.warning("No resources found at '%s' when loading the installation, skipping...", r_path)
         return resources_list
 
     def load_chitin(self):
@@ -572,21 +576,45 @@ class Installation:
             directory: The relative path of a subfolder to the override folder.
         """
         override_path: CaseAwarePath = self.override_path()
-        target_dirs: list[CaseAwarePath]
         if directory:
-            target_dirs = [override_path / directory]
             self._override[directory] = []
+            folder = override_path / directory
         else:
-            if self.game().is_k1():
-                target_dirs = []
-            elif self.game().is_k2():
-                target_dirs = [f for f in override_path.safe_rglob("*") if f.safe_isdir()]
-            target_dirs.append(override_path)
             self._override = {}
+            folder = override_path
 
-        for folder in target_dirs:
+        if directory or self.game().is_k1():
             relative_folder: str = folder.relative_to(override_path).as_posix()  # '.' if folder is the same as override_path
             self._override[relative_folder] = self.load_resources_list(folder, recurse=True)
+            return
+
+        # Preserve each folder's recursive view while reading the tree once.
+        entries = list(override_path.safe_rglob("*"))
+        target_dirs = [entry for entry in entries if entry.safe_isdir()]
+        groups: dict[tuple[str, ...], list[FileResource]] = {}
+        for folder in target_dirs:
+            relative_folder = folder.relative_to(override_path).as_posix()
+            if folder.is_symlink():
+                # rglob does not descend into links; these explicit roots did.
+                self._override[relative_folder] = self.load_resources_list(folder, recurse=True)
+            else:
+                resources: list[FileResource] = []
+                self._override[relative_folder] = resources
+                groups[folder.parts] = resources
+
+        self._override["."] = []
+        groups[override_path.parts] = self._override["."]
+        self._log.info("Loading %s from installation...", override_path.relative_to(self._path))
+        for resource in self._build_resources_list(entries):
+            parts = resource.filepath().parts
+            for depth in range(len(override_path.parts), len(parts)):
+                resources = groups.get(parts[:depth])
+                if resources is not None:
+                    resources.append(resource)
+
+        for parts, resources in groups.items():
+            if not resources:
+                self._log.warning("No resources found at '%s' when loading the installation, skipping...", Path(*parts))
 
     def reload_override(
         self,

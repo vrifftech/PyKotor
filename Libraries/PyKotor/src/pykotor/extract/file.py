@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Iterator
@@ -51,14 +50,12 @@ class FileResource:
 
         self._sha256_hash: str = ""
         self._internal: bool = False
-        self._hash_task_running: bool = False
 
     def __setattr__(self, name, value):
         if (
             hasattr(self, name)
-            and name not in {"_internal", "_hash_task_running"}
+            and name != "_internal"
             and not getattr(self, "_internal", True)
-            and not getattr(self, "_hash_task_running", True)
         ):
             msg = f"Cannot modify immutable FileResource instance, attempted `setattr({self!r}, {name!r}, {value!r})`"
             raise RuntimeError(msg)
@@ -218,21 +215,13 @@ class FileResource:
         """
         self._internal = True
         try:
+            self._file_hash = ""
             if reload:
                 self._index_resource()
             with BinaryReader.from_file(self._filepath) as file:
                 file.seek(self._offset)
                 data: bytes = file.read_bytes(self._size)
 
-                if not self._hash_task_running:
-
-                    def background_task(res: FileResource, sentdata: bytes):
-                        res._hash_task_running = True  # noqa: SLF001
-                        res._file_hash = generate_hash(sentdata)  # noqa: SLF001
-                        res._hash_task_running = False  # noqa: SLF001
-
-                    with ThreadPoolExecutor(thread_name_prefix="FileResource_SHA1calc") as executor:
-                        executor.submit(background_task, self, data)
             return data
         finally:
             self._internal = False
@@ -245,8 +234,9 @@ class FileResource:
         """Returns a lowercase hex string sha1 hash. If FileResource doesn't exist this returns an empty str."""
         if reload or not self._file_hash:
             if not self._filepath.safe_isfile():
+                object.__setattr__(self, "_file_hash", "")
                 return ""  # FileResource or the capsule doesn't exist on disk.
-            self._file_hash = generate_hash(self.data())
+            object.__setattr__(self, "_file_hash", generate_hash(self.data(reload=reload)))
         return self._file_hash
 
     def as_file_resource(self) -> Self:

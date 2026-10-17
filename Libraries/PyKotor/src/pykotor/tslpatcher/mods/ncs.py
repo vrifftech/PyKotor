@@ -53,17 +53,11 @@ class ModificationsNCS(PatcherModifications):
 
                 value: int
                 if token_type.lower() == "strref":
-                    memory_strval: int | None = memory.memory_str.get(token_id_or_value)
-                    if memory_strval is None:
-                        logger.add_warning(
-                            f"StrRef{token_id_or_value} was not defined before use in HACKList; writing 0.",
-                        )
-                        memory_strval = 0
-                    value = memory_strval
+                    value = memory.memory_str[token_id_or_value]
                 elif token_type.lower() == "2damemory":
                     memory_val: str | PureWindowsPath | None = None
                     if memory.memory_2da:
-                        highest_token = max(memory.memory_2da)
+                        highest_token = memory.memory_2da.highest_slot
                         memory_token = (
                             1
                             if token_id_or_value <= 0 or token_id_or_value > highest_token

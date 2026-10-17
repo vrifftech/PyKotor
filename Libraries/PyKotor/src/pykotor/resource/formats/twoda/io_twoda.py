@@ -40,10 +40,12 @@ class TwoDABinaryReader(ResourceReader):
             offsets = [reader.read_uint16() for _ in range(row_count * len(headers))]
             reader.skip(2)  # Legacy string-pool size; not an addressing bound.
             data_start = reader.position()
+            strings: dict[int, str] = {}
             for index, offset in enumerate(offsets):
-                reader.seek(data_start + offset)
-                value = reader.read_terminated_string("\0", encoding="latin-1")
-                twoda.set_cell(index // len(headers), headers[index % len(headers)], value)
+                if offset not in strings:
+                    reader.seek(data_start + offset)
+                    strings[offset] = reader.read_terminated_string("\0", encoding="latin-1")
+                twoda.set_cell(index // len(headers), headers[index % len(headers)], strings[offset])
             return twoda
 
 
