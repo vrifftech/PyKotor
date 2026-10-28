@@ -165,8 +165,6 @@ class PurePath(pathlib.PurePath, metaclass=PurePathType):  # type: ignore[misc]
     ):
         if sys.version_info >= (3, 12, 0):
             self._raw_paths: list[str] = self.parse_args(args)
-        elif self._drv.strip().endswith(":") and self._flavour.sep == "\\":
-            self._root = "\\"
         self._cached_str = self.str_norm(super().__str__(), slash=self._flavour.sep)
 
     @classmethod
