@@ -25,7 +25,7 @@ if UTILITY_PATH.joinpath("utility").exists():
     add_sys_path(UTILITY_PATH)
 
 from pykotor.extract.capsule import Capsule
-from pykotor.tslpatcher.patcher import ModInstaller
+from pykotor.tslpatcher.patcher import ModInstaller, _PatchPaths
 from utility.system.path import Path
 
 
@@ -40,6 +40,12 @@ class TestLookupResourceFunction(unittest.TestCase):
             self.config = ModInstaller("", "", tmpfile_path)
         self.config.mod_path = Path("test_mod_path")
         self.output_container_path = Path("test_output_container_path")
+        self.paths = _PatchPaths(
+            container_path=self.output_container_path,
+            output_path=self.output_container_path / self.patch.saveas,
+            is_capsule=False,
+            source_path=self.config.mod_path / self.patch.sourcefolder / self.patch.sourcefile,
+        )
 
     def tearDown(self):
         Path("test.mod").unlink(missing_ok=True)
@@ -54,7 +60,7 @@ class TestLookupResourceFunction(unittest.TestCase):
         with patch("pykotor.common.stream.BinaryReader.from_auto", return_value=mock_binary_reader):
             result = self.config.lookup_resource(
                 self.patch,
-                self.output_container_path,  # type: ignore[arg-type, reportGeneralTypeIssues]
+                self.paths,
                 True,
                 capsule,
             )
@@ -64,11 +70,10 @@ class TestLookupResourceFunction(unittest.TestCase):
         # Arrange
         self.patch.replace_file = True
 
-        with patch("pykotor.common.stream.BinaryReader.load_file") as mock_load_file:
-            mock_load_file.side_effect = FileNotFoundError
-
+        with patch.object(self.config, "load_resource_file", side_effect=FileNotFoundError) as mock_load_file:
             # Act & Assert
-            self.assertIsNone(self.config.lookup_resource(self.patch, self.output_container_path))  # type: ignore[arg-type, reportGeneralTypeIssues]
+            self.assertIsNone(self.config.lookup_resource(self.patch, self.paths))
+            mock_load_file.assert_called_once_with(self.paths.source_path)
 
     def test_lookup_resource_capsule_exists_true_no_file(self):
         # Arrange
@@ -82,7 +87,7 @@ class TestLookupResourceFunction(unittest.TestCase):
             self.assertIsNone(
                 self.config.lookup_resource(
                     self.patch,
-                    self.output_container_path,  # type: ignore[arg-type, reportGeneralTypeIssues]
+                    self.paths,
                     exists_at_output_location=True,
                     capsule=capsule,
                 )
@@ -92,25 +97,23 @@ class TestLookupResourceFunction(unittest.TestCase):
         # Arrange
         self.patch.replace_file = False
 
-        with patch("pykotor.common.stream.BinaryReader.load_file") as mock_load_file:
-            mock_load_file.side_effect = FileNotFoundError
-
+        with patch.object(self.config, "load_resource_file", side_effect=FileNotFoundError) as mock_load_file:
             # Act & Assert
             self.assertIsNone(
-                self.config.lookup_resource(self.patch, self.output_container_path, exists_at_output_location=True, capsule=None)  # type: ignore[arg-type, reportGeneralTypeIssues]
+                self.config.lookup_resource(self.patch, self.paths, exists_at_output_location=True, capsule=None)
             )
+            mock_load_file.assert_called_once_with(self.paths.output_path)
 
     def test_lookup_resource_no_capsule_exists_false_no_file(self):
         # Arrange
         self.patch.replace_file = False
 
-        with patch("pykotor.common.stream.BinaryReader.load_file") as mock_load_file:
-            mock_load_file.side_effect = FileNotFoundError
-
+        with patch.object(self.config, "load_resource_file", side_effect=FileNotFoundError) as mock_load_file:
             # Act & Assert
             self.assertIsNone(
-                self.config.lookup_resource(self.patch, self.output_container_path, exists_at_output_location=False, capsule=None)  # type: ignore[arg-type, reportGeneralTypeIssues]
+                self.config.lookup_resource(self.patch, self.paths, exists_at_output_location=False, capsule=None)
             )
+            mock_load_file.assert_called_once_with(self.paths.source_path)
 
 
 class TestShouldPatchFunction(unittest.TestCase):

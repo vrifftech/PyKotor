@@ -310,6 +310,9 @@ class ConfigReader:
     def load(self, config: PatcherConfig) -> PatcherConfig:
         self.config = config
         self.previously_parsed_sections = set()
+        self._section_names.clear()
+        for section in self.ini.sections():
+            self._section_names.setdefault(section.lower(), section)
 
         self.load_settings()
         self.load_tlk_list()
