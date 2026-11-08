@@ -148,6 +148,9 @@ def _parse_vector(
     components = value.split("|")
     if len(components) != count:
         return _INVALID
+    if count == 4:
+        # INI orientations are W|X|Y|Z; Vector4 uses X, Y, Z, W.
+        components = components[1:] + components[:1]
 
     if existing is None:
         parsed = [_parse_float(component) for component in components]
