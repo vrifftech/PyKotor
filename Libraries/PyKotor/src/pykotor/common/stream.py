@@ -188,7 +188,7 @@ class BinaryReader:
                 raise TypeError(msg)
 
         elif isinstance(source, BinaryReader):  # is already a BinaryReader instance
-            reader = cls(source._stream, source.offset(), source.size())
+            reader = cls(source._stream, source.offset() + offset, source.size() - offset if size is None else size)
 
         else:
             msg = f"Must specify a path, bytes-like object, stream, io. or an existing BinaryReader instance, got type ({source.__class__})."

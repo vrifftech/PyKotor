@@ -516,7 +516,7 @@ class ChangeRow2DA(Modify2DA):
                 continue
 
             if row_index is None and key == "LabelIndex" and raw_value != "":
-                label_header = next((header for header in twoda.get_headers() if header == "label"), None)
+                label_header = self._find_header(twoda, "label")
                 if label_header is None:
                     return
                 matching = [

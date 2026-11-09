@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import os
+import shutil
+import tempfile
 
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from pykotor.common.stream import BinaryReader
@@ -62,8 +65,10 @@ def detect_2da(
         elif isinstance(source, (memoryview, bytes, bytearray)):
             file_format = check(bytes(source[offset:offset + 4]).decode("ascii", "ignore"))
         elif isinstance(source, BinaryReader):
+            position = source.position()
+            source.seek(offset)
             file_format = check(source.read_string(4))
-            source.skip(-4)
+            source.seek(position)
         else:
             file_format = ResourceType.INVALID
     except (FileNotFoundError, PermissionError, IsADirectoryError):
@@ -144,6 +149,20 @@ def write_2da(
         PermissionError: If the file could not be written to the specified destination.
         ValueError: If the specified format was unsupported.
     """
+    if isinstance(target, (str, os.PathLike)):
+        data = bytes_2da(twoda, file_format)
+        path = Path(target)
+        with tempfile.NamedTemporaryFile(dir=path.parent, prefix=f".{path.name.lower()}.", suffix=".tmp", delete=False) as temp:
+            temporary_path = Path(temp.name)
+        try:
+            temporary_path.write_bytes(data)
+            if path.exists():
+                shutil.copymode(path, temporary_path)
+            os.replace(temporary_path, path)
+        finally:
+            temporary_path.unlink(missing_ok=True)
+        return
+
     if file_format is ResourceType.TwoDA:
         if twoda.version == "V2.0":
             TwoDATextWriter(twoda, target).write()

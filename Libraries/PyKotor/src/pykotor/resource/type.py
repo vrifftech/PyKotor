@@ -34,7 +34,7 @@ class ResourceReader:
         offset: int = 0,
         size: int = 0,
     ):
-        self._reader: BinaryReader = BinaryReader.from_auto(source, offset)
+        self._reader: BinaryReader = BinaryReader.from_auto(source, offset, size or None)
         self._size: int = self._reader.remaining() if size == 0 else size
 
     def close(

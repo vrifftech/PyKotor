@@ -61,8 +61,10 @@ def detect_gff(
         elif isinstance(source, (memoryview, bytes, bytearray)):
             file_format = check(bytes(source[offset:offset + 4]).decode("ascii", "ignore"))
         elif isinstance(source, BinaryReader):
+            position = source.position()
+            source.seek(offset)
             file_format = check(source.read_string(4))
-            source.skip(-4)
+            source.seek(position)
         else:
             file_format = ResourceType.INVALID
     except (FileNotFoundError, PermissionError, IsADirectoryError):
